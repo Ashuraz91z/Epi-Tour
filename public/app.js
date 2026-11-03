@@ -30,15 +30,16 @@ const TOOLS = {
 const STATE_FR = { travaille: "au travail", autorisation: "attend ton accord", attend: "attend la suite", fini: "en pause", erreur: "en erreur", silencieux: "silencieux" };
 const STATE_COLOR = { travaille: "#4ade80", autorisation: "#ff4d4d", attend: "#fbbf24", fini: "#8b93a7", erreur: "#ff4d4d", silencieux: "#5b6275" };
 
-// Étages communs : le toit au-dessus des résidents, le Salon et le Club en dessous.
+// Étages communs : le toit au-dessus des résidents, le Salon, le Club et le Casino en dessous.
 const SHARED = [
   { id: "roof", name: "Terrasse fumeurs", kicker: "Toit-terrasse", icon: "🚬", floor: "#262a33", top: true },
   { id: "lounge", name: "Salon", kicker: "Café · repos · tabac · toilettes", icon: "☕", floor: "#22202a" },
   { id: "club", name: "Club", kicker: "Étage commun", icon: "🪩", floor: "#160c22" },
+  { id: "casino", name: "Casino", kicker: "Jeux · bar · détente", icon: "🎰", floor: "#2d1810" },
 ];
-const FLOOR_OF = { smoke: "roof", cafe: "lounge", rest: "lounge", tabac: "lounge", wc: "lounge", club: "club" };
+const FLOOR_OF = { smoke: "roof", cafe: "lounge", rest: "lounge", tabac: "lounge", wc: "lounge", club: "club", casino: "casino" };
 const PLACE_FR = { open: "Open space", boss: "Bureau du résident", smoke: "Terrasse fumeurs", cafe: "Café", rest: "Salle de repos",
-  tabac: "Bureau de tabac", wc: "Toilettes", club: "Club" };
+  tabac: "Bureau de tabac", wc: "Toilettes", club: "Club", casino: "Casino" };
 
 // ---------- géométrie (plan de 1000 × 620 unités, 1 unité = 2 cm) ----------
 const S = 0.02, FLOOR_H = 5.2, LIFT = 22;
@@ -73,6 +74,23 @@ const clubAnimation = (t, seed) => {
   const phase = t + seed * 17;
   return phase % 12 < 2 ? CLUB_EMOTES[Math.floor(phase / 12) % CLUB_EMOTES.length] : "Dance";
 };
+// Casino constants
+const CASINO_TABLES = [[200, 200], [400, 200], [600, 200], [200, 400], [400, 400], [600, 400]];
+// Slot machine positions (devant chaque machine, face à l'écran)
+const CASINO_SLOT_MACHINES = [
+  [150, 380], [350, 380], [550, 380], [750, 380],  // Rangée 1 (classic)
+  [200, 460], [400, 460], [600, 460], [800, 460],  // Rangée 2 (video)
+  [280, 540], [520, 540], [760, 540],              // Rangée 3 (themed)
+];
+const CASINO_SLOTS = [
+  ...CASINO_TABLES.flatMap(([cx, cy]) => around(cx, cy, 45, 5, Math.PI / 5, "Sitting")),
+  // Machines à sous : agent assis face à l'écran (orientation 0 = face caméra, donc dos à l'écran, on veut Math.PI pour faire face à l'écran)
+  ...CASINO_SLOT_MACHINES.map(([x, y]) => [x, y, 0, "Sitting", [[x, y + 40]]]),
+  // Bar area
+  ...[150, 250, 350, 450, 550, 650].map(x => [x, 550, Math.PI, "Idle"]),
+  // Standing area near entrance
+  ...[300, 400, 500].map(x => [x, 100, 0, "Idle"]),
+];
 const SHARED_SLOTS = {
   // Café : les chaises du côté opposé à l'allée se rejoignent par l'allée entre les tables.
   cafe: [...CAFE_TABLES.flatMap(([cx, cy]) => around(cx, cy, 52, 4, Math.PI / 4, "Sitting").map(c =>
@@ -89,6 +107,8 @@ const SHARED_SLOTS = {
   club: [0, 1, 2, 3].flatMap(r => [0, 1, 2, 3, 4, 5, 6].map(c => [325 + c * 55, 200 + r * 60, Math.PI, "Dance"]))
     .filter(([x, y]) => CLUB_NPCS.every(([nx, ny]) => Math.hypot(nx - x, ny - y) >= 48)),
   smoke: [...ASHTRAYS.flatMap(([x, y]) => around(x, y, 42, 3, Math.PI / 6)), ...[440, 600].map(x => [x, 560, 0])],
+  // Casino : tables de jeu (blackjack, roulette), bar, zone d'entrée
+  casino: CASINO_SLOTS,
 };
 function slotOf(list, k) {
   if (list[k]) return list[k];
@@ -879,12 +899,24 @@ function buildResident(apt) {
 // La télécommande : « Auto » met la première chaîne en direct de la liste (Lofi Girl, en direct 24 h/24, en dernier recours).
 // La chaîne est commune à tout le penthouse : le serveur la garde, et chacun voit la même télé.
 const CHANNEL_NAMES = { otplol_: "OTPLOL", lec: "LEC", riotgames: "Riot Games", kamet0: "Kameto", caedrel: "Caedrel", zerator: "ZeratoR", eslcs: "ESL CS", lofigirl: "Lofi Girl · 24 h/24" };
-let liveNow = {}, tvChoice = "auto", tvBy = "", tvMine = 0; // tvMine : on ignore l'état du serveur 3 s après son propre clic
+let liveNow = {}, tvChoice = "auto", tvBy = "", tvMine = 0, customTvUrl = ""; // tvMine : on ignore l'état du serveur 3 s après son propre clic
 const tvChannel = () => tvChoice !== "auto" ? tvChoice : Object.keys(liveNow).find(c => liveNow[c]) ?? "lofigirl";
-const streamUrl = c => `https://player.twitch.tv/?channel=${encodeURIComponent(c)}&parent=${location.hostname}&muted=true&autoplay=true`;
+const streamUrl = c => `https://player.twitch.tv/?channel=${encodeURIComponent(c)}&parent=${location.hostname}&muted=false&autoplay=true`;
 const stream = Object.assign(document.createElement("iframe"), { title: "OTPLOL en direct", allow: "autoplay; fullscreen" });
 Object.assign(stream.style, { width: "1280px", height: "720px", border: "0", background: "#000", backfaceVisibility: "hidden" });
 let shownUrl = "", tvFrame = null;
+
+// Détecter si l'URL est YouTube ou Twitch pour l'embed
+function getEmbedUrl(url) {
+  if (!url) return "";
+  // YouTube: youtube.com/watch?v=xxx ou youtu.be/xxx -> embed (avec son)
+  const ytMatch = url.match(/(?:youtube\.com\/watch\?v=|youtu\.be\/)([^&\n?#]+)/);
+  if (ytMatch) return `https://www.youtube.com/embed/${ytMatch[1]}?autoplay=1&rel=0`;
+  // Twitch: twitch.tv/channel -> player.twitch.tv (avec son)
+  const twitchMatch = url.match(/twitch\.tv\/([^&\n?#]+)/);
+  if (twitchMatch) return `https://player.twitch.tv/?channel=${encodeURIComponent(twitchMatch[1])}&parent=${location.hostname}&muted=false&autoplay=true`;
+  return url;
+}
 // Petits nuages en un seul appel de dessin ; le dégradé évite les particules carrées.
 function ambientSmoke(parent, origin, color, count, spread, rise) {
   const canvas = document.createElement("canvas");
@@ -1326,10 +1358,244 @@ function buildShared(def) {
     // Le videur, bras croisés près de l'ascenseur
     staff("#15171f", 70, 240, Math.PI / 2);
   }
+  if (def.id === "casino") {
+    // Casino : tables de jeu, machines à sous, bar, zone VIP - un seul espace unifié sans murs
+    const carpet = mat("#4a1830");
+    zone(20, 20, 980, 580, "#1a0f15");
+
+    tag("Tables de jeu", 20, 20);
+    tag("Machines à sous", 20, 300);
+    tag("Bar", 800, 20);
+    tag("VIP", 800, 300);
+  
+    // Tables de jeu (Blackjack, Roulette, Poker)
+    const tablePositions = [
+      [150, 120, "Blackjack"], [350, 120, "Roulette"], [550, 120, "Poker"],
+      [150, 350, "Blackjack"], [350, 350, "Baccarat"], [550, 350, "Poker"]
+    ];
+  
+    for (const [x, y, type] of tablePositions) {
+      const t = at(x, y);
+      // Table - base en bois
+      box(g, 1.8, 0.9, 1.2, mat("#1a3a2e"), t.x, 0.45, t.z);
+      // Contour doré du tapis (sous le tapis, pas glow)
+      box(g, 1.85, 0.04, 1.25, mat("#b8860b", { metalness: 0.7, roughness: 0.3 }), t.x, 0.92, t.z);
+      // Tapis de jeu vert (surface principale)
+      box(g, 1.65, 0.025, 1.15, mat("#0d5a1f", { roughness: 0.9 }), t.x, 0.945, t.z);
+      // Lignes de mise (marquages blanc discret)
+      box(g, 1.4, 0.005, 0.02, mat("#ffffff", { opacity: 0.4, transparent: true }), t.x, 0.96, t.z - 0.45);
+      box(g, 1.4, 0.005, 0.02, mat("#ffffff", { opacity: 0.4, transparent: true }), t.x, 0.96, t.z + 0.45);
+      box(g, 0.02, 0.005, 0.9, mat("#ffffff", { opacity: 0.4, transparent: true }), t.x - 0.7, 0.96, t.z);
+      box(g, 0.02, 0.005, 0.9, mat("#ffffff", { opacity: 0.4, transparent: true }), t.x + 0.7, 0.96, t.z);
+      // Jetons sur la table
+      for (let i = 0; i < 8; i++) {
+        const angle = (i / 8) * Math.PI * 2;
+        cyl(g, 0.08, 0.03, mat(i % 3 === 0 ? "#c0392b" : i % 3 === 1 ? "#27ae60" : "#2980b9"),
+          t.x + Math.cos(angle) * 0.6, 0.98, t.z + Math.sin(angle) * 0.6, 12);
+      }
+      // Croupier
+      staff(["#c98a3e", "#d9dde8", "#a37cf0", "#ff6fd8"][tablePositions.indexOf([x, y, type]) % 4], x, y + 80, Math.PI);
+      // Étiquette
+      sign(g, type, 1.2, 0.3, { color: "#ffd700", font: "700 60px Sora, sans-serif", blur: 8 }, t.x, 1.3, back + 0.05);
+    }
+  
+    // Machines à sous diversifiées - moins nombreuses, différents types
+    f.slotMachines = [];
+
+    // Configuration des machines : [x, y, type, nom, themeColor]
+    const machineConfigs = [
+      // Rangée 1 : machines classiques (3 rouleaux)
+      [150, 420, "classic", "LUCKY 7", "#ffd700"],
+      [350, 420, "classic", "DIAMOND", "#44ffff"],
+      [550, 420, "classic", "CHERRY", "#ff4444"],
+      [750, 420, "classic", "BELL", "#ffaa00"],
+      // Rangée 2 : vidéo poker / machines modernes
+      [200, 500, "video", "JACKS OR BETTER", "#44ff44"],
+      [400, 500, "video", "DEUCES WILD", "#ff44ff"],
+      [600, 500, "video", "BONUS POKER", "#4488ff"],
+      [800, 500, "video", "MEGA JACKPOT", "#ff6fd8"],
+      // Rangée 3 : machines à thème (plus espacées)
+      [280, 580, "themed", "PHARAOH'S GOLD", "#ffd700"],
+      [520, 580, "themed", "DRAGON'S FORTUNE", "#ff4444"],
+      [760, 580, "themed", "COSMIC QUEST", "#4444ff"],
+    ];
+
+    for (const [x, y, type, name, themeColor] of machineConfigs) {
+      const p = at(x, y);
+      const isVideo = type === "video";
+      const isThemed = type === "themed";
+      const height = isThemed ? 2.1 : isVideo ? 1.95 : 1.9;
+      const screenH = isThemed ? 1.1 : isVideo ? 1.0 : 0.9;
+
+      // Armoire principale selon le type
+      const cabinetMat = mat("#0d0a10", { metalness: 0.3, roughness: 0.7 });
+      box(g, 0.75, height, 0.55, cabinetMat, p.x, height / 2, p.z);
+
+      // Panneau supérieur (top box)
+      const topBoxH = isThemed ? 0.5 : 0.4;
+      box(g, 0.78, topBoxH, 0.58, mat("#1a1020", { metalness: 0.5 }), p.x, height - topBoxH / 2, p.z);
+      box(g, 0.7, 0.3, 0.04, glow(themeColor, 0.3), p.x, height - 0.05, p.z + 0.31);
+      sign(g, name, 0.6, 0.2, { color: themeColor, font: "700 48px Sora, sans-serif", blur: 4 }, p.x, height - 0.05, p.z + 0.33);
+
+      // Écran principal
+      const screenY = height - topBoxH - screenH / 2 - 0.05;
+      const screenBase = mat("#050515", { roughness: 0.1 });
+      const screen = box(g, 0.6, screenH, 0.03, screenBase, p.x, screenY, p.z + 0.29);
+      box(g, 0.62, screenH + 0.02, 0.02, mat("#b8860b", { metalness: 0.8, roughness: 0.2 }), p.x, screenY, p.z + 0.28);
+
+      // Contenu de l'écran selon le type
+      const reels = [];
+      const symbols = ["🍒", "🔔", "7️⃣", "⭐", "💎", "🍋", "🍊", "💰", "A♠", "K♥", "Q♦", "J♣"];
+      const numReels = isVideo ? 5 : 3;
+      const reelWidth = isVideo ? 0.11 : 0.15;
+      const startX = p.x - (numReels - 1) * reelWidth / 2;
+
+      for (let s = 0; s < numReels; s++) {
+        const reelX = startX + s * reelWidth;
+        const reelY = screenY;
+        const reelZ = p.z + 0.30;
+        box(g, reelWidth, screenH - 0.1, 0.015, mat("#0a0a2a"), reelX, reelY, reelZ);
+        const reelSymbols = [];
+        const visibleSymbols = isVideo ? 4 : 3;
+        for (let v = 0; v < visibleSymbols; v++) {
+          const symY = reelY + (screenH - 0.1) / 2 - 0.1 - v * (screenH - 0.1) / visibleSymbols;
+          const sym = symbols[Math.floor(Math.random() * symbols.length)];
+          const symMesh = sign(g, sym, reelWidth * 0.8, 0.12,
+            { color: ["#ffd700", "#ff4444", "#44ff44", "#4444ff", "#ff8800", "#ff44ff"][Math.floor(Math.random() * 6)],
+              font: `600 ${isVideo ? 36 : 48}px Sora, sans-serif` }, reelX, symY, reelZ + 0.01);
+          reelSymbols.push(symMesh);
+        }
+        reels.push({ x: reelX, y: reelY, z: reelZ, symbols: reelSymbols, height: screenH - 0.1 });
+      }
+
+      // Panneau boutons
+      const buttonY = 0.7;
+      box(g, 0.7, 0.35, 0.05, mat("#1a1020", { metalness: 0.4 }), p.x, buttonY, p.z + 0.3);
+      const btnLabels = isVideo ? ["DEAL", "HOLD", "CASH"] : ["SPIN", "BET", "CASH"];
+      for (let b = 0; b < 3; b++) {
+        const btnX = p.x - 0.15 + b * 0.15;
+        cyl(g, 0.045, 0.06, glow(b === 0 ? "#ff4444" : b === 1 ? "#ffd700" : "#44ff44", 0.8), btnX, buttonY + 0.03, p.z + 0.33, 16);
+        sign(g, btnLabels[b], 0.12, 0.05, { color: "#fff", font: "600 24px Sora, sans-serif" }, btnX, buttonY + 0.03, p.z + 0.34);
+      }
+
+      // Levier latéral (seulement pour classic)
+      let leverArm = null, handle = null;
+      if (!isVideo) {
+        const leverBase = p.x + 0.38;
+        cyl(g, 0.02, 0.05, mat("#b8860b", { metalness: 0.9 }), leverBase, 1.15, p.z + 0.05, 8);
+        leverArm = cyl(g, 0.025, 0.45, mat("#c0392b", { metalness: 0.8 }), leverBase, 1.35, p.z + 0.05, 8);
+        handle = new THREE.Mesh(new THREE.TorusGeometry(0.06, 0.015, 8, 16), mat("#b8860b", { metalness: 0.9 }));
+        handle.position.set(leverBase, 1.58, p.z + 0.05);
+        handle.rotation.x = Math.PI / 2;
+        g.add(handle);
+      }
+
+      // Bac à pièces
+      box(g, 0.5, 0.08, 0.15, mat("#b8860b", { metalness: 0.7, roughness: 0.3 }), p.x, 0.12, p.z + 0.35);
+      box(g, 0.45, 0.03, 0.1, mat("#0d0a10"), p.x, 0.18, p.z + 0.35);
+
+      // Éclairage d'ambiance
+      box(g, 0.7, 0.02, 0.5, glow(themeColor, 0.15), p.x, 0.03, p.z);
+
+      // Décoration thème pour machines thématiques
+      if (isThemed) {
+        // Éléments décoratifs sur les côtés
+        for (const side of [-1, 1]) {
+          const decoX = p.x + side * 0.4;
+          const deco = new THREE.Group();
+          deco.position.set(decoX, 1.2, p.z + 0.1);
+          g.add(deco);
+          // Petit élément 3D décoratif
+          box(deco, 0.15, 0.6, 0.15, mat(themeColor, { metalness: 0.5, emissive: themeColor, emissiveIntensity: 0.3 }), 0, 0.3, 0);
+          box(deco, 0.2, 0.2, 0.2, glow(themeColor, 0.8), 0, 0.7, 0);
+        }
+      }
+
+      // Stocker la machine pour animation
+      f.slotMachines.push({
+        pos: { x: p.x, z: p.z },
+        screen,
+        reels,
+        lever: leverArm,
+        handle,
+        isPlaying: false,
+        playTimer: 0,
+        spinSpeed: 0,
+        type,
+        themeColor
+      });
+    }
+  
+    // Bar
+    const bar = at(880, 150);
+    box(g, 3.0, 1.1, 0.7, mat("#2a1018"), bar.x, 0.55, bar.z);
+    box(g, 3.2, 0.08, 0.8, glow("#ffd700", 0.5), bar.x, 1.12, bar.z);
+    // 3 tabourets centrés sur le bar (bar à x=880, largeur 3.0 -> 865 à 895)
+    // at(880) = 7.6, on veut 3 tabourets vers 7.1, 7.6, 8.1 -> map: 855, 880, 905
+    for (const x of [855, 880, 905]) {
+      put(g, "stoolBar", at(x, 100).x, at(x, 100).z, Math.PI / 2);
+    }
+    staff("#2b2f3a", 940, 150, -Math.PI / 2);
+    // Bouteilles
+    box(g, 0.25, 0.04, 5.5, mat("#1a0a10"), at(950, 150).x, 1.6, at(950, 150).z);
+    box(g, 0.25, 0.04, 5.5, mat("#1a0a10"), at(950, 150).x, 2.1, at(950, 150).z);
+    for (let k = 0; k < 20; k++) {
+      const p = at(950, 80 + (k % 10) * 50);
+      const colors = ["#ffd700", "#c0392b", "#27ae60", "#2980b9", "#8e44ad", "#e67e22", "#1abc9c", "#34495e", "#f39c12", "#e74c3c"];
+      cyl(g, 0.04, 0.3, glow(colors[k % colors.length], 0.6), p.x, k < 10 ? 1.75 : 2.25, p.z, 8);
+    }
+  
+    // Zone VIP - au fond, sans séparation (décalée pour éviter les machines)
+    for (const y of [360, 520]) put(g, "loungeDesignSofa", at(960, y).x, at(960, y).z, 0, 2.2);
+    put(g, "tableCoffee", at(960, 440).x, at(960, 440).z, 0, 2);
+    sign(g, "VIP", 1.4, 0.5, { color: "#ffd700", font: "700 90px Sora, sans-serif", w: 256 }, at(970, 300).x, 2.2, at(0, 300).z);
+  
+    // Champagne et cocktails
+    const champagne = at(960, 440);
+    cyl(g, 0.14, 0.22, mat("#8995a7", { metalness: 0.8, roughness: 0.25 }), champagne.x, 0.85, champagne.z);
+    cyl(g, 0.055, 0.4, mat("#294a36"), champagne.x, 1.02, champagne.z, 12);
+    for (const dx of [-0.3, 0.3]) {
+      cyl(g, 0.015, 0.18, mat("#c5dfeb"), champagne.x + dx, 0.87, champagne.z);
+      cyl(g, 0.06, 0.12, mat("#eed18a"), champagne.x + dx, 1.02, champagne.z, 12);
+    }
+  
+    // Cocktails sur le bar
+    for (const y of [80, 180, 280, 380, 480]) {
+      const p = at(880, y);
+      cyl(g, 0.06, 0.18, mat("#b8dce8", { transparent: true, opacity: 0.6 }), p.x, 1.24, p.z, 12);
+      cyl(g, 0.05, 0.09, glow(y % 2 === 0 ? "#ee966e" : "#9fd67b", 0.4), p.x, 1.22, p.z, 12);
+      box(g, 0.015, 0.2, 0.015, mat("#f3e5c4"), p.x + 0.025, 1.35, p.z).rotation.z = 0.25;
+    }
+  
+    // Lumières d'ambiance néon
+    f.neons = [];
+    for (let i = 0; i < 8; i++) {
+      const colors = ["#ff6fd8", "#7ec3f0", "#ffd36e", "#4ade80", "#ff4d6d", "#a37cf0", "#ff8800", "#44ff44"];
+      const neon = box(g, 4, 0.15, 0.05, glow(colors[i], 1.2), 400, 1.5 + i * 0.4, -5.9);
+      neon.rotation.y = Math.PI / 2;
+      f.neons.push({ mesh: neon, color: colors[i], phase: i * 0.5 });
+    }
+  
+    // Machines à fumée
+    f.haze = [200, 700].map(x => {
+      const p = at(x, 80);
+      box(g, 0.45, 0.25, 0.6, mat("#181b29"), p.x, 0.23, p.z);
+      return ambientSmoke(g, P(x, 90, 0.4), "#ae92d1", 20, 1.0, 1.2);
+    });
+  
+    // Vigile à l'entrée
+    staff("#15171f", 100, 240, Math.PI / 2);
+  
+    // Pas de garde-corps : espace casino entièrement ouvert pour dégager machines à sous et ascenseur
+  
+    // Panneau d'entrée
+    sign(g, "CASINO", 4, 1, { color: "#ffd700", font: "900 120px Sora, sans-serif", blur: 20 }, 0, 3.5, -5.8);
+  }
+// ---------- les personnages : le robot animé de Quaternius (CC0), recoloré selon l'outil ----------
   return f;
 }
 
-// ---------- les personnages : le robot animé de Quaternius (CC0), recoloré selon l'outil ----------
+
 const ONCE = new Set(["Sitting", "Standing", "Death"]);
 function makeRobot(color) {
   const t = MODELS.robot;
@@ -1644,6 +1910,102 @@ function animate(frameTime = performance.now()) {
     u.ring.visible = u.state !== "autorisation" || Math.sin(t * 10) > -0.3;
   }
 
+  // Animation des machines à sous du casino (seulement quand un agent est dessus)
+  const casinoFloor = floors.get("casino");
+  if (casinoFloor && casinoFloor.slotMachines) {
+    for (const machine of casinoFloor.slotMachines) {
+      // Vérifier si un agent est assis sur cette machine (proximité < 0.6)
+      let agentPlaying = false;
+      for (const g of agents.values()) {
+        const u = g.userData;
+        if (u.floor === "casino" && u.place === "casino" && u.slot) {
+          const dx = u.slot.x - machine.pos.x;
+          const dz = u.slot.z - machine.pos.z;
+          if (Math.sqrt(dx * dx + dz * dz) < 0.6 && u.state === "fini") {
+            agentPlaying = true;
+            break;
+          }
+        }
+      }
+
+      if (agentPlaying && !machine.isPlaying) {
+        // Démarrer l'animation
+        machine.isPlaying = true;
+        machine.playTimer = 3 + Math.random() * 2; // 3-5 secondes
+        machine.spinSpeed = 15 + Math.random() * 10;
+      }
+
+      if (machine.isPlaying) {
+        machine.playTimer -= dt;
+
+        // Faire tourner les rouleaux - adaptatif selon le nombre de symboles visibles
+        for (const reel of machine.reels) {
+          const symbolSpacing = reel.height / reel.symbols.length;
+          const resetThreshold = reel.y - reel.height / 2 - symbolSpacing;
+          const resetOffset = symbolSpacing * reel.symbols.length;
+
+          for (const symMesh of reel.symbols) {
+            symMesh.position.y -= machine.spinSpeed * dt;
+            // Reboucler le symbole quand il sort de l'écran
+            if (symMesh.position.y < resetThreshold) {
+              symMesh.position.y += resetOffset;
+              // Changer le symbole aléatoirement
+              const symbols = ["🍒", "🔔", "7️⃣", "⭐", "💎", "🍋", "🍊", "💰", "A♠", "K♥", "Q♦", "J♣"];
+              const newSym = symbols[Math.floor(Math.random() * symbols.length)];
+              const newColor = ["#ffd700", "#ff4444", "#44ff44", "#4444ff", "#ff8800", "#ff44ff"][Math.floor(Math.random() * 6)];
+              if (symMesh.element) {
+                symMesh.element.textContent = newSym;
+                symMesh.element.style.color = newColor;
+              }
+            }
+          }
+        }
+
+        // Animer le levier (seulement pour machines classic)
+        if (machine.lever && machine.handle) {
+          const swing = Math.sin(t * machine.spinSpeed * 0.5) * 0.15;
+          machine.lever.rotation.z = swing;
+          machine.handle.rotation.z = swing;
+        }
+
+        // Effet lumineux sur l'écran
+        if (machine.screen && machine.screen.material) {
+          const pulse = Math.sin(t * 20) * 0.3 + 0.7;
+          machine.screen.material.emissiveIntensity = pulse * 0.5;
+          machine.screen.material.emissive = machine.screen.material.emissive || new THREE.Color(machine.themeColor || "#ff6fd8");
+        }
+
+        // Arrêter après le timer
+        if (machine.playTimer <= 0) {
+          machine.isPlaying = false;
+          machine.spinSpeed = 0;
+          if (machine.lever) machine.lever.rotation.z = 0;
+          if (machine.handle) machine.handle.rotation.z = 0;
+          if (machine.screen && machine.screen.material) {
+            machine.screen.material.emissiveIntensity = 0;
+          }
+          // Résultat final - aligner les symboles (jackpot occasionnel)
+          const jackpot = Math.random() < 0.15;
+          const jackpotSym = machine.type === "video" ? "A♠" : "7️⃣";
+          const normalSymbols = machine.type === "video"
+            ? ["A♠", "K♥", "Q♦", "J♣", "10♠", "9♥", "8♦"]
+            : ["🍒", "🔔", "⭐", "💎", "🍋", "🍊", "💰"];
+          for (let s = 0; s < machine.reels.length; s++) {
+            const reel = machine.reels[s];
+            const finalSym = jackpot ? jackpotSym : normalSymbols[Math.floor(Math.random() * normalSymbols.length)];
+            const finalColor = jackpot ? "#ffd700" : ["#ffd700", "#ff4444", "#44ff44", "#4444ff", "#ff8800", "#ff44ff"][Math.floor(Math.random() * 6)];
+            for (let v = 0; v < reel.symbols.length; v++) {
+              if (reel.symbols[v] && reel.symbols[v].element) {
+                reel.symbols[v].element.textContent = finalSym;
+                reel.symbols[v].element.style.color = finalColor;
+              }
+            }
+          }
+        }
+      }
+    }
+  }
+
   // La caméra suit l'étage choisi ; le toit coiffe le penthouse.
   const visiting = data?.viewer?.role === "spectator" && !tourPaused;
   if (visiting) {
@@ -1673,7 +2035,14 @@ function animate(frameTime = performance.now()) {
   controls.autoRotateSpeed = 0.4;
   controls.update();
   // Le direct ne se charge que quand on regarde le Salon.
-  const url = focusKey === "lounge" ? streamUrl(tvChannel()) : "about:blank";
+  let url = "about:blank";
+  if (focusKey === "lounge") {
+    if (tvChoice === "custom" && customTvUrl) {
+      url = getEmbedUrl(customTvUrl);
+    } else {
+      url = streamUrl(tvChannel());
+    }
+  }
   if (url !== shownUrl) { shownUrl = url; stream.src = url; }
   renderer.render(scene, camera);
   screens.render(scene, camera);
@@ -1855,19 +2224,44 @@ function render() {
 }
 function remote() {
   const now = tvChannel(), name = c => esc(CHANNEL_NAMES[c] ?? c);
-  return `<p class="kicker tv-k">Télé du salon</p><div class="tv">${["auto", ...Object.keys(liveNow)].map(c => `<button type="button" ${data?.viewer?.role === "spectator" ? "disabled" : ""} data-tv="${esc(c)}" class="${c === tvChoice ? "on" : ""}">${
-    c === "auto" ? "Auto" : `<i class="d" style="background:${liveNow[c] ? "var(--auth)" : "#3a3f52"}"></i>${name(c)}`}</button>`).join("")}</div>
-    <p class="tv-now">À l'écran : <b>${name(now)}</b>${liveNow[now] === false ? " · hors ligne" : ""}${tvBy ? ` · choisi par ${esc(tvBy)}` : ""}</p>`;
+  const isCustom = tvChoice === "custom";
+  const customValue = customTvUrl || "";
+  return `<p class="kicker tv-k">Télé du salon</p>
+    <div class="tv">${["auto", ...Object.keys(liveNow), "custom"].map(c => `<button type="button" ${data?.viewer?.role === "spectator" ? "disabled" : ""} data-tv="${esc(c)}" class="${c === tvChoice ? "on" : ""}">${
+      c === "auto" ? "Auto" : c === "custom" ? "🔗 Lien perso" : `<i class="d" style="background:${liveNow[c] ? "var(--auth)" : "#3a3f52"}"></i>${name(c)}`}</button>`).join("")}</div>
+    ${isCustom ? `<div class="tv-custom"><input type="text" id="tvCustomUrl" placeholder="URL YouTube (youtube.com/watch?v=...) ou Twitch (twitch.tv/channel)" value="${esc(customValue)}" style="width:100%;padding:8px;margin:8px 0;border:1px solid #444;border-radius:4px;background:#1a1a2e;color:#fff;font:14px Sora,sans-serif"><button type="button" id="tvCustomApply" style="padding:6px 12px;background:var(--work);border:none;border-radius:4px;color:#fff;cursor:pointer;font:600 14px Sora,sans-serif">Appliquer</button></div>` : ""}
+    <p class="tv-now">À l'écran : <b>${isCustom ? "Lien personnalisé" : name(now)}</b>${liveNow[now] === false ? " · hors ligne" : ""}${tvBy ? ` · choisi par ${esc(tvBy)}` : ""}</p>`;
 }
 $("#aptPanel").addEventListener("click", e => {
   if (data?.viewer?.role === "spectator") return;
   const b = e.target.closest("[data-tv]");
-  if (!b) return;
-  tvChoice = b.dataset.tv;
-  tvMine = Date.now() + 3000;
-  tvBy = JSON.parse(localStorage.getItem(ME) ?? "null")?.name ?? "";
-  render();
-  fetch("/api/tv", { method: "POST", body: JSON.stringify({ channel: tvChoice, by: tvBy }) });
+  if (b) {
+    tvChoice = b.dataset.tv;
+    tvMine = Date.now() + 3000;
+    tvBy = JSON.parse(localStorage.getItem(ME) ?? "null")?.name ?? "";
+    render();
+    fetch("/api/tv", { method: "POST", body: JSON.stringify({ channel: tvChoice, by: tvBy }) });
+    return;
+  }
+  // Appliquer URL personnalisée
+  if (e.target.id === "tvCustomApply") {
+    const input = document.getElementById("tvCustomUrl");
+    if (input && input.value.trim()) {
+      customTvUrl = input.value.trim();
+      tvChoice = "custom";
+      tvMine = Date.now() + 3000;
+      tvBy = JSON.parse(localStorage.getItem(ME) ?? "null")?.name ?? "";
+      render();
+      // Mettre à jour l'iframe avec l'URL embed
+      const embedUrl = getEmbedUrl(customTvUrl);
+      if (embedUrl) {
+        stream.src = embedUrl;
+        shownUrl = embedUrl;
+      }
+      fetch("/api/tv", { method: "POST", body: JSON.stringify({ channel: "custom", url: customTvUrl, by: tvBy }) });
+    }
+    return;
+  }
 });
 $("#floorNav").addEventListener("click", e => { const b = e.target.closest("[data-floor]"); if (b) setFocus(Number(b.dataset.floor)); });
 
@@ -2045,7 +2439,9 @@ async function tick() {
     $("#linkBtn").hidden = spectator;
     $("#spectatorBtn").hidden = spectator;
     if (spectator && $("#linkDlg").open) $("#linkDlg").close();
-    if (Date.now() > tvMine) ({ channel: tvChoice, by: tvBy = "" } = data.tv);
+    if (Date.now() > tvMine) {
+    ({ channel: tvChoice, by: tvBy = "", url: customTvUrl = "" } = data.tv);
+  }
     $("#lobby").hidden = true;
     $("#app").hidden = false;
     render();

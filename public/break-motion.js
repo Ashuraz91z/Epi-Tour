@@ -12,8 +12,8 @@ export function breakVisit(seed, age, silent = false) {
   const visit = Math.floor((Math.max(0, age) + seed % duration) / duration);
   if (!silent && age < 300) return { place: 'cafe', visit };
   if (!silent && age < 900) return { place: 'club', visit };
-  const places = ['rest', 'club', 'cafe', 'tabac', 'wc'];
-  return { place: places[(seed % 5 + visit * (1 + (seed >>> 5) % 4)) % 5], visit };
+  const places = ['rest', 'club', 'cafe', 'tabac', 'wc', 'casino'];
+  return { place: places[(seed % 6 + visit * (1 + (seed >>> 5) % 5)) % 6], visit };
 }
 
 export function assignPauseSlots(entries, previous, capacity) {

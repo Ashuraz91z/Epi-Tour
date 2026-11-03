@@ -189,6 +189,13 @@ export function createApp({ code, db }) {
       if (url.pathname === "/api/tv") {
         if (!same(cookie, pass)) return json(401, { error: "entrée requise" });
         const channel = String(p.channel ?? "");
+        if (channel === "custom") {
+          const customUrl = String(p.url ?? "").trim().slice(0, 500);
+          if (!customUrl) return json(400, { error: "URL requise pour lien personnalisé." });
+          const tv = { channel: "custom", url: customUrl, by: String(p.by ?? "").trim().slice(0, 32), at: Date.now() / 1000 };
+          db.setSetting("tv", tv);
+          return json(200, tv);
+        }
         if (channel !== "auto" && !CHANNELS.includes(channel)) return json(400, { error: "Chaîne inconnue." });
         const tv = { channel, by: String(p.by ?? "").trim().slice(0, 32), at: Date.now() / 1000 };
         db.setSetting("tv", tv);
@@ -208,7 +215,7 @@ export function createApp({ code, db }) {
         if (!same(String(p.code ?? ""), code)) return json(403, { error: "Code du penthouse incorrect." });
         const name = String(p.name ?? "").trim().slice(0, 32), slug = slugify(name);
         if (!slug) return json(400, { error: "Choisis un nom." });
-        if (["roof", "lounge", "club"].includes(slug)) return json(400, { error: "Ce nom est réservé aux espaces communs. Choisis un autre nom." });
+        if (["roof", "lounge", "club", "casino"].includes(slug)) return json(400, { error: "Ce nom est réservé aux espaces communs. Choisis un autre nom." });
         let apt = db.get(slug), token;
         if (!apt) {
           token = newToken();
