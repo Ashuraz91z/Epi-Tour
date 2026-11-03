@@ -7,6 +7,13 @@ import { breakVisit, assignPauseSlots } from "./break-motion.js";
 import { approvalState } from "./approval-alert.js";
 import { spectatorStep } from "./spectator-tour.js";
 import { assignDeskSlots } from "./desk-slots.js";
+import {
+  activityLeaderboard, applyKioskFromUrl, historyCsv, historyEntries, machineStatusRows,
+  pushApprovalNotifications, quotaAlerts, saveProfile, startStateStream, todayBadges,
+} from "./penthouse-extras.js";
+import { badgesHtml, missionsHtml, postGame, showCelebrations, spaceActionsHtml, wingActionsHtml, xpBarHtml } from "./gamify-ui.js";
+import { homeFloor, parseFloorKey, wingsOf } from "./wings-client.js";
+import { officePanelHtml, officeTierForLevel } from "./upgrades-client.js";
 import { OrbitControls } from "three/addons/controls/OrbitControls.js";
 import { CSS2DObject, CSS2DRenderer } from "three/addons/renderers/CSS2DRenderer.js";
 import { CSS3DObject, CSS3DRenderer } from "three/addons/renderers/CSS3DRenderer.js";
@@ -20,25 +27,55 @@ const hash = s => [...String(s)].reduce((h, c) => (h * 31 + c.charCodeAt(0)) | 0
 const hm = t => new Date(t * 1000).toLocaleTimeString("fr-FR", { hour: "2-digit", minute: "2-digit" });
 const ME = "penthouse.moi";
 
+function myApt() {
+  const me = JSON.parse(localStorage.getItem(ME) ?? "null");
+  return data?.apartments.find(a => a.slug === me?.slug);
+}
+function agentsOnFloor(floorKey) {
+  return [...agents.values()].filter(g => g.userData.target === floorKey).length;
+}
+async function runGameAction(action, floor, agentsHere = 0) {
+  const token = sessionStorage.getItem("penthouse.cle");
+  if (!token) throw new Error("Clé requise : ouvre Relier mes agents.");
+  const j = await postGame("/api/game/action", token, { action, floor, agentsHere });
+  showCelebrations(j.toasts);
+  const me = myApt();
+  if (me && j.game) me.game = j.game;
+  render();
+  return j;
+}
+async function runGameClaim(questId) {
+  const token = sessionStorage.getItem("penthouse.cle");
+  if (!token) throw new Error("Clé requise.");
+  const j = await postGame("/api/game/claim", token, { questId });
+  showCelebrations(j.toasts);
+  const me = myApt();
+  if (me && j.game) me.game = j.game;
+  render();
+  refreshMissionsDlg();
+}
+
 const TOOLS = {
   claude: { name: "Claude Code", color: "#e0814f", acc: "#ffc29e" },
   codex: { name: "Codex", color: "#2fb898", acc: "#9ff5df" },
   hermes: { name: "Hermes", color: "#9a6cf0", acc: "#e2d4ff" },
   grok: { name: "Grok Bot", color: "#789bb2", acc: "#c9e8fb" },
+  cursor: { name: "Cursor", color: "#6b9cff", acc: "#c5d8ff" },
   n8n: { name: "n8n", color: "#ff6f9e", acc: "#ffd0e0" },
 };
 const STATE_FR = { travaille: "au travail", autorisation: "attend ton accord", attend: "attend la suite", fini: "en pause", erreur: "en erreur", silencieux: "silencieux" };
 const STATE_COLOR = { travaille: "#4ade80", autorisation: "#ff4d4d", attend: "#fbbf24", fini: "#8b93a7", erreur: "#ff4d4d", silencieux: "#5b6275" };
 
-// Étages communs : le toit au-dessus des résidents, le Salon et le Club en dessous.
+// Étages communs : le toit au-dessus des résidents, le Salon, le Club et le Casino en dessous.
 const SHARED = [
   { id: "roof", name: "Terrasse fumeurs", kicker: "Toit-terrasse", icon: "🚬", floor: "#262a33", top: true },
   { id: "lounge", name: "Salon", kicker: "Café · repos · tabac · toilettes", icon: "☕", floor: "#22202a" },
   { id: "club", name: "Club", kicker: "Étage commun", icon: "🪩", floor: "#160c22" },
+  { id: "casino", name: "Casino", kicker: "Jeux · bar · détente", icon: "🎰", floor: "#2d1810" },
 ];
-const FLOOR_OF = { smoke: "roof", cafe: "lounge", rest: "lounge", tabac: "lounge", wc: "lounge", club: "club" };
+const FLOOR_OF = { smoke: "roof", cafe: "lounge", rest: "lounge", tabac: "lounge", wc: "lounge", club: "club", casino: "casino" };
 const PLACE_FR = { open: "Open space", boss: "Bureau du résident", smoke: "Terrasse fumeurs", cafe: "Café", rest: "Salle de repos",
-  tabac: "Bureau de tabac", wc: "Toilettes", club: "Club" };
+  tabac: "Bureau de tabac", wc: "Toilettes", club: "Club", casino: "Casino" };
 
 // ---------- géométrie (plan de 1000 × 620 unités, 1 unité = 2 cm) ----------
 const S = 0.02, FLOOR_H = 5.2, LIFT = 22;
@@ -73,6 +110,19 @@ const clubAnimation = (t, seed) => {
   const phase = t + seed * 17;
   return phase % 12 < 2 ? CLUB_EMOTES[Math.floor(phase / 12) % CLUB_EMOTES.length] : "Dance";
 };
+// Casino : tables, machines à sous, bar
+const CASINO_TABLES = [[200, 200], [400, 200], [600, 200], [200, 400], [400, 400], [600, 400]];
+const CASINO_SLOT_MACHINES = [
+  [150, 380], [350, 380], [550, 380], [750, 380],
+  [200, 460], [400, 460], [600, 460], [800, 460],
+  [280, 540], [520, 540], [760, 540],
+];
+const CASINO_SLOTS = [
+  ...CASINO_TABLES.flatMap(([cx, cy]) => around(cx, cy, 45, 5, Math.PI / 5, "Sitting")),
+  ...CASINO_SLOT_MACHINES.map(([x, y]) => [x, y, 0, "Sitting", [[x, y + 40]]]),
+  ...[150, 250, 350, 450, 550, 650].map(x => [x, 550, Math.PI, "Idle"]),
+  ...[300, 400, 500].map(x => [x, 100, 0, "Idle"]),
+];
 const SHARED_SLOTS = {
   // Café : les chaises du côté opposé à l'allée se rejoignent par l'allée entre les tables.
   cafe: [...CAFE_TABLES.flatMap(([cx, cy]) => around(cx, cy, 52, 4, Math.PI / 4, "Sitting").map(c =>
@@ -89,6 +139,7 @@ const SHARED_SLOTS = {
   club: [0, 1, 2, 3].flatMap(r => [0, 1, 2, 3, 4, 5, 6].map(c => [325 + c * 55, 200 + r * 60, Math.PI, "Dance"]))
     .filter(([x, y]) => CLUB_NPCS.every(([nx, ny]) => Math.hypot(nx - x, ny - y) >= 48)),
   smoke: [...ASHTRAYS.flatMap(([x, y]) => around(x, y, 42, 3, Math.PI / 6)), ...[440, 600].map(x => [x, 560, 0])],
+  casino: CASINO_SLOTS,
 };
 function slotOf(list, k) {
   if (list[k]) return list[k];
@@ -575,39 +626,86 @@ function walls(g, r, doors) {
 }
 
 // ---------- étage d'un résident ----------
-function buildResident(apt) {
-  const f = shell("#232a39");
+function removeFloor(k) {
+  const f = floors.get(k);
+  if (!f) return;
+  f.group.traverse(o => o.isCSS2DObject && o.element.remove());
+  scene.remove(f.group);
+  floors.delete(k);
+}
+
+function buildResident(apt, wing, officeTier) {
+  officeTier = officeTier ?? { id: 1, open: "#2a3142", boss: "#3a3029", wood: "#573d2e", metal: "#b7a27b", deskScale: 2, chairScale: 1 };
+  const f = shell(wing.floor ?? officeTier.open ?? "#232a39");
   const g = f.group;
-  Object.assign(f, { key: apt.slug, kind: "resident", name: apt.name });
+  const wingId = wing.id ?? "work";
+  Object.assign(f, {
+    key: `${apt.slug}:${wingId}`, kind: "resident", residentSlug: apt.slug, wingId, wing,
+    name: wingId === "work" ? apt.name : `${apt.name} · ${wing.name ?? wingId}`,
+    officeTierId: officeTier.id, buildSlug: apt.slug,
+  });
+  const openMat = wingId === "work" ? officeTier.open : "#2a3142";
+  const bossMat = wingId === "work" ? officeTier.boss : "#3a3029";
   const c = P(OPEN.x + OPEN.w / 2, OPEN.y + OPEN.h / 2), b = P(BOSS.x + BOSS.w / 2, BOSS.y + BOSS.h / 2);
-  box(g, OPEN.w * S, 0.03, OPEN.h * S, mat("#2a3142"), c.x, 0.05, c.z);
-  box(g, BOSS.w * S, 0.03, BOSS.h * S, mat("#3a3029"), b.x, 0.05, b.z);
+  box(g, OPEN.w * S, 0.03, OPEN.h * S, mat(openMat), c.x, 0.05, c.z);
+  box(g, BOSS.w * S, 0.03, BOSS.h * S, mat(bossMat), b.x, 0.05, b.z);
   walls(g, OPEN, ["w", "e"]);
   walls(g, BOSS, ["w"]);
   f.roomTags = [label(g, "Open space", "room-tag", P(OPEN.x, 0).x + 0.25, 0.08, P(0, OPEN.y).z + 0.4),
     label(g, `Bureau de ${esc(apt.name)}`, "room-tag", P(BOSS.x, 0).x + 0.25, 0.08, P(0, BOSS.y).z + 0.4)];
-  // Le nom du résident en grand, en lettres dorées sur la vitre du fond : on sait chez qui on est.
-  sign(g, apt.name.toUpperCase(), 11, 1.7, { color: "#f1cd85", font: "700 130px Sora, sans-serif", w: 1024, h: 160 }, 0, 3.55, -6.42);
-  box(g, 7, 0.06, 0.06, glow("#f1cd85", 0.9), 0, 2.6, -6.42);
+  // Le nom du résident en grand sur l'aile principale ; les autres ailes affichent leur enseigne.
+  if (wingId === "work") {
+    sign(g, apt.name.toUpperCase(), 11, 1.7, { color: apt.profile?.accent ?? "#f1cd85", font: "700 130px Sora, sans-serif", w: 1024, h: 160 }, 0, 3.55, -6.42);
+  } else if (wing.sign) {
+    sign(g, wing.sign, 5, 1.1, { color: wing.accent ?? "#9ab4ff", font: "700 90px Sora, sans-serif", w: 720, h: 140 }, 0, 3.35, -6.35);
+  }
+  const accent = apt.profile?.accent ?? wing.accent ?? "#f1cd85";
+  f.accentGlow = box(g, 7, 0.06, 0.06, glow(accent, 0.75 + officeTier.id * 0.12), 0, 2.6, -6.42);
+  f.profileAccent = accent;
+  if (wingId === "ops") {
+    for (const [cx, cy] of [[720, 120], [820, 280], [740, 440]]) {
+      const p = P(cx, cy);
+      box(g, 1.2, 1.8, 0.8, mat("#1a2e28"), p.x, 0.9, p.z);
+      for (let r = 0; r < 3; r++) box(g, 0.08, 0.08, 0.08, glow("#2fb898", 1.2), p.x - 0.3 + r * 0.3, 1.5 + (r % 2) * 0.12, p.z + 0.35);
+    }
+  }
+  if (wingId === "lab") {
+    for (const [cx, cy] of [[140, 140], [520, 480]]) {
+      const p = P(cx, cy);
+      cyl(g, 0.35, 0.05, glow(wing.accent ?? "#5b7cfa", 1.5), p.x, 1.05, p.z, 14);
+    }
+  }
+  if (wingId === "studio") {
+    sign(g, "FOCUS", 2.2, 0.35, { color: "#6b9cff", font: "700 48px Sora, sans-serif", blur: 8 }, P(820, 300).x, 2.8, P(820, 300).z);
+  }
 
   // Open space : 12 postes. L'agent s'assoit au nord du bureau, face à son écran (vers la caméra).
   f.screens = DESKS.map(d => {
     const dc = P(d.cx, d.cy), ch = P(d.cx, d.cy - 52);
-    put(g, "desk", dc.x, dc.z, Math.PI);
+    const ds = wingId === "work" ? officeTier.deskScale : 2;
+    const cs = wingId === "work" ? officeTier.chairScale : 1;
+    put(g, "desk", dc.x, dc.z, Math.PI, ds);
     put(g, "computerScreen", dc.x - 0.15, dc.z - 0.05, Math.PI, 2, 0.76);
+    if (officeTier.dualScreen && wingId === "work") put(g, "computerScreen", dc.x + 0.22, dc.z - 0.05, Math.PI, 1.85, 0.76);
     put(g, "computerKeyboard", dc.x - 0.15, dc.z - 0.35, Math.PI, 2, 0.76);
-    put(g, "chairDesk", ch.x, ch.z, 0);
+    put(g, "chairDesk", ch.x, ch.z, 0, cs);
     const screen = new THREE.Mesh(new THREE.PlaneGeometry(0.66, 0.42), mat("#1d2433"));
     screen.position.set(dc.x - 0.15, 1.06, dc.z - 0.17);
     screen.rotation.y = Math.PI;
     g.add(screen);
     return screen;
   });
-  for (const [x, y] of [[620, 40], [40, 580], [620, 580]]) put(g, "pottedPlant", P(x, y).x, P(x, y).z, 0, 2.4);
+  if (officeTier.openRug && wingId === "work") put(g, "rugRound", c.x, c.z, 0, 5.5);
+  const plantSpots = [[620, 40], [40, 580], [620, 580], [320, 40], [320, 580], [40, 40]];
+  for (const [x, y] of plantSpots.slice(0, Math.min(plantSpots.length, 2 + officeTier.id))) put(g, "pottedPlant", P(x, y).x, P(x, y).z, 0, 2.4);
+  if (officeTier.bookcase && wingId === "work") {
+    put(g, "bookcaseOpen", P(40, 120).x, P(40, 120).z, Math.PI / 2, 2.8);
+    put(g, "bookcaseOpen", P(600, 520).x, P(600, 520).z, -Math.PI / 2, 2.8);
+  }
 
-  // Poste de direction : grand plateau en noyer, triple écran et fauteuil en cuir.
+  // Poste de direction : plateau et finitions selon le tier XP.
   const bd = P(820, 220), leather = mat("#222c30", { roughness: 0.8 });
-  const wood = mat("#573d2e"), metal = mat("#b7a27b", { metalness: 0.7, roughness: 0.35 });
+  const wood = mat(officeTier.wood), metal = mat(officeTier.metal, { metalness: 0.7, roughness: 0.35 });
   put(g, "rugRectangle", bd.x, bd.z + 0.1, 0, 4);
   box(g, 4.2, 0.12, 1.55, wood, bd.x, 0.9, bd.z);
   box(g, 4.24, 0.025, 1.59, metal, bd.x, 0.83, bd.z);
@@ -700,6 +798,11 @@ function buildResident(apt) {
     box(g, 0.04, 0.32, 0.04, metal, chair.x + dx, 0.71, chair.z + 0.05);
     box(g, 0.14, 0.07, 0.46, leather, chair.x + dx, 0.89, chair.z);
   }
+  if (officeTier.execChair) put(g, "loungeChairRelax", P(760, 165).x, P(760, 165).z, Math.PI / 2, 2.2);
+  if (officeTier.bossLamp) put(g, "lampSquareFloor", bd.x - 1.2, bd.z + 0.55, Math.PI / 4, 2.2);
+  if (officeTier.bossTv) put(g, "televisionModern", bd.x + 1.55, bd.z - 0.15, Math.PI, 2.4);
+  if (officeTier.coatRack) put(g, "coatRackStanding", P(700, 80).x, P(700, 80).z, 0, 2.5);
+  if (officeTier.speaker) put(g, "speaker", bd.x + 1.9, bd.z + 0.45, -Math.PI / 2, 2.2);
   f.owner = makeRobot("#e8c27a");
   // Fauteuil : coussin à 0,61 m ; bassin Sitting à 0,24 m.
   f.owner.position.copy(P(820, 175, 0.37));
@@ -1326,6 +1429,239 @@ function buildShared(def) {
     // Le videur, bras croisés près de l'ascenseur
     staff("#15171f", 70, 240, Math.PI / 2);
   }
+  if (def.id === "casino") {
+    // Casino : tables de jeu, machines à sous, bar, zone VIP - un seul espace unifié sans murs
+    const carpet = mat("#4a1830");
+    zone(20, 20, 980, 580, "#1a0f15");
+
+    tag("Tables de jeu", 20, 20);
+    tag("Machines à sous", 20, 300);
+    tag("Bar", 800, 20);
+    tag("VIP", 800, 300);
+  
+    // Tables de jeu (Blackjack, Roulette, Poker)
+    const tablePositions = [
+      [150, 120, "Blackjack"], [350, 120, "Roulette"], [550, 120, "Poker"],
+      [150, 350, "Blackjack"], [350, 350, "Baccarat"], [550, 350, "Poker"]
+    ];
+  
+    for (const [x, y, type] of tablePositions) {
+      const t = at(x, y);
+      // Table - base en bois
+      box(g, 1.8, 0.9, 1.2, mat("#1a3a2e"), t.x, 0.45, t.z);
+      // Contour doré du tapis (sous le tapis, pas glow)
+      box(g, 1.85, 0.04, 1.25, mat("#b8860b", { metalness: 0.7, roughness: 0.3 }), t.x, 0.92, t.z);
+      // Tapis de jeu vert (surface principale)
+      box(g, 1.65, 0.025, 1.15, mat("#0d5a1f", { roughness: 0.9 }), t.x, 0.945, t.z);
+      // Lignes de mise (marquages blanc discret)
+      box(g, 1.4, 0.005, 0.02, mat("#ffffff", { opacity: 0.4, transparent: true }), t.x, 0.96, t.z - 0.45);
+      box(g, 1.4, 0.005, 0.02, mat("#ffffff", { opacity: 0.4, transparent: true }), t.x, 0.96, t.z + 0.45);
+      box(g, 0.02, 0.005, 0.9, mat("#ffffff", { opacity: 0.4, transparent: true }), t.x - 0.7, 0.96, t.z);
+      box(g, 0.02, 0.005, 0.9, mat("#ffffff", { opacity: 0.4, transparent: true }), t.x + 0.7, 0.96, t.z);
+      // Jetons sur la table
+      for (let i = 0; i < 8; i++) {
+        const angle = (i / 8) * Math.PI * 2;
+        cyl(g, 0.08, 0.03, mat(i % 3 === 0 ? "#c0392b" : i % 3 === 1 ? "#27ae60" : "#2980b9"),
+          t.x + Math.cos(angle) * 0.6, 0.98, t.z + Math.sin(angle) * 0.6, 12);
+      }
+      // Croupier
+      staff(["#c98a3e", "#d9dde8", "#a37cf0", "#ff6fd8"][tablePositions.indexOf([x, y, type]) % 4], x, y + 80, Math.PI);
+      // Étiquette
+      sign(g, type, 1.2, 0.3, { color: "#ffd700", font: "700 60px Sora, sans-serif", blur: 8 }, t.x, 1.3, back + 0.05);
+    }
+  
+    // Machines à sous diversifiées - moins nombreuses, différents types
+    f.slotMachines = [];
+
+    // Configuration des machines : [x, y, type, nom, themeColor]
+    const machineConfigs = [
+      // Rangée 1 : machines classiques (3 rouleaux)
+      [150, 420, "classic", "LUCKY 7", "#ffd700"],
+      [350, 420, "classic", "DIAMOND", "#44ffff"],
+      [550, 420, "classic", "CHERRY", "#ff4444"],
+      [750, 420, "classic", "BELL", "#ffaa00"],
+      // Rangée 2 : vidéo poker / machines modernes
+      [200, 500, "video", "JACKS OR BETTER", "#44ff44"],
+      [400, 500, "video", "DEUCES WILD", "#ff44ff"],
+      [600, 500, "video", "BONUS POKER", "#4488ff"],
+      [800, 500, "video", "MEGA JACKPOT", "#ff6fd8"],
+      // Rangée 3 : machines à thème (plus espacées)
+      [280, 580, "themed", "PHARAOH'S GOLD", "#ffd700"],
+      [520, 580, "themed", "DRAGON'S FORTUNE", "#ff4444"],
+      [760, 580, "themed", "COSMIC QUEST", "#4444ff"],
+    ];
+
+    for (const [x, y, type, name, themeColor] of machineConfigs) {
+      const p = at(x, y);
+      const isVideo = type === "video";
+      const isThemed = type === "themed";
+      const height = isThemed ? 2.1 : isVideo ? 1.95 : 1.9;
+      const screenH = isThemed ? 1.1 : isVideo ? 1.0 : 0.9;
+
+      // Armoire principale selon le type
+      const cabinetMat = mat("#0d0a10", { metalness: 0.3, roughness: 0.7 });
+      box(g, 0.75, height, 0.55, cabinetMat, p.x, height / 2, p.z);
+
+      // Panneau supérieur (top box)
+      const topBoxH = isThemed ? 0.5 : 0.4;
+      box(g, 0.78, topBoxH, 0.58, mat("#1a1020", { metalness: 0.5 }), p.x, height - topBoxH / 2, p.z);
+      box(g, 0.7, 0.3, 0.04, glow(themeColor, 0.3), p.x, height - 0.05, p.z + 0.31);
+      sign(g, name, 0.6, 0.2, { color: themeColor, font: "700 48px Sora, sans-serif", blur: 4 }, p.x, height - 0.05, p.z + 0.33);
+
+      // Écran principal
+      const screenY = height - topBoxH - screenH / 2 - 0.05;
+      const screenBase = mat("#050515", { roughness: 0.1 });
+      const screen = box(g, 0.6, screenH, 0.03, screenBase, p.x, screenY, p.z + 0.29);
+      box(g, 0.62, screenH + 0.02, 0.02, mat("#b8860b", { metalness: 0.8, roughness: 0.2 }), p.x, screenY, p.z + 0.28);
+
+      // Contenu de l'écran selon le type
+      const reels = [];
+      const symbols = ["🍒", "🔔", "7️⃣", "⭐", "💎", "🍋", "🍊", "💰", "A♠", "K♥", "Q♦", "J♣"];
+      const numReels = isVideo ? 5 : 3;
+      const reelWidth = isVideo ? 0.11 : 0.15;
+      const startX = p.x - (numReels - 1) * reelWidth / 2;
+
+      for (let s = 0; s < numReels; s++) {
+        const reelX = startX + s * reelWidth;
+        const reelY = screenY;
+        const reelZ = p.z + 0.30;
+        box(g, reelWidth, screenH - 0.1, 0.015, mat("#0a0a2a"), reelX, reelY, reelZ);
+        const reelSymbols = [];
+        const visibleSymbols = isVideo ? 4 : 3;
+        for (let v = 0; v < visibleSymbols; v++) {
+          const symY = reelY + (screenH - 0.1) / 2 - 0.1 - v * (screenH - 0.1) / visibleSymbols;
+          const sym = symbols[Math.floor(Math.random() * symbols.length)];
+          const symMesh = sign(g, sym, reelWidth * 0.8, 0.12,
+            { color: ["#ffd700", "#ff4444", "#44ff44", "#4444ff", "#ff8800", "#ff44ff"][Math.floor(Math.random() * 6)],
+              font: `600 ${isVideo ? 36 : 48}px Sora, sans-serif` }, reelX, symY, reelZ + 0.01);
+          reelSymbols.push(symMesh);
+        }
+        reels.push({ x: reelX, y: reelY, z: reelZ, symbols: reelSymbols, height: screenH - 0.1 });
+      }
+
+      // Panneau boutons
+      const buttonY = 0.7;
+      box(g, 0.7, 0.35, 0.05, mat("#1a1020", { metalness: 0.4 }), p.x, buttonY, p.z + 0.3);
+      const btnLabels = isVideo ? ["DEAL", "HOLD", "CASH"] : ["SPIN", "BET", "CASH"];
+      for (let b = 0; b < 3; b++) {
+        const btnX = p.x - 0.15 + b * 0.15;
+        cyl(g, 0.045, 0.06, glow(b === 0 ? "#ff4444" : b === 1 ? "#ffd700" : "#44ff44", 0.8), btnX, buttonY + 0.03, p.z + 0.33, 16);
+        sign(g, btnLabels[b], 0.12, 0.05, { color: "#fff", font: "600 24px Sora, sans-serif" }, btnX, buttonY + 0.03, p.z + 0.34);
+      }
+
+      // Levier latéral (seulement pour classic)
+      let leverArm = null, handle = null;
+      if (!isVideo) {
+        const leverBase = p.x + 0.38;
+        cyl(g, 0.02, 0.05, mat("#b8860b", { metalness: 0.9 }), leverBase, 1.15, p.z + 0.05, 8);
+        leverArm = cyl(g, 0.025, 0.45, mat("#c0392b", { metalness: 0.8 }), leverBase, 1.35, p.z + 0.05, 8);
+        handle = new THREE.Mesh(new THREE.TorusGeometry(0.06, 0.015, 8, 16), mat("#b8860b", { metalness: 0.9 }));
+        handle.position.set(leverBase, 1.58, p.z + 0.05);
+        handle.rotation.x = Math.PI / 2;
+        g.add(handle);
+      }
+
+      // Bac à pièces
+      box(g, 0.5, 0.08, 0.15, mat("#b8860b", { metalness: 0.7, roughness: 0.3 }), p.x, 0.12, p.z + 0.35);
+      box(g, 0.45, 0.03, 0.1, mat("#0d0a10"), p.x, 0.18, p.z + 0.35);
+
+      // Éclairage d'ambiance
+      box(g, 0.7, 0.02, 0.5, glow(themeColor, 0.15), p.x, 0.03, p.z);
+
+      // Décoration thème pour machines thématiques
+      if (isThemed) {
+        // Éléments décoratifs sur les côtés
+        for (const side of [-1, 1]) {
+          const decoX = p.x + side * 0.4;
+          const deco = new THREE.Group();
+          deco.position.set(decoX, 1.2, p.z + 0.1);
+          g.add(deco);
+          // Petit élément 3D décoratif
+          box(deco, 0.15, 0.6, 0.15, mat(themeColor, { metalness: 0.5, emissive: themeColor, emissiveIntensity: 0.3 }), 0, 0.3, 0);
+          box(deco, 0.2, 0.2, 0.2, glow(themeColor, 0.8), 0, 0.7, 0);
+        }
+      }
+
+      // Stocker la machine pour animation
+      f.slotMachines.push({
+        pos: { x: p.x, z: p.z },
+        screen,
+        reels,
+        lever: leverArm,
+        handle,
+        isPlaying: false,
+        playTimer: 0,
+        spinSpeed: 0,
+        type,
+        themeColor
+      });
+    }
+  
+    // Bar
+    const bar = at(880, 150);
+    box(g, 3.0, 1.1, 0.7, mat("#2a1018"), bar.x, 0.55, bar.z);
+    box(g, 3.2, 0.08, 0.8, glow("#ffd700", 0.5), bar.x, 1.12, bar.z);
+    // 3 tabourets centrés sur le bar (bar à x=880, largeur 3.0 -> 865 à 895)
+    // at(880) = 7.6, on veut 3 tabourets vers 7.1, 7.6, 8.1 -> map: 855, 880, 905
+    for (const x of [855, 880, 905]) {
+      put(g, "stoolBar", at(x, 100).x, at(x, 100).z, Math.PI / 2);
+    }
+    staff("#2b2f3a", 940, 150, -Math.PI / 2);
+    // Bouteilles
+    box(g, 0.25, 0.04, 5.5, mat("#1a0a10"), at(950, 150).x, 1.6, at(950, 150).z);
+    box(g, 0.25, 0.04, 5.5, mat("#1a0a10"), at(950, 150).x, 2.1, at(950, 150).z);
+    for (let k = 0; k < 20; k++) {
+      const p = at(950, 80 + (k % 10) * 50);
+      const colors = ["#ffd700", "#c0392b", "#27ae60", "#2980b9", "#8e44ad", "#e67e22", "#1abc9c", "#34495e", "#f39c12", "#e74c3c"];
+      cyl(g, 0.04, 0.3, glow(colors[k % colors.length], 0.6), p.x, k < 10 ? 1.75 : 2.25, p.z, 8);
+    }
+  
+    // Zone VIP - au fond, sans séparation (décalée pour éviter les machines)
+    for (const y of [360, 520]) put(g, "loungeDesignSofa", at(960, y).x, at(960, y).z, 0, 2.2);
+    put(g, "tableCoffee", at(960, 440).x, at(960, 440).z, 0, 2);
+    sign(g, "VIP", 1.4, 0.5, { color: "#ffd700", font: "700 90px Sora, sans-serif", w: 256 }, at(970, 300).x, 2.2, at(0, 300).z);
+  
+    // Champagne et cocktails
+    const champagne = at(960, 440);
+    cyl(g, 0.14, 0.22, mat("#8995a7", { metalness: 0.8, roughness: 0.25 }), champagne.x, 0.85, champagne.z);
+    cyl(g, 0.055, 0.4, mat("#294a36"), champagne.x, 1.02, champagne.z, 12);
+    for (const dx of [-0.3, 0.3]) {
+      cyl(g, 0.015, 0.18, mat("#c5dfeb"), champagne.x + dx, 0.87, champagne.z);
+      cyl(g, 0.06, 0.12, mat("#eed18a"), champagne.x + dx, 1.02, champagne.z, 12);
+    }
+  
+    // Cocktails sur le bar
+    for (const y of [80, 180, 280, 380, 480]) {
+      const p = at(880, y);
+      cyl(g, 0.06, 0.18, mat("#b8dce8", { transparent: true, opacity: 0.6 }), p.x, 1.24, p.z, 12);
+      cyl(g, 0.05, 0.09, glow(y % 2 === 0 ? "#ee966e" : "#9fd67b", 0.4), p.x, 1.22, p.z, 12);
+      box(g, 0.015, 0.2, 0.015, mat("#f3e5c4"), p.x + 0.025, 1.35, p.z).rotation.z = 0.25;
+    }
+  
+    // Lumières d'ambiance néon
+    f.neons = [];
+    for (let i = 0; i < 8; i++) {
+      const colors = ["#ff6fd8", "#7ec3f0", "#ffd36e", "#4ade80", "#ff4d6d", "#a37cf0", "#ff8800", "#44ff44"];
+      const neon = box(g, 4, 0.15, 0.05, glow(colors[i], 1.2), 400, 1.5 + i * 0.4, -5.9);
+      neon.rotation.y = Math.PI / 2;
+      f.neons.push({ mesh: neon, color: colors[i], phase: i * 0.5 });
+    }
+  
+    // Machines à fumée
+    f.haze = [200, 700].map(x => {
+      const p = at(x, 80);
+      box(g, 0.45, 0.25, 0.6, mat("#181b29"), p.x, 0.23, p.z);
+      return ambientSmoke(g, P(x, 90, 0.4), "#ae92d1", 20, 1.0, 1.2);
+    });
+  
+    // Vigile à l'entrée
+    staff("#15171f", 100, 240, Math.PI / 2);
+  
+    // Pas de garde-corps : espace casino entièrement ouvert pour dégager machines à sous et ascenseur
+  
+    // Panneau d'entrée
+    sign(g, "CASINO", 4, 1, { color: "#ffd700", font: "900 120px Sora, sans-serif", blur: 20 }, 0, 3.5, -5.8);
+  }
   return f;
 }
 
@@ -1404,8 +1740,23 @@ const ray = new THREE.Raycaster(), mouse = new THREE.Vector2();
 
 function syncFloors(list) {
   residents = list;
-  order = [...SHARED.filter(d => d.top).map(d => d.id), ...list.map(a => a.slug), ...SHARED.filter(d => !d.top).map(d => d.id)];
-  for (const a of list) if (!floors.has(a.slug)) floors.set(a.slug, buildResident(a));
+  const residentKeys = list.flatMap(a => wingsOf(a).map(w => `${a.slug}:${w.id}`));
+  order = [...SHARED.filter(d => d.top).map(d => d.id), ...residentKeys, ...SHARED.filter(d => !d.top).map(d => d.id)];
+  for (const a of list) {
+    for (const w of wingsOf(a)) {
+      const k = `${a.slug}:${w.id}`;
+      const tier = w.id === "work" ? officeTierForLevel(a.game?.level ?? 1) : null;
+      const prev = floors.get(k);
+      if (!prev) {
+        floors.set(k, buildResident(a, w, tier ?? undefined));
+      } else if (w.id === "work" && prev.officeTierId !== tier.id) {
+        for (const [, g] of agents) if (g.userData.floor === k) prev.group.remove(g);
+        removeFloor(k);
+        floors.set(k, buildResident(a, w, tier));
+        for (const [, g] of agents) if (g.userData.floor === k) floors.get(k).group.add(g);
+      }
+    }
+  }
   for (const d of SHARED) if (!floors.has(d.id)) floors.set(d.id, buildShared(d));
   for (const [k, f] of floors) if (!order.includes(k)) {
     f.group.traverse(o => o.isCSS2DObject && o.element.remove());
@@ -1418,7 +1769,9 @@ function syncFloors(list) {
 
 function floorLabel(i) {
   const f = floors.get(order[i]);
-  return f.kind === "shared" ? f.def.icon : f.key === residents[0]?.slug ? "PH" : String(order.length - i);
+  if (f.kind === "shared") return f.def.icon;
+  if (f.wingId === "work" && f.residentSlug === residents[0]?.slug) return "PH";
+  return f.wing?.icon ?? "🏢";
 }
 
 function update(now) {
@@ -1430,7 +1783,8 @@ function update(now) {
     let place = placeOf(s, now), visit = paused ? breakVisit(hash(`${s.src}:${s.host}:${s.sid}`), now - s.updated, state === "silencieux").visit : null;
     // Un agent termine son trajet de pause avant de choisir une autre destination.
     if (paused && u?.path.length && u.state === state && u.s.updated === s.updated) { place = u.place; visit = u.pauseVisit; }
-    const floor = FLOOR_OF[place] ?? a.slug, k = floor + "/" + place;
+    const floor = homeFloor(a, s, place, FLOOR_OF);
+    const k = floor + "/" + place;
     if (!groups.has(k)) groups.set(k, []);
     groups.get(k).push({ a, s, key, floor, place, paused, seed, visit });
   }
@@ -1503,10 +1857,19 @@ function update(now) {
 
   // Écrans allumés aux postes occupés, alarme chez le résident quand un agent attend son accord
   for (const a of residents) {
-    const f = floors.get(a.slug), busy = new Set(), visitors = groups.get(a.slug + "/boss") ?? [];
-    for (const w of groups.get(a.slug + "/open") ?? []) busy.add(want.get(w.key).index);
-    f.screens.forEach((sc, k) => { sc.material = busy.has(k) ? glow("#4fb6ff", 1.4) : mat("#1d2433"); });
-    f.alert = visitors.length > 0;
+    for (const w of wingsOf(a)) {
+      const fk = `${a.slug}:${w.id}`;
+      const f = floors.get(fk);
+      if (!f?.screens) continue;
+      const busy = new Set();
+      for (const row of groups.get(`${fk}/open`) ?? []) {
+        const wnt = want.get(row.key);
+        if (wnt) busy.add(wnt.index);
+      }
+      f.screens.forEach((sc, k) => { sc.material = busy.has(k) ? glow("#4fb6ff", 1.4) : mat("#1d2433"); });
+    }
+    const fw = floors.get(`${a.slug}:work`);
+    if (fw) fw.alert = (groups.get(`${a.slug}:work/boss`) ?? []).length > 0;
   }
 
 
@@ -1644,6 +2007,102 @@ function animate(frameTime = performance.now()) {
     u.ring.visible = u.state !== "autorisation" || Math.sin(t * 10) > -0.3;
   }
 
+  // Animation des machines à sous du casino (seulement quand un agent est dessus)
+  const casinoFloor = floors.get("casino");
+  if (casinoFloor && casinoFloor.slotMachines) {
+    for (const machine of casinoFloor.slotMachines) {
+      // Vérifier si un agent est assis sur cette machine (proximité < 0.6)
+      let agentPlaying = false;
+      for (const g of agents.values()) {
+        const u = g.userData;
+        if (u.floor === "casino" && u.place === "casino" && u.slot) {
+          const dx = u.slot.x - machine.pos.x;
+          const dz = u.slot.z - machine.pos.z;
+          if (Math.sqrt(dx * dx + dz * dz) < 0.6 && u.state === "fini") {
+            agentPlaying = true;
+            break;
+          }
+        }
+      }
+
+      if (agentPlaying && !machine.isPlaying) {
+        // Démarrer l'animation
+        machine.isPlaying = true;
+        machine.playTimer = 3 + Math.random() * 2; // 3-5 secondes
+        machine.spinSpeed = 15 + Math.random() * 10;
+      }
+
+      if (machine.isPlaying) {
+        machine.playTimer -= dt;
+
+        // Faire tourner les rouleaux - adaptatif selon le nombre de symboles visibles
+        for (const reel of machine.reels) {
+          const symbolSpacing = reel.height / reel.symbols.length;
+          const resetThreshold = reel.y - reel.height / 2 - symbolSpacing;
+          const resetOffset = symbolSpacing * reel.symbols.length;
+
+          for (const symMesh of reel.symbols) {
+            symMesh.position.y -= machine.spinSpeed * dt;
+            // Reboucler le symbole quand il sort de l'écran
+            if (symMesh.position.y < resetThreshold) {
+              symMesh.position.y += resetOffset;
+              // Changer le symbole aléatoirement
+              const symbols = ["🍒", "🔔", "7️⃣", "⭐", "💎", "🍋", "🍊", "💰", "A♠", "K♥", "Q♦", "J♣"];
+              const newSym = symbols[Math.floor(Math.random() * symbols.length)];
+              const newColor = ["#ffd700", "#ff4444", "#44ff44", "#4444ff", "#ff8800", "#ff44ff"][Math.floor(Math.random() * 6)];
+              if (symMesh.element) {
+                symMesh.element.textContent = newSym;
+                symMesh.element.style.color = newColor;
+              }
+            }
+          }
+        }
+
+        // Animer le levier (seulement pour machines classic)
+        if (machine.lever && machine.handle) {
+          const swing = Math.sin(t * machine.spinSpeed * 0.5) * 0.15;
+          machine.lever.rotation.z = swing;
+          machine.handle.rotation.z = swing;
+        }
+
+        // Effet lumineux sur l'écran
+        if (machine.screen && machine.screen.material) {
+          const pulse = Math.sin(t * 20) * 0.3 + 0.7;
+          machine.screen.material.emissiveIntensity = pulse * 0.5;
+          machine.screen.material.emissive = machine.screen.material.emissive || new THREE.Color(machine.themeColor || "#ff6fd8");
+        }
+
+        // Arrêter après le timer
+        if (machine.playTimer <= 0) {
+          machine.isPlaying = false;
+          machine.spinSpeed = 0;
+          if (machine.lever) machine.lever.rotation.z = 0;
+          if (machine.handle) machine.handle.rotation.z = 0;
+          if (machine.screen && machine.screen.material) {
+            machine.screen.material.emissiveIntensity = 0;
+          }
+          // Résultat final - aligner les symboles (jackpot occasionnel)
+          const jackpot = Math.random() < 0.15;
+          const jackpotSym = machine.type === "video" ? "A♠" : "7️⃣";
+          const normalSymbols = machine.type === "video"
+            ? ["A♠", "K♥", "Q♦", "J♣", "10♠", "9♥", "8♦"]
+            : ["🍒", "🔔", "⭐", "💎", "🍋", "🍊", "💰"];
+          for (let s = 0; s < machine.reels.length; s++) {
+            const reel = machine.reels[s];
+            const finalSym = jackpot ? jackpotSym : normalSymbols[Math.floor(Math.random() * normalSymbols.length)];
+            const finalColor = jackpot ? "#ffd700" : ["#ffd700", "#ff4444", "#44ff44", "#4444ff", "#ff8800", "#ff44ff"][Math.floor(Math.random() * 6)];
+            for (let v = 0; v < reel.symbols.length; v++) {
+              if (reel.symbols[v] && reel.symbols[v].element) {
+                reel.symbols[v].element.textContent = finalSym;
+                reel.symbols[v].element.style.color = finalColor;
+              }
+            }
+          }
+        }
+      }
+    }
+  }
+
   // La caméra suit l'étage choisi ; le toit coiffe le penthouse.
   const visiting = data?.viewer?.role === "spectator" && !tourPaused;
   if (visiting) {
@@ -1731,6 +2190,18 @@ $("#tourPause").addEventListener("click", () => {
 function setFocus(i) {
   focus = Math.max(0, Math.min(order.length - 1, i));
   lastMove = clock.elapsedTime;
+  const key = order[focus];
+  const me = JSON.parse(localStorage.getItem(ME) ?? "null")?.slug;
+  const { slug, wing } = parseFloorKey(key);
+  const token = sessionStorage.getItem("penthouse.cle");
+  if (token && me && slug === me && wing && wing !== "work") {
+    postGame("/api/game/visit", token, { floor: key }).then(j => {
+      showCelebrations(j.toasts);
+      const apt = myApt();
+      if (apt && j.game) apt.game = j.game;
+      if (data) render();
+    }).catch(() => {});
+  }
   if (data) render();
 }
 addEventListener("keydown", e => {
@@ -1776,6 +2247,7 @@ let previousApprovals = new Map(), activeApproval = null, lastApprovalPulse = 0;
 function updateApprovalAlerts(slug) {
   const { pending, current, fresh } = approvalState(data.apartments, previousApprovals, slug);
   previousApprovals = current;
+  if (slug) pushApprovalNotifications(fresh, TOOLS);
   activeApproval = fresh[0] ?? pending[0] ?? null;
   $("#permissionBanner").hidden = !pending.length;
   $("#permissionGlow").hidden = !pending.length;
@@ -1792,7 +2264,7 @@ function updateApprovalAlerts(slug) {
 $("#showPermission").addEventListener("click", () => {
   if (!activeApproval) return;
   const { apartment, session } = activeApproval;
-  setFocus(order.indexOf(apartment.slug)); showAgent(apartment, session);
+  setFocus(order.indexOf(`${apartment.slug}:work`) >= 0 ? order.indexOf(`${apartment.slug}:work`) : order.findIndex(k => k.startsWith(apartment.slug + ":"))); showAgent(apartment, session);
 });
 
 function render() {
@@ -1804,24 +2276,49 @@ function render() {
   const list = [...data.apartments].sort((x, y) => x.created - y.created);
   const first = !order.length;
   syncFloors(list);
-  if (first) focus = me && order.includes(me) ? order.indexOf(me) : Math.min(1, order.length - 1);
+  if (first) focus = me && order.includes(`${me}:work`) ? order.indexOf(`${me}:work`) : Math.min(1, order.length - 1);
   update(now);
-  order.forEach((key, i) => { const f = floors.get(key); f.tag.element.innerHTML = `<span>${floorLabel(i)}</span> ${esc(f.name)}`; });
+  order.forEach((key, i) => {
+    const f = floors.get(key), apt = list.find(x => x.slug === f.residentSlug);
+    const lvl = apt?.game?.level && f.residentSlug === me && f.wingId === "work" ? `<span class="lvl-game">· ${apt.game.level}</span>` : "";
+    f.tag.element.innerHTML = `<span>${floorLabel(i)}${lvl}</span> ${esc(f.name)}`;
+  });
+
+  let xpHost = $("#xpHost");
+  if (!xpHost) {
+    xpHost = document.createElement("div");
+    xpHost.id = "xpHost";
+    $(".brandline").appendChild(xpHost);
+  }
+  const mine = me ? list.find(x => x.slug === me) : null;
+  xpHost.innerHTML = mine?.game && !spectator ? xpBarHtml(mine.game, esc) : "";
 
   const by = (ss, st) => ss.filter(s => stateOf(s, now) === st).length;
   const present = key => [...agents.values()].filter(g => g.userData.target === key);
   $("#floorNav").innerHTML = order.map((key, i) => {
-    const f = floors.get(key), a = list.find(x => x.slug === key), here = present(key);
+    const f = floors.get(key), a = f.residentSlug ? list.find(x => x.slug === f.residentSlug) : null, here = present(key);
     const busy = a ? by(a.sessions, "travaille") : here.length, alert = a && by(a.sessions, "autorisation");
-    return `<button type="button" data-floor="${i}" class="${i === focus ? "on" : ""}${key === me ? " me" : ""}${f.kind === "shared" ? " shared" : ""}" aria-current="${i === focus}">
-      <span class="lvl">${floorLabel(i)}</span><span class="nm">${esc(f.name)}</span><span class="ct">${alert ? '<i class="d auth"></i>' : ""}${busy}</span></button>`;
+    const isMe = f.residentSlug === me;
+    return `<button type="button" data-floor="${i}" class="${i === focus ? "on" : ""}${isMe ? " me" : ""}${f.kind === "shared" ? " shared" : ""}${f.wingId && f.wingId !== "work" ? " wing-extra" : ""}" aria-current="${i === focus}">
+      <span class="lvl">${floorLabel(i)}</span><span class="nm">${esc(f.name)}</span><span class="ct">${alert && f.wingId === "work" ? '<i class="d auth"></i>' : ""}${busy}</span></button>`;
   }).join("");
 
   const f = floors.get(order[focus]);
   if (f?.kind === "resident") {
-    const a = list.find(x => x.slug === f.key), u = a.usage ?? {}, svcs = a.health?.services ?? [];
+    const a = list.find(x => x.slug === f.residentSlug), u = a.usage ?? {}, svcs = a.health?.services ?? [];
     const machines = Object.entries(a.seen ?? {}).filter(([m]) => m !== "?").map(([m, v]) => `${esc(m)} ${now - v.t < 900 ? "●" : "○"}`);
-    $("#aptPanel").innerHTML = `<p class="kicker">${a.slug === list[0].slug ? "Penthouse" : "Étage " + (order.length - focus)}${a.slug === me ? " · chez toi" : ""}</p><h2>${esc(a.name)}</h2>
+    const mine = a.slug === me;
+    const alerts = mine ? quotaAlerts(u, now, quotaRemaining) : [];
+    $("#quotaBanner").hidden = !alerts.length;
+    $("#quotaBanner").textContent = alerts.length ? "Quota bas · " + alerts.join(" · ") : "";
+    const tagline = a.profile?.tagline ? `<p class="tagline-line">${esc(a.profile.tagline)}</p>` : "";
+    const machineBlock = mine && f.wingId === "work" ? `<div class="machine-block"><h4>Machines reliées</h4>${machineStatusRows(a, now, TOOLS, esc, hm)}</div>` : "";
+    const todayLine = mine && todayBadges(a.today) ? `<p class="extras-muted">Aujourd’hui · ${esc(todayBadges(a.today))}</p>` : "";
+    const wingLine = `<p class="kicker">${esc(f.wing?.icon ?? "")} ${esc(f.wing?.name ?? "Aile")}${f.wing?.minLevel ? ` · dès nv. ${f.wing.minLevel}` : ""}</p>`;
+    const wingPlay = mine && a.game ? wingActionsHtml(a.game, f.key, esc) : "";
+    const wingHint = mine && (a.game?.wings?.length ?? 1) < 4 ? `<p class="extras-muted">Monte de niveau pour débloquer Labo (4), Ops (7), Studio (12).</p>` : "";
+    const officeBlock = f.wingId === "work" && a.game?.office ? officePanelHtml(a.game.office, esc) : "";
+    $("#aptPanel").innerHTML = `${wingLine}<p class="kicker">${a.slug === list[0].slug && f.wingId === "work" ? "Penthouse" : esc(f.name)}${mine ? " · chez toi" : ""}</p><h2>${esc(a.name)}</h2>${tagline}${officeBlock}${wingHint}${wingPlay}
       <div class="apt-c"><span><i class="d" style="background:var(--work)"></i><b>${by(a.sessions, "travaille")}</b> au travail</span>
       <span><i class="d" style="background:var(--auth)"></i><b>${by(a.sessions, "autorisation")}</b> ${spectator ? "attend un accord" : "attend ton accord"}</span>
       <span><i class="d" style="background:var(--wait)"></i><b>${by(a.sessions, "attend")}</b> sur le toit, attend la suite</span>
@@ -1831,19 +2328,29 @@ function render() {
       <div class="svcs">${svcs.length ? `Services <b style="color:${svcs.every(s => s.ok) ? "var(--work)" : "var(--auth)"}">${svcs.filter(s => s.ok).length}/${svcs.length}</b>` : ""}
       ${svcs.filter(s => !s.ok).map(s => `<span style="color:var(--auth)">${esc(s.label)} arrêté</span>`).join("")}
       ${machines.length ? `<span>Machines : ${machines.join(" · ")}</span>` : ""}</div>
+      ${todayLine}${machineBlock}
       ${a.sessions.length ? "" : '<p class="none">Aucun agent relié pour l\'instant.</p>'}`;
-  } else if (f) {
-    // Étage commun : qui est là, résident par résident.
+  } else if (f?.kind === "shared") {
     const here = present(f.key), byRes = new Map();
     for (const g of here) { const n = g.userData.apt.name; byRes.set(n, [...(byRes.get(n) ?? []), g.userData]); }
+    const myGame = myApt();
+    const myAgentsHere = here.filter(g => g.userData.apt.slug === me).length;
+    const spacePlay = me && myGame?.game && !spectator ? spaceActionsHtml(myGame.game, f.key, myAgentsHere, esc) : "";
     $("#aptPanel").innerHTML = `<p class="kicker">${esc(f.def.kicker)}</p><h2>${f.def.icon} ${esc(f.name)}</h2>
       ${f.key === "lounge" ? remote() : ""}
       <div class="apt-c"><span><b>${here.length}</b> agent(s) ici, de <b>${byRes.size}</b> résident(s)</span></div>
+      ${spacePlay}
       ${[...byRes].map(([n, ss]) => `<div class="who-row"><b>${esc(n)}</b><span>${ss.map(u => `${esc(TOOLS[u.s.src]?.name ?? u.s.src)} · ${f.key === "lounge" ? esc(PLACE_FR[u.place]) : esc(u.s.project ?? "")}`).join("<br>")}</span></div>`).join("")
         || '<p class="none">Personne pour l\'instant.</p>'}`;
   }
 
   const all = list.flatMap(x => x.sessions);
+  const board = activityLeaderboard(list);
+  const lb = $("#leaderboardDlg");
+  if (board.length && !spectator) {
+    lb.hidden = false;
+    lb.innerHTML = `<h4>Activité du jour</h4><ol>${board.map((r, i) => `<li><b>${esc(r.name)}</b> · ${r.actions} act. / ${r.sessions} sess.</li>`).join("")}</ol>`;
+  } else lb.hidden = true;
   $("#totals").innerHTML = `<span><b>${list.length}</b> résident(s)</span><span><i class="d" style="background:var(--work)"></i><b>${by(all, "travaille")}</b> au travail</span>`
     + `<span><i class="d" style="background:var(--auth)"></i><b>${by(all, "autorisation")}</b> attendent un accord</span>`;
   const feed = list.flatMap(x => x.feed.map(e => ({ ...e, who: x.name }))).sort((x, y) => y.t - x.t).slice(0, 14);
@@ -1861,6 +2368,11 @@ function remote() {
 }
 $("#aptPanel").addEventListener("click", e => {
   if (data?.viewer?.role === "spectator") return;
+  const act = e.target.closest(".space-act, .wing-act");
+  if (act && !act.disabled) {
+    runGameAction(act.dataset.action, act.dataset.floor, Number(act.dataset.agents)).catch(err => alert(err.message));
+    return;
+  }
   const b = e.target.closest("[data-tv]");
   if (!b) return;
   tvChoice = b.dataset.tv;
@@ -1868,6 +2380,7 @@ $("#aptPanel").addEventListener("click", e => {
   tvBy = JSON.parse(localStorage.getItem(ME) ?? "null")?.name ?? "";
   render();
   fetch("/api/tv", { method: "POST", body: JSON.stringify({ channel: tvChoice, by: tvBy }) });
+  if (order[focus] === "lounge") runGameAction("lounge_tv", "lounge", 0).catch(() => {});
 });
 $("#floorNav").addEventListener("click", e => { const b = e.target.closest("[data-floor]"); if (b) setFocus(Number(b.dataset.floor)); });
 
@@ -1933,6 +2446,12 @@ function showLink() {
     <details><summary>Grok Bot</summary><p>Grok Bot travaille sur son ordinateur cloud. Copie ces instructions dans Grok Bot pour ajouter le connecteur MCP ; il te demandera la clé de ton étage dans une saisie sécurisée.</p>
     <div class="code"><span>Instructions de connexion pour Grok Bot</span><button type="button" data-copy="${esc(grokSetupPrompt())}">Copier</button></div>
     <p>Suivi déclaré par le Bot : début, attente, autorisation, erreur, fin. Ce n’est pas une détection automatique depuis ton Mac. Les quotas Grok ne sont pas remontés par ce connecteur.</p></details>
+    <details><summary>Cursor (Composer / Agent)</summary><p>Signale manuellement ou via un hook local l’état de tes sessions Cursor, sans envoyer le contenu du chat.</p>
+    <div class="code"><span>python3 "$HOME/.config/tour/cursor-notify.py" working --session demo --project MonProjet</span><button type="button" data-copy='python3 "$HOME/.config/tour/cursor-notify.py" working --session demo --project MonProjet'>Copier</button></div>
+    <p>Télécharge le script depuis <a href="/cursor-notify.py" download="cursor-notify.py">cursor-notify.py</a> dans <code>~/.config/tour/</code> après <code>install.sh</code>. États : <code>working</code>, <code>idle</code>, <code>finished</code>, <code>approval</code>, <code>error</code>.</p></details>
+    <details><summary>Webhook générique</summary><p>POST JSON sur <code>${esc(location.origin)}/e?src=custom&amp;host=mon-service</code> avec l’en-tête <code>X-Tour-Token</code>. Corps minimal :</p>
+    <div class="code"><span>{"hook_event_name":"cursor:working","session_id":"tache-1","cwd":"mon-projet"}</span><button type="button" data-copy='{"hook_event_name":"cursor:working","session_id":"tache-1","cwd":"mon-projet"}'>Copier</button></div>
+    <p>Remplace <code>src=custom</code> par un nom court (20 caractères max). Mappe tes événements vers les états connus (<code>cursor:*</code>, <code>n8n:*</code>, <code>grok:*</code>) ou les hooks Claude/Codex.</p></details>
     <details><summary>Hermes et n8n</summary><p>La commande ci-dessus suit les journaux de Claude Code et Codex. Hermes et n8n se relient sur la machine ou le serveur qui les exécute ; ils ne sont pas installés automatiquement.</p>
     <p><b>Hermes</b> : si tes agents passent déjà par une tour locale, conserve ce pont. Pour une nouvelle installation de passerelle, récupère le <a href="/hermes-handler.py" download="handler.py">handler</a> et son <a href="/hermes-hook.yaml" download="HOOK.yaml">manifeste</a>, puis active ce hook dans Hermes. Le handler lit l’adresse et la clé dans <code>~/.config/tour/</code>.</p>
     <p><b>n8n</b> : ajoute un nœud HTTP Request aux étapes début, réussite et erreur. Méthode POST ; URL <code>${esc(location.origin)}/e?src=n8n&amp;host=n8n</code> ; en-tête <code>X-Tour-Token</code> avec la clé de ton étage dans un credential n8n.</p>
@@ -1976,6 +2495,73 @@ document.addEventListener("click", e => {
 });
 $("#linkBtn").addEventListener("click", showLink);
 
+function showHistory() {
+  const me = JSON.parse(localStorage.getItem(ME) ?? "null");
+  const apt = data?.apartments.find(a => a.slug === me?.slug);
+  if (!apt) return;
+  const { sessionRows, feedRows } = historyEntries(apt, TOOLS, esc, hm);
+  $("#historyBody").innerHTML = `<h4>Sessions</h4><table class="history-table"><thead><tr><th>Heure</th><th>Outil</th><th>Projet</th><th>État</th><th>Action</th></tr></thead><tbody>${sessionRows || "<tr><td colspan='5'>Rien pour l'instant.</td></tr>"}</tbody></table>
+    <h4>Fil récent</h4><table class="history-table"><thead><tr><th>Heure</th><th>Outil</th><th>Projet</th><th colspan="2">Action</th></tr></thead><tbody>${feedRows || "<tr><td colspan='5'>Rien pour l'instant.</td></tr>"}</tbody></table>`;
+  $("#historyDlg").showModal();
+  $("#historyCsvBtn").onclick = () => {
+    const blob = new Blob([historyCsv(apt)], { type: "text/csv;charset=utf-8" });
+    const a = document.createElement("a"); a.href = URL.createObjectURL(blob); a.download = `penthouse-${apt.slug}-${new Date().toISOString().slice(0, 10)}.csv`;
+    a.click(); URL.revokeObjectURL(a.href);
+  };
+}
+function refreshMissionsDlg() {
+  const apt = myApt();
+  if (!apt?.game) return;
+  $("#missionsXp").innerHTML = xpBarHtml(apt.game, esc);
+  $("#missionsBadges").innerHTML = badgesHtml(apt.game, esc);
+  const wings = (apt.game.wings ?? []).map(w => `<span class="badge">${esc(w.icon)} ${esc(w.name)}</span>`).join("");
+  $("#missionsBody").innerHTML = (wings ? `<p class="extras-muted">Ailes débloquées</p><div class="badge-row">${wings}</div>` : "") + missionsHtml(apt.game, esc);
+}
+function showMissions() {
+  refreshMissionsDlg();
+  $("#missionsDlg").showModal();
+}
+$("#missionsBtn").addEventListener("click", showMissions);
+$("#missionsBody").addEventListener("click", e => {
+  const b = e.target.closest(".quest-claim");
+  if (!b) return;
+  runGameClaim(b.dataset.quest).catch(err => alert(err.message));
+});
+
+$("#historyBtn").addEventListener("click", showHistory);
+
+function showCustomize() {
+  const me = JSON.parse(localStorage.getItem(ME) ?? "null");
+  const apt = data?.apartments.find(a => a.slug === me?.slug);
+  if (!apt) return;
+  const form = $("#customizeForm");
+  form.accent.value = apt.profile?.accent ?? "#e8c27a";
+  form.tagline.value = apt.profile?.tagline ?? "";
+  $("#customizeDlg").showModal();
+}
+$("#customizeBtn").addEventListener("click", showCustomize);
+$("#customizeForm").addEventListener("submit", async e => {
+  e.preventDefault();
+  const token = sessionStorage.getItem("penthouse.cle");
+  if (!token) { $("#customizeErr").textContent = "Clé requise : ouvre Relier mes agents."; return; }
+  const fields = Object.fromEntries(new FormData(e.currentTarget));
+  $("#customizeErr").textContent = "";
+  try {
+    await saveProfile(token, { accent: fields.accent, tagline: fields.tagline });
+    $("#customizeDlg").close();
+    await tick();
+  } catch (error) { $("#customizeErr").textContent = error.message; }
+});
+
+$("#notifyBtn").addEventListener("click", async () => {
+  if (typeof Notification === "undefined") { alert("Notifications non supportées par ce navigateur."); return; }
+  const p = await Notification.requestPermission();
+  $("#notifyBtn").textContent = p === "granted" ? "Alertes activées" : "Alertes refusées";
+});
+
+applyKioskFromUrl();
+startStateStream(payload => { lastStreamAt = Date.now(); data = payload; applyLoadedState(); });
+
 $("#spectate").addEventListener("submit", async e => {
   e.preventDefault();
   const form = e.currentTarget, button = form.querySelector("button");
@@ -2015,9 +2601,38 @@ $("#join").addEventListener("submit", async e => {
   finally { button.disabled = false; }
 });
 
-let tickPending = false;
+let tickPending = false, lastStreamAt = 0;
+function applyLoadedState() {
+  if (!data) return;
+  const spectator = data.viewer?.role === "spectator";
+  if (spectator && !document.body.dataset.spectating) {
+    tourStarted = clock.elapsedTime; tourPaused = false;
+    document.body.dataset.spectating = "true";
+  }
+  if (!spectator) delete document.body.dataset.spectating;
+  $("#tourPause").hidden = !spectator;
+  $("#tourCaption").hidden = !spectator || tourPaused;
+  document.body.classList.toggle("spectator-presentation", spectator && !tourPaused);
+  if (!spectator) $("#spectatorDashboard").hidden = true;
+  $("#viewerBadge").hidden = !spectator;
+  $("#exitSpectator").hidden = !spectator;
+  const resident = !spectator;
+  $("#linkBtn").hidden = spectator;
+  $("#spectatorBtn").hidden = spectator;
+  $("#historyBtn").hidden = !resident;
+  $("#customizeBtn").hidden = !resident;
+  $("#notifyBtn").hidden = !resident;
+  $("#missionsBtn").hidden = !resident;
+  if (spectator && $("#linkDlg").open) $("#linkDlg").close();
+  if (Date.now() > tvMine) ({ channel: tvChoice, by: tvBy = "" } = data.tv);
+  $("#lobby").hidden = true;
+  $("#app").hidden = false;
+  render();
+  refreshConnectionStatus();
+}
 async function tick() {
   if (document.hidden || tickPending) return;
+  if (lastStreamAt && Date.now() - lastStreamAt < 4500) return;
   tickPending = true;
   try {
     const r = await fetch("/api/state", { cache: "no-store" });
@@ -2030,26 +2645,7 @@ async function tick() {
     }
     data = await r.json();
     if (!r.ok) throw new Error("État indisponible.");
-    const spectator = data.viewer?.role === "spectator";
-    if (spectator && !document.body.dataset.spectating) {
-      tourStarted = clock.elapsedTime; tourPaused = false;
-      document.body.dataset.spectating = "true";
-    }
-    if (!spectator) delete document.body.dataset.spectating;
-    $("#tourPause").hidden = !spectator;
-    $("#tourCaption").hidden = !spectator || tourPaused;
-    document.body.classList.toggle("spectator-presentation", spectator && !tourPaused);
-    if (!spectator) $("#spectatorDashboard").hidden = true;
-    $("#viewerBadge").hidden = !spectator;
-    $("#exitSpectator").hidden = !spectator;
-    $("#linkBtn").hidden = spectator;
-    $("#spectatorBtn").hidden = spectator;
-    if (spectator && $("#linkDlg").open) $("#linkDlg").close();
-    if (Date.now() > tvMine) ({ channel: tvChoice, by: tvBy = "" } = data.tv);
-    $("#lobby").hidden = true;
-    $("#app").hidden = false;
-    render();
-    refreshConnectionStatus();
+    applyLoadedState();
   } catch (e) { console.warn("tour : nouvel essai au prochain tour", e); }
   finally { tickPending = false; }
 }

@@ -1,10 +1,19 @@
 // Données de la tour de contrôle : traduit les événements bruts des agents en sessions, quotas et compteurs.
 // Repris de la v1 Python (srv/tour/tour.py), sans l'interface.
+import { createGame, publicGame } from "./gamify.js";
 
 export function createStore() {
   // sessions : par clé "src:machine:session" ; usage : quotas par fournisseur ;
   // seen : dernier signe de vie par machine ; stats : compteurs par jour ; health : services d'Hermes.
-  return { sessions: {}, feed: [], usage: {}, seen: {}, stats: {}, health: {} };
+  return { sessions: {}, feed: [], usage: {}, seen: {}, stats: {}, health: {},
+    profile: { accent: "#e8c27a", tagline: "" }, game: createGame() };
+}
+
+const ACCENT = /^#[0-9a-fA-F]{6}$/;
+export function sanitizeProfile(raw, previous = {}) {
+  const accent = typeof raw?.accent === "string" && ACCENT.test(raw.accent) ? raw.accent.toLowerCase() : (previous.accent ?? "#e8c27a");
+  const tagline = typeof raw?.tagline === "string" ? raw.tagline.trim().slice(0, 80) : (previous.tagline ?? "");
+  return { accent, tagline };
 }
 
 export function short(v, n = 140) {
@@ -50,6 +59,12 @@ export function normalize(p) {
     "grok:finished": ["fini", null, "tâche terminée"],
     "grok:approval": ["autorisation", null, "demande ton accord"],
     "grok:error": ["erreur", null, "erreur signalée"],
+    // Cursor (pont HTTP ou script local)
+    "cursor:working": ["travaille", p.prompt ?? p.task, "réfléchit · Cursor"],
+    "cursor:idle": ["attend", null, "attend la suite · Cursor"],
+    "cursor:finished": ["fini", null, "tâche terminée · Cursor"],
+    "cursor:approval": ["autorisation", null, "demande ton accord · Cursor"],
+    "cursor:error": ["erreur", null, "erreur signalée · Cursor"],
     // n8n (relais)
     "n8n:running": ["travaille", p.workflow, "workflow en cours"],
     "n8n:success": ["fini", p.workflow, "workflow réussi"],
@@ -67,7 +82,7 @@ const dayOf = t => new Date(t * 1000).toLocaleDateString("sv-SE"); // AAAA-MM-JJ
 export function ingest(store, src, host, p, now = Date.now() / 1000) {
   const machine = host.split("/")[0], previous = store.seen[machine] ?? {};
   store.seen[machine] = { ...previous, ...(p.info && typeof p.info === "object" ? p.info : {}), t: now,
-    events: { ...previous.events, ...(normalize(p) && ["claude", "codex", "hermes", "n8n", "grok"].includes(src) ? { [src]: now } : {}) } };
+    events: { ...previous.events, ...(normalize(p) && ["claude", "codex", "hermes", "n8n", "grok", "cursor"].includes(src) ? { [src]: now } : {}) } };
   // État des services, mesuré sur place par la tour locale (v1) et relayé ici.
   if (p.hook_event_name === "health" && p.health && typeof p.health === "object") store.health = { ...p.health, t: now };
   for (const [provider, u] of Object.entries(p.usage ?? {})) {
@@ -118,5 +133,7 @@ export function snapshot(store, now = Date.now() / 1000) {
   return {
     now, sessions: sessions.filter(s => s.src !== "hermes" || hermes.includes(s)), feed: store.feed.slice(-60).reverse(),
     usage: store.usage, seen: store.seen, today: store.stats[dayOf(now)] ?? {}, health: store.health,
+    profile: sanitizeProfile(store.profile),
+    game: publicGame(store, now),
   };
 }

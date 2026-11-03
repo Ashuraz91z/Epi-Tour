@@ -7,7 +7,8 @@ import { execFile } from "node:child_process";
 import { promisify } from "node:util";
 import { fileURLToPath } from "node:url";
 import { test } from "node:test";
-import { createStore, describeTool, ingest, normalize, snapshot } from "./core.js";
+import { createStore, describeTool, ingest, normalize, sanitizeProfile, snapshot } from "./core.js";
+import { officePublic, officeTierForLevel } from "./upgrades.js";
 import { openDb } from "./db.js";
 import { createApp, slugify, spectatorSnapshot } from "./penthouse.js";
 
@@ -711,7 +712,7 @@ test("pauses : choix variés, stables au polling, café puis Club conservés", a
     assert.deepEqual(breakVisit(seed, 950), breakVisit(seed, 950));
     const visits = new Set();
     for (let age = 900; age < 1800; age += 2) visits.add(breakVisit(seed, age).place);
-    assert.equal(visits.size, 5);
+    assert.equal(visits.size, 6);
   }
   assert.ok(new Set(Array.from({ length: 30 }, (_, seed) => breakVisit(seed, 1000).place)).size > 3);
 });
@@ -774,4 +775,95 @@ assert p['usage']['chatgpt']['seven_day']['pct']==30
 assert 'usage' not in parse('codex',[event(1,{'primary':None,'secondary':None})])
 `;
   await run('python3', ['-c', python, path]);
+});
+
+test("profil étage : enregistrement avec clé et exposition dans l'état", async () => {
+  const { app, url, call } = await open();
+  try {
+    const join = await call("/api/join", { name: "Styler", code: "porte" }, { "X-Forwarded-For": "10.0.0.42" });
+    assert.equal(join.status, 200);
+    const { slug, token } = await join.json();
+    const cookieHeader = join.headers.getSetCookie?.()?.[0] ?? join.headers.get("set-cookie");
+    assert.ok(cookieHeader);
+    const cookie = cookieHeader.split(";")[0];
+    assert.equal((await call("/api/profile", { profile: { accent: "#112233", tagline: "Nuit code" } }, { "X-Tour-Token": token })).status, 401);
+    const saved = await (await call("/api/profile", { profile: { accent: "#112233", tagline: "Nuit code" } }, { Cookie: cookie, "X-Tour-Token": token })).json();
+    assert.equal(saved.profile.tagline, "Nuit code");
+    assert.equal(sanitizeProfile({ accent: "bad", tagline: "x".repeat(200) }).accent, "#e8c27a");
+    assert.equal(sanitizeProfile({ accent: "bad", tagline: "x".repeat(200) }).tagline.length, 80);
+    const state = await (await fetch(url + "/api/state", { headers: { cookie } })).json();
+    assert.equal(state.apartments.find(a => a.slug === slug).profile.accent, "#112233");
+  } finally {
+    app.close();
+  }
+});
+
+test("Cursor : sessions et signe de vie machine", () => {
+  const store = createStore();
+  ingest(store, "cursor", "macbook", { hook_event_name: "cursor:working", session_id: "cur-1", prompt: "refactor" }, 10);
+  const view = snapshot(store, 11);
+  assert.equal(view.sessions[0].state, "travaille");
+  assert.equal(view.sessions[0].task, "refactor");
+  assert.equal(store.seen.macbook.events.cursor, 10);
+  ingest(store, "cursor", "macbook", { hook_event_name: "cursor:approval", session_id: "cur-1" }, 12);
+  assert.equal(snapshot(store, 13).sessions[0].state, "autorisation");
+});
+
+test("gamification : activité commune et quête", async () => {
+  const { app, call } = await open();
+  try {
+    const join = await call("/api/join", { name: "Joueur", code: "porte" }, { "X-Forwarded-For": "10.0.0.50" });
+    const { token } = await join.json();
+    const cookieHeader = join.headers.getSetCookie?.()?.[0] ?? join.headers.get("set-cookie");
+    const cookie = cookieHeader.split(";")[0];
+    const action = await call("/api/game/action", { action: "roof_breathe", floor: "roof", agentsHere: 0 }, { Cookie: cookie, "X-Tour-Token": token });
+    assert.equal(action.status, 200);
+    const body = await action.json();
+    assert.ok(body.game.xp >= 30);
+    assert.ok(body.toasts.length >= 1);
+    const again = await call("/api/game/action", { action: "roof_breathe", floor: "lounge", agentsHere: 0 }, { Cookie: cookie, "X-Tour-Token": token });
+    assert.equal(again.status, 400);
+  } finally {
+    app.close();
+  }
+});
+
+test("aménagement bureau lié au niveau XP", () => {
+  assert.equal(officeTierForLevel(1).name, "Starter");
+  assert.equal(officeTierForLevel(3).id, 2);
+  assert.ok(officeTierForLevel(6).bookcase);
+  const pub = officePublic(5);
+  assert.equal(pub.name, "Confort");
+  assert.equal(pub.next.name, "Pro");
+  assert.equal(officePublic(15).next, null);
+});
+
+test("flux SSE : premier paquet d'état pour un résident", async () => {
+  const { app, url, call } = await open();
+  try {
+    const join = await call("/api/join", { name: "Stream", code: "porte" }, { "X-Forwarded-For": "10.0.0.43" });
+    assert.equal(join.status, 200);
+    const cookieHeader = join.headers.getSetCookie?.()?.[0] ?? join.headers.get("set-cookie");
+    assert.ok(cookieHeader);
+    const cookie = cookieHeader.split(";")[0];
+    const res = await fetch(url + "/api/stream", { headers: { Cookie: cookie } });
+    assert.equal(res.status, 200);
+    assert.match(res.headers.get("content-type") ?? "", /text\/event-stream/);
+    const reader = res.body.getReader();
+    const decoder = new TextDecoder();
+    let buffer = "";
+    while (!buffer.includes("data: ")) {
+      const { value, done } = await reader.read();
+      if (done) break;
+      buffer += decoder.decode(value);
+    }
+    reader.cancel().catch(() => {});
+    const line = buffer.split("\n").find(row => row.startsWith("data: "));
+    assert.ok(line);
+    const payload = JSON.parse(line.slice(6));
+    assert.ok(Array.isArray(payload.apartments));
+    assert.equal(payload.viewer.role, "resident");
+  } finally {
+    app.close();
+  }
 });

@@ -6,7 +6,8 @@ import { createServer } from "node:http";
 import { dirname, join } from "node:path";
 import { fileURLToPath } from "node:url";
 import { gzipSync } from "node:zlib";
-import { ingest } from "./core.js";
+import { ingest, sanitizeProfile } from "./core.js";
+import { claimQuest, onIngestGame, performSpaceAction, pullToasts, publicGame, visitWing } from "./gamify.js";
 
 const ROOT = dirname(fileURLToPath(import.meta.url));
 const MAX_BODY = 256 * 1024;
@@ -17,7 +18,11 @@ const FILES = {
   "/approval-alert.js": ["public/approval-alert.js", "text/javascript"],
   "/spectator-tour.js": ["public/spectator-tour.js", "text/javascript"],
   "/desk-slots.js": ["public/desk-slots.js", "text/javascript"],
-  "/": ["public/index.html", "text/html"], "/app.js": ["public/app.js", "text/javascript"], "/style.css": ["public/style.css", "text/css"],
+  "/": ["public/index.html", "text/html"], "/app.js": ["public/app.js", "text/javascript"],
+  "/penthouse-extras.js": ["public/penthouse-extras.js", "text/javascript"],
+  "/gamify-ui.js": ["public/gamify-ui.js", "text/javascript"],
+  "/upgrades-client.js": ["public/upgrades-client.js", "text/javascript"],
+  "/style.css": ["public/style.css", "text/css"],
   "/tour-hook": ["collecteurs/tour-hook", "text/plain"], "/install-hook.py": ["collecteurs/install-hook.py", "text/plain"],
   "/hermes-handler.py": ["collecteurs/hermes-hook/handler.py", "text/plain"],
   "/hermes-hook.yaml": ["collecteurs/hermes-hook/HOOK.yaml", "text/plain"],
@@ -26,6 +31,7 @@ const FILES = {
   "/tour-sync": ["collecteurs/tour-sync", "text/plain"],
   "/install-sync.py": ["collecteurs/install-sync.py", "text/plain"],
   "/tour-check": ["collecteurs/tour-check", "text/plain"],
+  "/cursor-notify.py": ["collecteurs/cursor-notify.py", "text/plain"],
   "/install.sh": ["public/install.sh", "text/plain"], "/assets/CREDITS.txt": ["public/assets/CREDITS.txt", "text/plain"],
 };
 
@@ -85,6 +91,8 @@ export function spectatorSnapshot(a) {
     }
   }
   return { slug: a.slug, name: a.name, created: a.created,
+    profile: { accent: sanitizeProfile(a.profile).accent, tagline: sanitizeProfile(a.profile).tagline },
+    game: a.game ? { level: a.game.level, xp: a.game.xp, streak: a.game.streak, badges: a.game.badges ?? [] } : { level: 1, xp: 0, streak: 0, badges: [] },
     sessions: a.sessions.map(s => ({ src: s.src, host: sha(s.host).slice(0, 12), sid: s.sid,
       state: s.state, started: s.started, updated: s.updated, task: "", action: "" })),
     feed: [], usage, seen: {}, today: {}, health: {} };
@@ -158,6 +166,33 @@ export function createApp({ code, db }) {
       return json(200, { now, viewer: { role: isSpectator ? "spectator" : "resident", room: roomName() },
         tv: isSpectator ? { channel: tv.channel } : tv, apartments: isSpectator ? apartments.map(spectatorSnapshot) : apartments });
     }
+    if (req.method === "GET" && url.pathname === "/api/stream") {
+      if (!canView) return json(401, { error: "entrée requise" });
+      res.writeHead(200, {
+        "Content-Type": "text/event-stream; charset=utf-8",
+        "Cache-Control": "no-store",
+        Connection: "keep-alive",
+        "X-Content-Type-Options": "nosniff",
+      });
+      res.write(": connected\n\n");
+      let closed = false;
+      req.on("close", () => { closed = true; clearInterval(timer); });
+      const push = () => {
+        if (closed) return;
+        try {
+          const now = Date.now() / 1000;
+          const apartments = db.snapshots(now);
+          const tv = db.setting("tv") ?? { channel: "auto" };
+          const payload = { now, viewer: { role: isSpectator ? "spectator" : "resident", room: roomName() },
+            tv: isSpectator ? { channel: tv.channel } : tv,
+            apartments: isSpectator ? apartments.map(spectatorSnapshot) : apartments };
+          res.write(`data: ${JSON.stringify(payload)}\n\n`);
+        } catch { closed = true; clearInterval(timer); }
+      };
+      push();
+      const timer = setInterval(push, 2000);
+      return;
+    }
     if (req.method !== "POST") return send(404);
 
     const chunks = [];
@@ -182,8 +217,60 @@ export function createApp({ code, db }) {
       if (url.pathname === "/e") {
         const apt = byToken(req.headers["x-tour-token"]);
         if (!apt) return send(401);
-        db.change(apt.slug, store => ingest(store, String(url.searchParams.get("src") ?? "?").slice(0, 20), String(url.searchParams.get("host") ?? "?").slice(0, 40), p));
+        const now = Date.now() / 1000;
+        db.change(apt.slug, store => {
+          const prev = Object.fromEntries(Object.entries(store.sessions).map(([k, s]) => [k, { state: s.state }]));
+          ingest(store, String(url.searchParams.get("src") ?? "?").slice(0, 20), String(url.searchParams.get("host") ?? "?").slice(0, 40), p, now);
+          onIngestGame(store, prev, p, now);
+        });
         return send(204);
+      }
+      if (url.pathname === "/api/profile") {
+        if (isSpectator || !same(cookie, pass)) return json(401, { error: "entrée requise" });
+        const apt = byToken(req.headers["x-tour-token"]);
+        if (!apt) return json(403, { error: "Clé de ton étage requise." });
+        db.change(apt.slug, store => { store.profile = sanitizeProfile(p.profile, store.profile); });
+        return json(200, { slug: apt.slug, profile: sanitizeProfile(db.get(apt.slug).store.profile) });
+      }
+      if (url.pathname === "/api/game/action") {
+        if (isSpectator || !same(cookie, pass)) return json(401, { error: "entrée requise" });
+        const apt = byToken(req.headers["x-tour-token"]);
+        if (!apt) return json(403, { error: "Clé de ton étage requise." });
+        const action = String(p.action ?? "").slice(0, 32);
+        const floor = String(p.floor ?? "").slice(0, 16);
+        const agentsHere = Number(p.agentsHere ?? 0);
+        let result, toasts = [];
+        db.change(apt.slug, store => {
+          result = performSpaceAction(store, action, Date.now() / 1000, { floor, agentsHere: Number.isFinite(agentsHere) ? agentsHere : 0 });
+          toasts = pullToasts(store);
+        });
+        if (result?.error) return json(400, { error: result.error });
+        return json(200, { game: result.game, toasts });
+      }
+      if (url.pathname === "/api/game/claim") {
+        if (isSpectator || !same(cookie, pass)) return json(401, { error: "entrée requise" });
+        const apt = byToken(req.headers["x-tour-token"]);
+        if (!apt) return json(403, { error: "Clé de ton étage requise." });
+        const questId = String(p.questId ?? "").slice(0, 24);
+        let result, toasts = [];
+        db.change(apt.slug, store => {
+          result = claimQuest(store, questId);
+          toasts = pullToasts(store);
+        });
+        if (result?.error) return json(400, { error: result.error });
+        return json(200, { game: result.game, toasts });
+      }
+      if (url.pathname === "/api/game/visit") {
+        if (isSpectator || !same(cookie, pass)) return json(401, { error: "entrée requise" });
+        const apt = byToken(req.headers["x-tour-token"]);
+        if (!apt) return json(403, { error: "Clé de ton étage requise." });
+        const floorKey = String(p.floor ?? "").slice(0, 48);
+        let result, toasts = [];
+        db.change(apt.slug, store => {
+          result = visitWing(store, floorKey);
+          toasts = pullToasts(store);
+        });
+        return json(200, { game: result.game, toasts, skipped: !!result.skipped });
       }
       // Télé du Salon : la chaîne est commune à tout le penthouse.
       if (url.pathname === "/api/tv") {
@@ -208,7 +295,7 @@ export function createApp({ code, db }) {
         if (!same(String(p.code ?? ""), code)) return json(403, { error: "Code du penthouse incorrect." });
         const name = String(p.name ?? "").trim().slice(0, 32), slug = slugify(name);
         if (!slug) return json(400, { error: "Choisis un nom." });
-        if (["roof", "lounge", "club"].includes(slug)) return json(400, { error: "Ce nom est réservé aux espaces communs. Choisis un autre nom." });
+        if (["roof", "lounge", "club", "casino"].includes(slug)) return json(400, { error: "Ce nom est réservé aux espaces communs. Choisis un autre nom." });
         let apt = db.get(slug), token;
         if (!apt) {
           token = newToken();
