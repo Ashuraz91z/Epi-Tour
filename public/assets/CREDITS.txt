@@ -1,0 +1,13 @@
+Modèles 3D utilisés par le penthouse — tous sous licence CC0 1.0 (domaine public).
+
+- Furniture Kit 2.0, par Kenney (www.kenney.nl) : meubles (*.glb sauf robot.glb).
+  https://kenney.nl/assets/furniture-kit
+- RobotExpressive, par Tomás Laulhé (Quaternius), modifié par Don McCurdy : robot.glb.
+  https://github.com/mrdoob/three.js/tree/r170/examples/models/gltf/RobotExpressive
+
+Photos de canettes Red Bull Editions : visuels produits officiels Red Bull (non CC0), utilisés comme décors de frigo. Source consultée le 3 novembre 2026 : https://www.redbull.com/fr-fr/energydrink/products/red-bull-editions-energy-drinks
+Peach: https://www.redbull.com/energydrink/v1/resources/storyblok/images/f/287059/870x2200/0ff7b03002/fr_wp_250ml_ac_the-peach-edition_country_rgb_packrq-3638_cold_closed_front_com_25.png/m/192x0
+Apricot: https://www.redbull.com/energydrink/v1/resources/storyblok/images/f/287059/528x1348/bbcc8eb790/fr_as_250ml_the-apricot-edition_country_rgb_do240427_cold_closed_front_com_full.png/m/192x0
+Red: https://www.redbull.com/energydrink/v1/resources/storyblok/images/f/287059/528x1348/8c95e7a5d0/fr_wm_250ml_the-red-edition_country_rgb_do241605_cold_closed_front_com_full.png/m/192x0
+SeaBlue: https://www.redbull.com/energydrink/v1/resources/storyblok/images/f/287059/870x2200/b65720f44d/fr_jb_250ml_the-sea-blue-edition_country_rgb_do243065_cold_closed_front_com_25.png/m/192x0
+Blue: https://www.redbull.com/energydrink/v1/resources/storyblok/images/f/287059/528x1348/f90af5b697/fr_bl_250ml_the-blue-edition_country_rgb_do241604_cold_closed_front_com_full.png/m/192x0

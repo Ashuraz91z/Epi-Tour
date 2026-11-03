@@ -1,0 +1,5 @@
+name: tour
+description: Envoie le début et la fin de chaque demande Telegram à la tour de contrôle
+events:
+  - agent:start
+  - agent:end

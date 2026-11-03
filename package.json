@@ -1,0 +1,12 @@
+{
+  "name": "tour-de-controle",
+  "version": "0.1.0",
+  "private": true,
+  "type": "module",
+  "description": "Tour de contrôle : qui fait quoi, en direct, chez les agents (Claude Code, Codex, Hermes, n8n).",
+  "engines": { "node": ">=24" },
+  "scripts": {
+    "start": "node server.js",
+    "test": "node --test test.js"
+  }
+}

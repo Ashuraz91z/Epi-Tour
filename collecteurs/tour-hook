@@ -1,0 +1,76 @@
+#!/usr/bin/env python3
+"""Relaie un événement de hook (Claude Code ou Codex) vers la tour. Rend la main tout de suite.
+
+Usage dans un hook : tour-hook claude   (ou codex). Config dans ~/.config/tour/ : url, secret, host.
+"""
+import glob
+import json
+import os
+import socket
+import sys
+import urllib.parse
+import urllib.request
+
+src = sys.argv[1] if len(sys.argv) > 1 else "claude"
+raw = sys.stdin.buffer.read()
+if os.environ.get("TOUR_SKIP"):
+    sys.exit(0)
+if os.fork():
+    sys.exit(0)
+# L'enfant se détache : l'agent n'attend ni la tour ni le réseau.
+os.setsid()
+null = os.open(os.devnull, os.O_RDWR)
+for fd in (0, 1, 2):
+    os.dup2(null, fd)
+
+
+def trim(v):
+    if isinstance(v, str):
+        return v[:2000]
+    if isinstance(v, dict):
+        return {k: trim(x) for k, x in v.items()}
+    if isinstance(v, list):
+        return [trim(x) for x in v[:20]]
+    return v
+
+
+def codex_usage():
+    """Quotas ChatGPT lus dans le journal Codex le plus récent : aucune requête en plus."""
+    logs = glob.glob(os.path.expanduser("~/.codex/sessions/*/*/*/rollout-*.jsonl"))
+    if not logs:
+        return None
+    newest = max(logs, key=os.path.getmtime)
+    with open(newest, "rb") as f:
+        f.seek(max(0, os.path.getsize(newest) - 300_000))
+        lines = f.read().decode("utf-8", "replace").splitlines()
+    for line in reversed(lines):
+        if '"rate_limits"' in line:
+            r = json.loads(line)["payload"]["rate_limits"]
+            win = lambda w: w and {"pct": w.get("used_percent"), "resets_at": w.get("resets_at")}
+            return {"five_hour": win(r.get("primary")), "seven_day": win(r.get("secondary")),
+                    "plan": r.get("plan_type"), "ts": os.path.getmtime(newest)}
+    return None
+
+
+try:
+    conf = os.path.expanduser("~/.config/tour/")
+    read = lambda name: open(conf + name).read().strip()
+    host = read("host") if os.path.exists(conf + "host") else socket.gethostname().split(".")[0]
+    payload = trim(json.loads(raw))
+    if payload.get("hook_event_name") == "PostToolUse":
+        # Le retour de l’outil n’est pas utile à la tour : conserver seulement le signe de reprise.
+        payload = {k: payload[k] for k in ("hook_event_name", "session_id", "tool_name", "cwd") if k in payload}
+    if src == "codex" and payload.get("hook_event_name") in ("Stop", "SessionStart"):
+        try:
+            u = codex_usage()
+            if u:
+                payload["usage"] = {"chatgpt": u}
+        except (OSError, ValueError, KeyError):
+            pass
+    body = json.dumps(payload, ensure_ascii=False).encode()
+    query = urllib.parse.urlencode({"src": src, "host": host})  # un nom de machine peut contenir des accents
+    req = urllib.request.Request(f"{read('url')}/e?{query}", body,
+                                 {"Content-Type": "application/json", "X-Tour-Token": read("secret")})
+    urllib.request.urlopen(req, timeout=3)
+except Exception:
+    pass

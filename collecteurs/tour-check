@@ -1,0 +1,61 @@
+#!/usr/bin/env python3
+"""Vérifie la clé et la réception, sans créer de session ni lancer un modèle."""
+import json
+import os
+from pathlib import Path
+import socket
+import sys
+import urllib.parse
+
+
+from tour_http import request, ConnectionError
+
+
+def installed_tools():
+    tools = {}
+    for name, path in [('claude', '~/.claude/settings.json'), ('codex', '~/.codex/hooks.json')]:
+        try:
+            cfg = json.loads(Path(path).expanduser().read_text())
+            commands = [hook.get('command', '') for groups in cfg.get('hooks', {}).values()
+                        for group in groups for hook in group.get('hooks', [])]
+            tools[name] = any(isinstance(cmd, str) and '/.config/tour/tour-hook' in cmd for cmd in commands)
+        except (OSError, ValueError, TypeError, AttributeError):
+            tools[name] = False
+    return tools
+
+
+def main():
+    verify = '--verify' in sys.argv
+    conf = Path.home() / '.config/tour'
+    site = os.environ['PENTHOUSE_SITE'] if verify else (conf / 'url').read_text().strip()
+    key = os.environ['PENTHOUSE_KEY'] if verify else (conf / 'secret').read_text().strip()
+    owner = request(site, key, '/api/connection')
+    print('Appartement vérifié : ' + owner['name'])
+    if verify:
+        return
+    host = (conf / 'host').read_text().strip() if (conf / 'host').exists() else socket.gethostname().split('.')[0]
+    tools = installed_tools()
+    readers = {name: (conf / 'tour-sync').exists() and Path(path).expanduser().is_dir() for name, path in [('claude', '~/.claude/projects'), ('codex', '~/.codex/sessions')]}
+    request(site, key, '/e?' + urllib.parse.urlencode({'src': 'setup', 'host': host}),
+        {'hook_event_name': 'connection-check', 'info': {'tools': tools, 'readers': readers}})
+    print('Serveur joignable, diagnostic reçu pour ' + host)
+    for name, installed in tools.items():
+        print(name + (' : suivi des journaux actif.' if readers[name] else ' : aucun dossier de journaux détecté pour le moment.'))
+    print('Les outils restent inchangés. Aucune requête de modèle ni quota simulé.')
+
+
+if __name__ == '__main__':
+    try:
+        main()
+    except ConnectionError as error:
+        print('Connexion impossible : ' + str(error), file=sys.stderr)
+        sys.exit(1)
+    except FileNotFoundError:
+        print('Configuration absente. Relance la commande complète depuis Relier mes agents.', file=sys.stderr)
+        sys.exit(1)
+    except PermissionError:
+        print('Configuration illisible : vérifie les droits de ~/.config/tour/.', file=sys.stderr)
+        sys.exit(1)
+    except (OSError, ValueError, KeyError, TypeError):
+        print('Réponse ou configuration inattendue. Relance la commande complète depuis Relier mes agents.', file=sys.stderr)
+        sys.exit(1)

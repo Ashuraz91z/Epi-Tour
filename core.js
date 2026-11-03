@@ -1,0 +1,122 @@
+// Données de la tour de contrôle : traduit les événements bruts des agents en sessions, quotas et compteurs.
+// Repris de la v1 Python (srv/tour/tour.py), sans l'interface.
+
+export function createStore() {
+  // sessions : par clé "src:machine:session" ; usage : quotas par fournisseur ;
+  // seen : dernier signe de vie par machine ; stats : compteurs par jour ; health : services d'Hermes.
+  return { sessions: {}, feed: [], usage: {}, seen: {}, stats: {}, health: {} };
+}
+
+export function short(v, n = 140) {
+  const s = (typeof v === "string" ? v : JSON.stringify(v) ?? "").split(/\s+/).filter(Boolean).join(" ");
+  return s.length > n ? s.slice(0, n) + "…" : s;
+}
+
+export function describeTool(name, inp) {
+  if (name?.startsWith("mcp__")) name = name.split("__").slice(1, 3).join(" · ");
+  if (inp && typeof inp === "object") {
+    for (const k of ["command", "cmd", "file_path", "path", "pattern", "url", "query", "description", "goal"])
+      if (inp[k]) return `${name} · ${short(inp[k], 90)}`;
+  }
+  return name || "outil";
+}
+
+// Événement brut -> { sid, state, task, action }, ou null si l'événement ne dit rien de la session.
+export function normalize(p) {
+  const extra = p.extra ?? {};
+  const table = {
+    // Claude Code et Codex (hooks)
+    SessionStart: ["attend", null, "session ouverte"],
+    UserPromptSubmit: ["travaille", p.prompt, "réfléchit"],
+    PreToolUse: ["travaille", null, "tool"],
+    PermissionRequest: ["autorisation", null, "accord requis · " + describeTool(p.tool_name, p.tool_input)],
+    PostToolUse: ["travaille", null, "tool"],
+    SubagentStart: ["travaille", null, "sous-agent " + (p.agent_type ?? "")],
+    // Une demande d'autorisation fait venir l'agent au bureau du résident ; sinon il attend la suite.
+    Notification: [/permission|autoris|approv/i.test(p.message ?? "") ? "autorisation" : "attend", null, p.message || "attend une réponse"],
+    Stop: ["fini", null, "tour terminé, attend la suite"],
+    SessionEnd: ["fermé", null, "session fermée"],
+    // Hermes, webhooks sortants (CLI, passerelle, profils du Kanban)
+    on_session_start: ["travaille", null, "démarre"],
+    pre_tool_call: ["travaille", null, "tool"],
+    subagent_start: ["travaille", null, "délègue · " + short(extra.goal || extra.task || "", 80)],
+    on_session_end: ["fini", null, "terminé"],
+    // Hermes, hooks de la passerelle (Telegram) : seuls à donner le message
+    "agent:start": ["travaille", p.message, "réfléchit"],
+    "agent:end": ["fini", null, "réponse envoyée"],
+    // États déclarés explicitement par Grok Bot via le pont MCP.
+    "grok:working": ["travaille", null, "travaille · signalé par Grok Bot"],
+    "grok:idle": ["attend", null, "attend la suite"],
+    "grok:finished": ["fini", null, "tâche terminée"],
+    "grok:approval": ["autorisation", null, "demande ton accord"],
+    "grok:error": ["erreur", null, "erreur signalée"],
+    // n8n (relais)
+    "n8n:running": ["travaille", p.workflow, "workflow en cours"],
+    "n8n:success": ["fini", p.workflow, "workflow réussi"],
+    "n8n:error": ["erreur", p.workflow, "workflow en erreur"],
+  };
+  const row = table[p.hook_event_name];
+  if (!row) return null;
+  let [state, task, action] = row;
+  if (action === "tool") action = describeTool(p.tool_name, p.tool_input);
+  return { sid: String(p.session_id ?? "?"), state, task: task ? short(task, 240) : null, action: short(action, 140) };
+}
+
+const dayOf = t => new Date(t * 1000).toLocaleDateString("sv-SE"); // AAAA-MM-JJ, heure locale
+
+export function ingest(store, src, host, p, now = Date.now() / 1000) {
+  const machine = host.split("/")[0], previous = store.seen[machine] ?? {};
+  store.seen[machine] = { ...previous, ...(p.info && typeof p.info === "object" ? p.info : {}), t: now,
+    events: { ...previous.events, ...(normalize(p) && ["claude", "codex", "hermes", "n8n", "grok"].includes(src) ? { [src]: now } : {}) } };
+  // État des services, mesuré sur place par la tour locale (v1) et relayé ici.
+  if (p.hook_event_name === "health" && p.health && typeof p.health === "object") store.health = { ...p.health, t: now };
+  for (const [provider, u] of Object.entries(p.usage ?? {})) {
+    // Une mesure vide/partielle ne doit pas effacer une fenêtre déjà connue.
+    if (!["claude", "chatgpt"].includes(provider) || !u || typeof u !== "object") continue;
+    const ts = u.ts ?? now, previous = store.usage[provider] ?? {};
+    if (!Number.isFinite(ts) || ts < (previous.ts ?? 0)) continue;
+    const windows = Object.fromEntries(["five_hour", "seven_day"].filter(key => Number.isFinite(u[key]?.pct)).map(key => [key, u[key]]));
+    if (!Object.keys(windows).length) continue;
+    store.usage[provider] = { ...previous, ...u, ...Object.fromEntries(["five_hour", "seven_day"].map(key => [key, windows[key] ?? previous[key]])), ts };
+  }
+  const n = normalize(p);
+  if (!n) return;
+  const observed = p.sync && Number.isFinite(p.observed_at) ? Math.min(now, p.observed_at) : now;
+  if (p.sync && (!Number.isFinite(p.observed_at) || now - observed > 3600)) return;
+  if (p.profile && p.profile !== "default") host = `${host}/${p.profile}`;
+  const key = `${src}:${host}:${n.sid}`;
+  // Un journal rejoué ne doit pas remplacer une autorisation ou un événement de hook plus récent.
+  if (p.sync && store.sessions[key]?.updated >= observed) return;
+  // Une fin d’outil remet une session connue au travail, sans créer de robot supplémentaire.
+  if (p.hook_event_name === "PostToolUse" && !(key in store.sessions)) return;
+  const day = ((store.stats[dayOf(now)] ??= {})[src] ??= { sessions: 0, actions: 0 });
+  day.sessions += key in store.sessions ? 0 : 1;
+  day.actions += !p.sync && ["PreToolUse", "pre_tool_call"].includes(p.hook_event_name) ? 1 : 0;
+  const s = (store.sessions[key] ??= { src, host, sid: n.sid.slice(0, 8), started: observed, task: "" });
+  Object.assign(s, { state: n.state, action: n.action, updated: observed });
+  if (n.task) s.task = n.task;
+  if (p.cwd) s.project = p.cwd.replace(/\/+$/, "").split("/").pop() || p.cwd;
+  const model = p.model || p.extra?.model;
+  if (typeof model === "string" && model) s.model = model.slice(0, 40);
+  store.feed.push({ t: observed, src, host, project: s.project ?? "", state: n.state, action: n.action });
+  store.feed.splice(0, store.feed.length - 150);
+}
+
+// Vue publique ; fait aussi le ménage des sessions finies ou oubliées.
+export function snapshot(store, now = Date.now() / 1000) {
+  for (const [k, s] of Object.entries(store.sessions)) {
+    const age = now - s.updated;
+    if ((s.src === "hermes" && s.state !== "autorisation" && age > 3600) || age > 12 * 3600 || (["fermé", "fini", "erreur"].includes(s.state) && age > 3600) || (s.state === "fermé" && age > 300))
+      delete store.sessions[k];
+  }
+  for (const d of Object.keys(store.stats).sort().slice(0, -7)) delete store.stats[d];
+  // Cinq Hermes visibles par résident ; les autres sessions actives restent suivies en arrière-plan.
+  const sessions = Object.values(store.sessions);
+  const priority = s => s.state === "autorisation" ? 2 : s.state === "travaille" ? 1 : 0;
+  const hermes = sessions.filter(s => s.src === "hermes")
+    .sort((a, b) => priority(b) - priority(a) || b.updated - a.updated).slice(0, 5);
+  return {
+    now, sessions: sessions.filter(s => s.src !== "hermes" || hermes.includes(s)), feed: store.feed.slice(-60).reverse(),
+    usage: store.usage, seen: store.seen, today: store.stats[dayOf(now)] ?? {}, health: store.health,
+  };
+}

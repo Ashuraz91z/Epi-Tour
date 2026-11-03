@@ -1,0 +1,78 @@
+<!doctype html>
+<html lang="fr">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width,initial-scale=1">
+<title>Penthouse</title>
+<meta name="description" content="Le penthouse : la tour où les agents de chacun travaillent, en direct.">
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link href="https://fonts.googleapis.com/css2?family=Sora:wght@400;600;700&family=JetBrains+Mono:wght@400;600&display=swap" rel="stylesheet">
+<link rel="stylesheet" href="style.css">
+<script type="importmap">
+{ "imports": {
+  "three": "https://cdn.jsdelivr.net/npm/three@0.170.0/build/three.module.js",
+  "three/addons/": "https://cdn.jsdelivr.net/npm/three@0.170.0/examples/jsm/"
+} }
+</script>
+</head>
+<body>
+<div id="stage" aria-label="La tour du penthouse en 3D : un étage par résident, un personnage par agent"></div>
+
+<main id="lobby" class="lobby" hidden>
+  <div class="door">
+    <p class="kicker">Dernier étage</p>
+    <h1 class="brand">PENTHOUSE</h1>
+    <p class="lead">Entre avec le nom de ton étage et le code d’invitation. Tu pourras ensuite relier tes outils, machine par machine.</p>
+    <form id="join" autocomplete="off">
+      <label>Ton nom<input name="name" maxlength="32" required placeholder="ex. Lucas"></label>
+      <label>Code du penthouse<input name="code" type="password" required></label>
+      <p class="join-info">Les autres résidents verront les demandes, actions, noms de projets et de machines et quotas envoyés par tes outils.</p>
+      <button type="submit">Rejoindre mon étage</button>
+      <p class="err" id="joinErr" role="alert"></p>
+    </form>
+    <button type="button" class="spectate-entry" data-spectate>Regarder en spectateur</button>
+  </div>
+</main>
+
+<div id="app" hidden>
+  <header class="top">
+    <div class="brandline"><span class="brand small">PENTHOUSE</span><span class="clock" id="clock"></span></div>
+    <div class="totals" id="totals"></div>
+    <button class="ghost" type="button" id="spectatorBtn" data-spectate>Mode spectateur</button>
+    <button class="ghost" id="tourPause" type="button" hidden aria-pressed="false">Pause visite</button>
+    <span id="viewerBadge" class="viewer-badge" hidden>Spectateur</span>
+    <button class="ghost" id="exitSpectator" type="button" hidden>Quitter le mode spectateur</button>
+    <button class="ghost" id="linkBtn" type="button">Relier mes agents</button>
+  </header>
+  <section id="spectatorDashboard" class="spectator-dashboard" hidden aria-label="Usages de tous les résidents"></section>
+  <div id="tourCaption" class="tour-caption" hidden aria-live="polite"></div>
+  <aside id="aptPanel" class="panel" aria-live="polite"></aside>
+  <nav id="floorNav" class="floornav" aria-label="Étages"></nav>
+  <p class="hint">Glisse pour tourner · molette pour zoomer · ↑ ↓ pour changer d'étage · clique un agent</p>
+  <footer class="ticker"><span class="tick-label">En direct</span><div id="ticker" class="tick-items"></div></footer>
+</div>
+
+<dialog id="spectatorDlg" class="dlg">
+  <form method="dialog"><button class="x" aria-label="Fermer">×</button></form>
+  <h3>Regarder une salle</h3><p>Vois les résidents et leurs agents, sans créer d’étage. Lecture seule : résidents, activité et quotas restants. Conversations et machines masquées.</p>
+  <form id="spectate" autocomplete="off"><label>Nom de la salle<input name="room" required maxlength="64" placeholder="Penthouse"></label>
+    <button type="submit">Regarder la salle</button><p id="spectateErr" class="err" role="alert"></p></form>
+</dialog>
+
+<dialog id="agentDlg" class="dlg">
+  <form method="dialog"><button class="x" aria-label="Fermer">×</button></form>
+  <div id="agentBody"></div>
+</dialog>
+
+<dialog id="linkDlg" class="dlg wide">
+  <form method="dialog"><button class="x" aria-label="Fermer">×</button></form>
+  <h3>Relier tes agents à ton étage</h3>
+  <div id="linkBody"></div>
+</dialog>
+
+<div id="permissionGlow" hidden aria-hidden="true"></div>
+<div id="permissionFlash" aria-hidden="true"></div>
+<aside id="permissionBanner" class="permission-banner" hidden role="alert"><div><strong>Autorisation requise</strong><span id="permissionMessage"></span></div><button type="button" id="showPermission">Voir la demande</button></aside>
+<script type="module" src="app.js"></script>
+</body>
+</html>
