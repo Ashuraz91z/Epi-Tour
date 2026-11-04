@@ -2,7 +2,8 @@
 // Des fonctions pures qui renvoient du HTML, puis le dialogue « 💼 Entreprise » et ses appels au serveur.
 // Tout texte venu du serveur ou d'un autre résident passe par esc. Le serveur décide de tout, hasard compris :
 // les animations du casino ne font qu'occuper l'attente, puis montrent le vrai résultat renvoyé.
-import { CASINO, CURRENCY, ECHELONS, GRADES, PROVIDERS, SHOP, TIPS, WORKDAY } from "./economy-data.js";
+import { CASINO, CURRENCY, ECHELONS, GRADES, PROVIDERS, SHOP, TIPS, WORK, WORKDAY } from "./economy-data.js";
+import { bonusText, objectivePct, objectiveProgressText, projectNextText, projectPct, workEventText } from "./work-ui.js";
 
 // ---------- formats ----------
 const nf = new Intl.NumberFormat("fr-FR", { maximumFractionDigits: 2 });
@@ -112,16 +113,68 @@ function staffCard(st, c) {
   </article>`;
 }
 
+// ---------- le travail au centre du jeu (economy.work, calculé par le serveur) ----------
+// Objectifs du jour, prime d'équipe et série (avec leur règle), projets, derniers exploits : en tête de l'onglet Équipe.
+const WORK_KINDS = new Set(["delivery", "objective", "badge", "streak"]);
+function workHtml(c) {
+  const { eco, esc, tools } = c, w = eco.work;
+  if (!w || !Array.isArray(w.objectives)) return "";
+  const today = w.today ?? {}, team = w.team ?? {}, streak = w.streak ?? {};
+  const minutes = Number(today.minutes) || 0, deliveries = Number(today.deliveries) || 0, active = Number(team.active) || 0, days = Number(streak.days) || 0;
+  const xp = Number(w.xpToday) || 0, cap = Number(w.xpCap) || WORK.dailyXpCap, done = w.objectives.filter(o => o.done).length;
+  const kpis = `<div class="work-kpis">
+      <div><span>Travail aujourd'hui</span><b>${duration(minutes)}</b><small>tous tes agents réunis</small></div>
+      <div><span>Tâches livrées</span><b>${deliveries}</b><small>aujourd'hui</small></div>
+      <div><span>Pic d'agents</span><b>${Number(today.peakParallel) || 0}</b><small>en même temps · ${active} en ce moment</small></div>
+      <div><span>Outils au travail</span><b>${Number(today.tools) || 0}</b><small>aujourd'hui</small></div>
+      <div><span>XP du travail</span><b>${nf.format(Math.floor(xp))}<small> / ${nf.format(cap)}</small></b>${bar(pct(xp, cap), "ok")}</div>
+    </div>`;
+  const objectives = `<ul class="work-objectives">${w.objectives.map(o => `<li class="work-obj${o.done ? " done" : ""}">
+      <span class="work-obj-icon" aria-hidden="true">${esc(o.icon)}</span>
+      <div class="work-obj-main"><b>${esc(o.title)}</b><span class="work-bar" aria-hidden="true"><i style="width:${objectivePct(o)}%"></i></span><small>${esc(objectiveProgressText(o))}</small></div>
+      <div class="work-obj-side"><span class="work-reward">+${esc(money(o.money))}<br>+${Number(o.xp) || 0} XP</span>${o.done ? '<span class="work-check">✓ Atteint</span>' : ""}</div></li>`).join("")}</ul>`;
+  const teamBonus = Number(team.bonus) || 0, streakBonus = Number(streak.bonus) || 0, missing = WORK.streak.minMinutes - minutes;
+  const streakNow = streak.today ? "✓ aujourd'hui compte déjà"
+    : missing > 0 ? `encore ${duration(missing)} de travail aujourd'hui pour ${days ? "la prolonger" : "la lancer"}` : "aujourd'hui sera compté à la prochaine minute de travail";
+  const boosts = `<div class="work-boosts">
+      <article class="work-boost${teamBonus > 0 ? " on" : ""}"><header><span aria-hidden="true">👥</span><b>Prime d'équipe</b><em>${bonusText(teamBonus)}</em></header>
+        <p class="work-boost-now">${active ? `${active} ${active >= 2 ? "agents travaillent" : "agent travaille"} en ce moment` : "Aucun agent au travail en ce moment"}${teamBonus > 0 ? " : tous les salaires sont majorés" : ""}.</p>
+        <p>Plusieurs agents en parallèle = salaires majorés : ${bonusText(WORK.team.per)} par agent en plus du premier, jusqu'à ${bonusText(WORK.team.max)}.</p>
+        ${bar(pct(teamBonus, WORK.team.max), "ok")}</article>
+      <article class="work-boost streak${streak.today ? " on" : ""}"><header><span aria-hidden="true">🔥</span><b>Série de travail</b><em>${bonusText(streakBonus)}</em></header>
+        <p class="work-boost-now">${days ? `${days} jour${days >= 2 ? "s" : ""} de suite` : "Pas de série en cours"} · ${streakNow}.</p>
+        <p>Un jour avec au moins ${duration(WORK.streak.minMinutes)} de travail prolonge la série : ${bonusText(WORK.streak.per)} de salaire par jour de série, jusqu'à ${bonusText(WORK.streak.max)}.</p>
+        ${bar(pct(streakBonus, WORK.streak.max), "ok")}</article>
+    </div>`;
+  const projects = w.projects ?? [];
+  const projectTable = projects.length ? `<div class="eco-scroll"><table class="eco-table work-ptable"><thead><tr><th>Projet</th><th>Aujourd'hui</th><th>Total</th><th>Livraisons</th><th>Niveau</th></tr></thead>
+      <tbody>${projects.map(p => `<tr><td class="work-pcell" title="${esc(p.name)}">${esc(p.name)}</td><td class="m">${duration(p.todayMinutes)}</td><td class="m">${duration(p.minutes)}</td>
+        <td class="m">${Number(p.deliveries) || 0}</td><td class="work-lvl"><span><b>Nv. ${Number(p.level) || 0}</b><small>${esc(projectNextText(p))}</small></span>${bar(projectPct(p))}</td></tr>`).join("")}</tbody></table></div>`
+    : `<p class="eco-muted">Aucun projet pour l'instant : le dossier où travaille chaque agent devient un projet, qui monte de niveau avec les heures de travail.</p>`;
+  const events = w.events ?? [];
+  const feed = events.length ? `<ol class="work-feed">${events.map(e => `<li class="${WORK_KINDS.has(e.kind) ? e.kind : ""}"><time>${esc(when(secs(e.t)))}</time><span>${esc(workEventText(e, { tools }))}</span></li>`).join("")}</ol>`
+    : `<p class="eco-muted">Pas encore d'exploit : livre une tâche ou atteins un objectif.</p>`;
+  return `<section class="work-board" aria-labelledby="workBoardTitle">
+    <h4 id="workBoardTitle">Objectifs du travail · ${done}/${w.objectives.length}</h4>
+    <p class="eco-muted">Le travail réel de tes agents fait tourner l'entreprise : chaque objectif atteint verse sa récompense tout de suite, sans rien réclamer.</p>
+    ${kpis}${objectives}
+    <h4>Prime d'équipe et série</h4>${boosts}
+    <h4>Projets</h4>${projectTable}
+    <h4>Derniers exploits</h4>${feed}
+  </section>`;
+}
+
 function teamHtml(c) {
   const { eco, esc, tools } = c, today = eco.today ?? {}, staff = eco.staff ?? [];
-  const cards = staff.length ? `<div class="eco-staff">${staff.map(st => staffCard(st, c)).join("")}</div>`
-    : `<p class="eco-muted">Aucun employé pour l'instant : relie tes agents, chaque outil vu devient un employé payé à l'heure de travail réel.</p>`;
+  const work = workHtml(c);
+  const cards = (work ? "<h4>Équipe</h4>" : "") + (staff.length ? `<div class="eco-staff">${staff.map(st => staffCard(st, c)).join("")}</div>`
+    : `<p class="eco-muted">Aucun employé pour l'instant : relie tes agents, chaque outil vu devient un employé payé à l'heure de travail réel.</p>`);
   const rows = staff.map(st => `<tr><td><i class="d" style="background:${esc(toolOf(tools, st.src).color)}"></i>${esc(toolOf(tools, st.src).name)}</td>
     <td>${esc(st.role)}</td><td class="m">${duration(st.todayMinutes)}</td><td class="m">${esc(money(st.rate))}/h</td><td class="m">${esc(money(st.todayPay))}</td></tr>`).join("");
   const salaries = Number(today.pay) || 0, primes = Number(today.primes) || 0;
   const history = [{ date: today.date, pay: salaries + primes, minutes: today.minutes, today: true }, ...(eco.history ?? [])];
   const top = Math.max(1, ...history.map(h => Number(h.pay) || 0));
-  return `${cards}
+  return `${work}${cards}
     <h4>Fiche de paie · ${esc(dayName(today.date))}</h4>
     <div class="eco-scroll"><table class="eco-table"><thead><tr><th>Agent</th><th>Rôle</th><th>Heures</th><th>Taux actuel</th><th>Payé</th></tr></thead>
       <tbody>${rows || '<tr><td colspan="5">Personne n\'a encore travaillé aujourd\'hui.</td></tr>'}</tbody>
@@ -424,7 +477,9 @@ function ranksHtml(c) {
   const boards = [
     ["💰 Fortune", a => Number(a.economy.wallet) || 0, money],
     ["💶 Paie du jour", a => Number(a.economy.today?.pay) || 0, money],
-    ["⏱️ Heures du jour", a => Number(a.economy.today?.minutes) || 0, duration],
+    ["⏱️ Heures du jour", a => Number(a.economy.work?.today?.minutes ?? a.economy.today?.minutes) || 0, duration],
+    ["📦 Tâches livrées du jour", a => Number(a.economy.work?.today?.deliveries) || 0, v => String(v)],
+    ["🔥 Série de travail", a => Number(a.economy.work?.streak?.days) || 0, v => `${v} j`],
     ["🏆 Plus gros gain au casino", a => Number(a.economy.records?.biggestWin) || 0, money],
   ];
   return `<div class="eco-ranks">${boards.map(([title, value, fmt]) => {

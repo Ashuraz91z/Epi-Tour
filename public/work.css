@@ -1,0 +1,128 @@
+/* Le travail au centre du jeu (work-ui.js) : bloc « Travail du jour » du panneau latéral, « Employé du jour » et
+   « Meilleur livreur » du classement flottant, section « Objectifs du travail » de l'onglet Équipe & paie.
+   Le vert (--work) est la couleur du travail ; l'or (--gold) celle des récompenses ; l'orange celle de la série. */
+:root { --streak: #ffb067; }
+
+/* ---------- panneau latéral (~290 px utiles) ---------- */
+.work-panel { display: grid; gap: 8px; margin: 0 0 12px; padding: 10px 11px; border-radius: 12px; font-size: 12px; color: var(--mute);
+  background: linear-gradient(180deg, #4ade800f, #4ade8003); border: 1px solid #4ade8030; }
+.work-head { display: flex; align-items: baseline; justify-content: space-between; gap: 8px; }
+.panel .work-title, .work-title { margin: 0; font-size: 11px; letter-spacing: .14em; text-transform: uppercase; color: var(--work); }
+.work-xp { font: 600 11px var(--mono); color: var(--gold); white-space: nowrap; }
+.work-xp.max { color: var(--mute); }
+.work-stats { display: grid; grid-template-columns: repeat(3, minmax(0, 1fr)); gap: 6px; }
+.work-stat { display: grid; gap: 1px; min-width: 0; padding: 6px 4px; border-radius: 8px; background: #ffffff09; text-align: center; }
+.work-stat b { font: 600 14px var(--mono); color: var(--fg); white-space: nowrap; }
+.work-stat small { font-size: 10px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.work-stat.streak.on { background: #ffb06714; }
+.work-stat.streak.on b { color: var(--streak); }
+.work-stat.streak.off b { color: var(--mute); }
+.work-team { display: flex; flex-wrap: wrap; align-items: center; gap: 2px 10px; margin: 0; }
+.work-team > span:first-of-type { display: inline-flex; align-items: center; gap: 4px; }
+.work-team i.d { margin: 0 2px 0 0; background: var(--pause); }
+.work-team.on i.d { background: var(--work); box-shadow: 0 0 0 3px #4ade8030; animation: work-pulse 1.8s ease-in-out infinite; }
+.work-team b { color: var(--fg); font-family: var(--mono); }
+.work-team .work-bonus { color: var(--work); font-family: inherit; }
+.work-team small { font-size: 11px; }
+.work-tip { margin: 0; padding: 6px 8px; border-radius: 8px; font-size: 11.5px; line-height: 1.35; color: #f3d6b8; background: #ffb0670d; border: 1px dashed #ffb06755; }
+.work-tip b { color: var(--streak); font-family: var(--mono); }
+.work-goal { display: grid; gap: 4px; margin: 0; padding: 8px 9px; border-radius: 9px; background: #0a0d15aa; border: 1px solid var(--line); }
+.work-goal-top { display: flex; align-items: baseline; justify-content: space-between; gap: 8px; }
+.work-goal-title { min-width: 0; color: var(--fg); font-size: 12.5px; font-weight: 600; }
+.work-goal-top b { font: 600 11px var(--mono); color: var(--work); white-space: nowrap; }
+.work-goal small { font-size: 10.5px; }
+.work-goal.all { display: block; color: var(--gold); font-weight: 600; }
+.work-bar { display: block; height: 6px; border-radius: 3px; background: #ffffff12; overflow: hidden; }
+.work-bar i { display: block; height: 100%; border-radius: inherit; background: linear-gradient(90deg, #22c55e, var(--work)); transition: width .5s; }
+.work-bar.lvl i { background: linear-gradient(90deg, var(--gold2), var(--gold)); }
+.work-done { display: flex; flex-wrap: wrap; gap: 4px; margin: 0; padding: 0; list-style: none; }
+.work-done li { display: inline-flex; align-items: center; gap: 3px; padding: 2px 7px; border-radius: 999px; font-size: 10.5px; color: var(--fg); white-space: nowrap;
+  background: #4ade8014; border: 1px solid #4ade8040; }
+.work-done.compact li { padding: 1px 6px; font-size: 13px; }
+.work-done li.work-count { padding-inline: 2px; background: none; border-color: transparent; color: var(--mute); font-family: var(--mono); }
+.panel .work-sub, .work-sub { margin: 2px 0 -3px; font-size: 10px; letter-spacing: .12em; text-transform: uppercase; color: var(--mute); }
+.work-projects { display: grid; gap: 7px; margin: 0; padding: 0; list-style: none; }
+.work-projects li { display: grid; grid-template-columns: minmax(0, 1fr) auto; align-items: baseline; gap: 3px 8px; }
+.work-pname { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; color: var(--fg); font-weight: 600; }
+.work-plvl { font: 600 11px var(--mono); color: var(--gold); }
+.work-projects .work-bar, .work-projects small { grid-column: 1 / -1; }
+.work-projects small { font-size: 10.5px; }
+.work-last { margin: 0; font-size: 11px; color: #c9cede; overflow-wrap: anywhere; }
+.work-last span { color: var(--mute); font: 10.5px var(--mono); }
+
+/* ---------- classement flottant ---------- */
+.leaderboard-floating .work-leaders + h4, .leaderboard-floating ol + .work-leaders { margin-top: 10px; }
+.work-leaders ul { display: grid; gap: 6px; margin: 0; padding: 0; list-style: none; }
+.work-leaders li { display: grid; gap: 1px; }
+.work-leader-k { font-size: 10.5px; letter-spacing: .04em; color: var(--work); }
+.work-leader-v { font-size: 12px; color: var(--mute); overflow-wrap: anywhere; }
+.work-leaders li.me .work-leader-v b { color: var(--gold); }
+
+/* ---------- dialogue Entreprise · onglet Équipe & paie ---------- */
+.dlg .work-board > p.eco-muted { margin: -2px 0 10px; }
+.work-kpis { display: grid; gap: 8px; grid-template-columns: repeat(auto-fit, minmax(140px, 1fr)); margin-bottom: 12px; }
+.work-kpis > div { display: grid; align-content: start; gap: 2px; padding: 10px 12px; border-radius: 12px; background: #121826; border: 1px solid var(--line); }
+.work-kpis span { font-size: 11px; letter-spacing: .08em; text-transform: uppercase; color: var(--mute); }
+.work-kpis b { font: 700 20px var(--mono); color: var(--fg); }
+.work-kpis small { font-size: 11px; color: var(--mute); font-weight: 400; }
+.work-kpis b small { font-size: 12px; font-weight: 600; }
+.work-kpis .eco-bar { margin-top: 4px; }
+.work-objectives { display: grid; gap: 8px; grid-template-columns: repeat(auto-fill, minmax(260px, 1fr)); margin: 0; padding: 0; list-style: none; }
+.work-obj { display: grid; grid-template-columns: 30px minmax(0, 1fr) auto; align-items: center; gap: 10px; padding: 10px 12px; border-radius: 12px;
+  background: #121826; border: 1px solid var(--line); }
+.work-obj.done { border-color: #4ade8066; background: linear-gradient(180deg, #4ade8012, #121826); }
+.work-obj-icon { font-size: 22px; text-align: center; }
+.work-obj-main { display: grid; gap: 4px; min-width: 0; }
+.work-obj-main b { font-size: 13px; }
+.work-obj-main small { font: 11px var(--mono); color: var(--mute); }
+.work-obj-side { display: grid; justify-items: end; gap: 4px; text-align: right; }
+.work-reward { font: 600 11px/1.35 var(--mono); color: var(--gold); white-space: nowrap; }
+.work-obj.done .work-reward { opacity: .7; }
+.work-check { font-size: 11px; font-weight: 600; color: var(--work); white-space: nowrap; }
+.work-boosts { display: grid; gap: 10px; grid-template-columns: repeat(auto-fit, minmax(260px, 1fr)); }
+.work-boost { display: grid; align-content: start; gap: 6px; padding: 12px 14px; border-radius: 12px; background: #121826; border: 1px solid var(--line); }
+.work-boost.on { border-color: #4ade8066; }
+.work-boost.streak.on { border-color: #ffb06766; }
+.work-boost header { display: flex; align-items: center; gap: 8px; }
+.work-boost header b { flex: 1; font-size: 14px; }
+.work-boost header em { font: 700 17px var(--mono); font-style: normal; color: var(--mute); }
+.work-boost.on header em { color: var(--work); }
+.work-boost.streak.on header em { color: var(--streak); }
+.work-boost.streak.on .eco-bar i { background: linear-gradient(90deg, #e07a2f, var(--streak)); }
+.dlg .work-boost p { margin: 0; font-size: 12px; }
+.dlg .work-boost p.work-boost-now { color: var(--fg); font-size: 13px; }
+.eco-table td.work-pcell { max-width: 220px; overflow: hidden; text-overflow: ellipsis; font-weight: 600; }
+.eco-table td.work-lvl { min-width: 150px; white-space: normal; }
+.work-lvl > span { display: flex; align-items: baseline; justify-content: space-between; gap: 8px; margin-bottom: 4px; }
+.work-lvl b { font-family: var(--mono); color: var(--gold); }
+.work-lvl small { font-size: 11px; color: var(--mute); }
+.work-feed { display: grid; gap: 3px; margin: 0; padding: 0; list-style: none; font-size: 13px; }
+.work-feed li { display: grid; grid-template-columns: 92px 1fr; gap: 10px; padding: 5px 10px; border-radius: 8px; background: #ffffff05; border-left: 3px solid var(--line); }
+.work-feed li.delivery { border-left-color: var(--work); }
+.work-feed li.objective { border-left-color: var(--gold); }
+.work-feed li.badge { border-left-color: #a8c4ff; }
+.work-feed li.streak { border-left-color: var(--streak); }
+.work-feed time { padding-top: 1px; font: 11px var(--mono); color: var(--mute); }
+.work-feed span { overflow-wrap: anywhere; }
+
+@keyframes work-pulse { 50% { box-shadow: 0 0 0 5px #4ade8010; } }
+@media (max-width: 760px) {
+  .panel .work-panel { gap: 6px; padding: 8px 9px; }
+}
+@media (max-width: 560px) {
+  .work-kpis { grid-template-columns: 1fr 1fr; gap: 6px; }
+  .work-kpis > div { padding: 8px 10px; }
+  .work-kpis > div:last-child:nth-child(odd) { grid-column: 1 / -1; }
+  .work-kpis span { font-size: 10px; letter-spacing: .06em; }
+  .work-kpis b { font-size: 17px; }
+  .work-kpis > div > small { display: none; }
+  .work-objectives { grid-template-columns: 1fr; gap: 6px; }
+  .work-obj { grid-template-columns: 24px minmax(0, 1fr) auto; gap: 8px; padding: 8px 10px; }
+  .work-obj-icon { font-size: 18px; }
+  .work-boost { padding: 10px 12px; }
+  .work-feed li { grid-template-columns: 1fr; gap: 0; }
+}
+@media (prefers-reduced-motion: reduce) {
+  .work-team.on i.d { animation: none; }
+  .work-bar i { transition: none; }
+}
