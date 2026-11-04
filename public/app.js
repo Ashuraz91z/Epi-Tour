@@ -17,6 +17,7 @@ import { officePanelHtml, officeTierForLevel } from "./upgrades-client.js";
 import {
   agentRoleText, createEconomyUi, decorKeyOf, eventChipHtml, fortuneLeaders, freshTipsIn, money, residentEconomyLine, staffOf, walletChipHtml,
 } from "./economy-ui.js";
+import { createSportsGames } from "./sports-games.js";
 import { OrbitControls } from "three/addons/controls/OrbitControls.js";
 import { CSS2DObject, CSS2DRenderer } from "three/addons/renderers/CSS2DRenderer.js";
 import { CSS3DObject, CSS3DRenderer } from "three/addons/renderers/CSS3DRenderer.js";
@@ -120,11 +121,12 @@ const tennisAnimation = (t, seed) => {
   const phase = (t + seed * 13) % 4.2;
   return phase < 0.83 ? "Punch" : phase > 3.3 ? "Running" : "Idle";
 };
-const golfAnimation = (t, seed) => {
+const golfAnimation = (t, seed, swing = "Punch") => {
   const phase = t + seed * 11, k = phase % 7;
-  return k < 0.83 ? "Punch" : k > 5.3 && Math.floor(phase / 7) % 3 === 1 ? "Yes" : "Idle";
+  return k < 0.83 ? swing : k > 5.3 && Math.floor(phase / 7) % 3 === 1 ? "Yes" : "Idle";
 };
-const SLOT_MOTION = { Dance: clubAnimation, Tennis: tennisAnimation, Golf: golfAnimation };
+// Green : swing court (« Putt », au putter) ; practice : swing entier, au fer (voir HELD_OF_SLOT).
+const SLOT_MOTION = { Dance: clubAnimation, Tennis: tennisAnimation, Golf: (t, seed) => golfAnimation(t, seed, "Putt"), Practice: golfAnimation };
 // Casino : tables (roulette, blackjack, poker) au fond à gauche, bar au fond à droite, deux rangées de machines à sous
 // devant, carré VIP devant à droite. Mêmes positions que les meubles dessinés par buildCasino ; l'allée (y = 310) reste libre.
 const CASINO_TABLES = { roulette: [170, 165], blackjack: [400, 160], poker: [600, 165] };
@@ -170,13 +172,16 @@ const GOLF_HOLES = [[370, 420], [560, 520], [700, 410]]; // le deuxième sert au
 const GOLF_MATS = [130, 210, 290, 370, 450]; // tapis de practice ; le dernier est au golfeur du club
 const GOLF_POND = { cx: 590, cy: 200, rx: 95, ry: 55 }, GOLF_BUNKER = { cx: 150, cy: 530, rx: 90, ry: 55 };
 const GOLF_TABLES = [[800, 230], [920, 230]]; // chaises à ±45, racine des assis à ±35
-const towards = (x, y, [hx, hy]) => Math.atan2(hx - x, hy - y);
+// Un golfeur se tient de profil, la cible à sa gauche ; sa balle (la tête du club, bras au repos) est 52 unités devant
+// lui et 6 vers la cible. Au practice, il est à gauche du tapis, face à +x, sa balle sur le tee à droite du tapis.
+const sideOn = (x, y, [hx, hy]) => Math.atan2(y - hy, hx - x);
+const GOLF_STANCE = { ahead: 52, side: 6 }, GOLF_TEE = { dx: 25, y: 94 };
 const GOLF_SLOTS = [
-  // Putts autour des trous, hors de la ligne du golfeur du club.
-  ...[[295, 430, 0], [330, 365, 0], [440, 385, 0], [625, 395, 2], [760, 370, 2], [770, 450, 2], [640, 560, 1], [600, 455, 1], [520, 450, 1]]
-    .map(([x, y, h]) => [x, y, towards(x, y, GOLF_HOLES[h]), "Golf"]),
-  // Practice : face au filet du fond.
-  ...GOLF_MATS.slice(0, 4).map(x => [x, 105, Math.PI, "Golf"]),
+  // Putts autour des trous : ni sur la ligne du golfeur du club (y = 468, balle sur y = 520), ni dans l'élan d'un voisin.
+  ...[[345, 395, 0], [445, 415, 0], [575, 425, 1], [610, 510, 1], [550, 570, 1], [650, 560, 1], [625, 380, 2], [660, 450, 2], [735, 485, 2]]
+    .map(([x, y, h]) => [x, y, sideOn(x, y, GOLF_HOLES[h]), "Golf"]),
+  // Practice : de profil, le filet du fond à gauche.
+  ...GOLF_MATS.slice(0, 4).map(x => [x + GOLF_TEE.dx - GOLF_STANCE.ahead, GOLF_TEE.y + GOLF_STANCE.side, Math.PI / 2, "Practice"]),
   // Club-house : au comptoir (par derrière les tables), puis assis aux deux tables (chaises à coussin : assise 0,48 m).
   ...[770, 840, 910].map(x => [x, 120, Math.PI, "Idle", [[710, 170], [x, 170]]]),
   ...GOLF_TABLES.flatMap(([tx, ty]) => [[tx - 35, ty, Math.PI / 2, "Sitting", [], 0.24], [tx + 35, ty, -Math.PI / 2, "Sitting", [], 0.24]]),
@@ -1750,7 +1755,7 @@ function canvasPanel(parent, w, h, pxW, pxH, x, y, z, ry = 0) {
   parent.add(mesh);
   return { ctx: tex.image.getContext("2d"), tex, mesh, w: pxW, h: pxH, key: "" };
 }
-// Zone de clic qui ouvre un onglet du dialogue Entreprise (« casino » ou « sport »).
+// Zone de clic : « casino » ouvre cet onglet du dialogue Entreprise ; « tennis » et « golf », le mini-jeu.
 function playTarget(f, parent, w, h, d, x, y, z, tab, ry = 0) {
   const m = box(parent, w, h, d, hitMaterial, x, y, z, ry);
   m.userData.tab = tab;
@@ -2996,6 +3001,7 @@ function buildTennis(f, g, { at, tag, staff, back }) {
   // Les deux joueurs du club, la balle et son ombre.
   const players = TENNIS_NPCS.map(([x, y], k) => {
     const p = staff(k ? "#2fb898" : "#e0814f", x, y, k ? -Math.PI / 2 : Math.PI / 2);
+    holdProp(p, "racket", k ? 0.3 : 0);
     p.userData.court = { X: x, Y: y, goal: y, swing: 0, cheer: "Idle", cheerT: 0 };
     return p;
   });
@@ -3006,8 +3012,8 @@ function buildTennis(f, g, { at, tag, staff, back }) {
   shadow.scale.set(0.06, 1, 0.06);
   shadow.position.y = 0.083;
   g.add(shadow);
-  playTarget(f, g, 15, 0.4, 5.3, 0, 0.2, at(0, 476).z, "sport");
-  f.tennis = { players, ball, shadow, board, shot: { t: 0, T: 1, hitter: 0, winner: false, swung: false }, pause: 0.8, serve: 0, left: -1, match: null, last: null };
+  playTarget(f, g, 15, 0.4, 5.3, 0, 0.2, at(0, 476).z, "tennis");
+  f.tennis = { players, ball, shadow, board, shot: { t: 0, T: 1, hitter: 0, winner: false, swung: false, toss: false }, pause: 0.8, serve: 0, left: -1, match: null, last: null };
   drawTennisBoard(f.tennis);
   f.tick = (dt, t, reduced) => tickTennis(f.tennis, dt, reduced);
 }
@@ -3032,8 +3038,8 @@ function tennisPoint(tn) {
   if (m && m.k < m.games.length) { server = m.games[m.k] === "toi" ? 0 : 1; tn.left = Math.random() < 0.35 ? 1 : 3; }
   else { server = tn.serve = 1 - tn.serve; tn.left = -1; }
   tennisShot(tn, server, tn.left === 1);
-  tn.shot.t = -0.35; // le service part au milieu du geste
-  tn.players[server].userData.court.swing = 0.83;
+  tn.shot.t = -0.9; // lancer de balle, puis le geste : la balle part en son milieu (voir tickTennis)
+  tn.shot.toss = true;
 }
 function tennisPointOver(tn) {
   const m = tn.match;
@@ -3072,9 +3078,14 @@ function tickTennis(tn, dt, reduced) {
     }
   } else {
     s.t += dt;
+    if (s.toss && s.t >= -0.35) { s.toss = false; tn.players[s.hitter].userData.court.swing = 0.83; }
     const k = Math.max(0, s.t) / s.T, kb = 0.62;
     let X, Y, H;
-    if (k < kb) {
+    if (s.t < 0) {
+      // Service : la balle monte devant le serveur et redescend à hauteur de frappe.
+      const v = (s.t + 0.9) / 0.9;
+      X = s.ax; Y = s.ay; H = 0.35 + 0.5 * v + 1.6 * v * (1 - v);
+    } else if (k < kb) {
       const v = k / kb;
       X = s.ax + (s.bx - s.ax) * v; Y = s.ay + (s.by - s.ay) * v; H = 0.85 * (1 - v) + 0.09 * v + 4.2 * v * (1 - v);
     } else {
@@ -3238,11 +3249,12 @@ function buildGolf(f, g, { at, tag, staff, back }) {
     const m = at(x, 92);
     box(g, 1.14, 0.025, 1.44, mat("#1b2a20"), m.x, 0.07, m.z);
     box(g, 1.1, 0.03, 1.4, mat("#43c260", { roughness: 1 }), m.x, 0.08, m.z);
-    cyl(g, 0.012, 0.05, stick, m.x, 0.11, at(0, 86).z, 6);
+    cyl(g, 0.012, 0.05, stick, at(x + GOLF_TEE.dx, 0).x, 0.11, at(0, GOLF_TEE.y).z, 6);
     cyl(g, 0.12, 0.26, mat("#c8452c", { roughness: 0.5 }), m.x + 0.42, 0.22, m.z + 0.5, 12);
     for (let b = 0; b < 3; b++) { const ball = new THREE.Mesh(ballGeometry, stick); ball.scale.setScalar(0.035); ball.position.set(m.x + 0.38 + b * 0.04, 0.37, m.z + 0.5 + (b % 2) * 0.03); g.add(ball); }
   }
-  const pro = staff("#c9a86a", GOLF_MATS[4], 105, Math.PI);
+  const pro = staff("#c9a86a", GOLF_MATS[4] + GOLF_TEE.dx - GOLF_STANCE.ahead, GOLF_TEE.y + GOLF_STANCE.side, Math.PI / 2);
+  holdProp(pro, "iron");
   const rangeBall = new THREE.Mesh(ballGeometry, glow("#ffffff", 0.4));
   rangeBall.scale.setScalar(0.035);
   g.add(rangeBall);
@@ -3305,11 +3317,12 @@ function buildGolf(f, g, { at, tag, staff, back }) {
   sun.position.set(at(G.cx, 0).x, 4, at(0, G.cy).z);
   g.add(sun);
   f.roomTags = [tag("Practice", 90, 35), tag("Putting green", 255, 345), tag("Club-house", 725, 35)];
-  playTarget(f, g, (G.rx * 2 + 28) * S, 0.4, (G.ry * 2 + 22) * S, at(G.cx, G.cy).x, 0.2, at(G.cx, G.cy).z, "sport");
-  playTarget(f, g, 8.4, 2.6, 2.4, pn.x, 1.2, at(0, 75).z, "sport");
-  // Golfeur du club et sa balle, sur la ligne du trou 2.
+  playTarget(f, g, (G.rx * 2 + 28) * S, 0.4, (G.ry * 2 + 22) * S, at(G.cx, G.cy).x, 0.2, at(G.cx, G.cy).z, "golf");
+  playTarget(f, g, 8.4, 2.6, 2.4, pn.x, 1.2, at(0, 75).z, "golf");
+  // Golfeur du club et sa balle, sur la ligne du trou 2 ; lui se tient de profil, en retrait de la ligne.
   const [hx, hy] = GOLF_HOLES[1];
-  const putter = staff("#d9dde8", hx - PUTT_DIST.moyen - 22, hy, Math.PI / 2);
+  const putter = staff("#d9dde8", hx - PUTT_DIST.moyen - GOLF_STANCE.side, hy - GOLF_STANCE.ahead, 0);
+  holdProp(putter, "putter");
   const ball = new THREE.Mesh(ballGeometry, glow("#ffffff", 0.45));
   ball.scale.setScalar(0.035);
   g.add(ball);
@@ -3340,7 +3353,7 @@ function puttResult(gf, r, animate) {
   gf.last = { shot, holed, miss };
   if (animate) return; // le panneau s'affiche quand la balle s'arrête
   const p = gf.putt;
-  gf.putter.position.x = (p.startX - 22) * S - 10;
+  gf.putter.position.x = (p.startX - GOLF_STANCE.side) * S - 10;
   play(gf.putter, "Idle");
   gf.ball.position.set(p.endX * S - 10, 0.11, p.endY * S - 6.2);
   gf.ball.visible = !holed;
@@ -3351,18 +3364,18 @@ function tickPutt(gf, dt) {
   const p = gf.putt, golfer = gf.putter, ball = gf.ball, hy = GOLF_HOLES[1][1];
   p.t += dt;
   if (p.phase === "walk") {
-    const goal = (p.startX - 22) * S - 10, k = Math.min(1, p.t / 0.9);
+    const goal = (p.startX - GOLF_STANCE.side) * S - 10, k = Math.min(1, p.t / 0.9);
     golfer.position.x = p.fromX + (goal - p.fromX) * k;
     const walking = k < 1 && Math.abs(goal - p.fromX) > 0.05;
     play(golfer, walking ? "Walking" : "Idle");
-    golfer.rotation.y = walking && goal < p.fromX ? -Math.PI / 2 : Math.PI / 2; // il marche vers sa balle, puis se tourne vers le trou
+    golfer.rotation.y = walking ? (goal < p.fromX ? -Math.PI / 2 : Math.PI / 2) : 0; // il longe la ligne, puis se met de profil, le trou à sa gauche
     if (k >= 1) { p.phase = "aim"; p.t = 0; }
   } else if (p.phase === "aim") {
-    if (p.t > 0.7) { p.phase = "swing"; p.t = 0; play(golfer, "Punch"); }
+    if (p.t > 0.7) { p.phase = "swing"; p.t = 0; play(golfer, "Putt"); }
   } else if (p.phase === "swing") {
-    if (p.t > 0.4) { p.phase = "roll"; p.t = 0; }
+    if (p.t > 0.2) { p.phase = "roll"; p.t = 0; } // le club traverse vers le trou : la balle part
   } else if (p.phase === "roll") {
-    if (p.t > 0.45 && golfer.userData.anim === "Punch") play(golfer, "Idle");
+    if (p.t > 0.63 && golfer.userData.anim === "Putt") play(golfer, "Idle");
     const k = Math.min(1, p.t / (0.9 + (p.endX - p.startX) / 140)), e = 1 - (1 - k) ** 2;
     ball.position.set((p.startX + (p.endX - p.startX) * e) * S - 10, 0.11, (hy + (p.endY - hy) * e * e) * S - 6.2);
     if (k >= 1) {
@@ -3383,11 +3396,11 @@ function tickPutt(gf, dt) {
   }
 }
 function tickRange(gf, dt) {
-  const r = gf.range, tee = 86, x0 = GOLF_MATS[4];
+  const r = gf.range, tee = GOLF_TEE.y, x0 = GOLF_MATS[4] + GOLF_TEE.dx;
   r.t += dt;
   if (r.t >= 3.4) { r.t = 0; r.tx = x0 + (Math.random() - 0.5) * 120; r.th = 1.1 + Math.random() * 1.4; play(gf.pro, "Punch"); }
   else if (r.t > 0.83) play(gf.pro, "Idle");
-  const k = r.t - 0.38;
+  const k = r.t - 0.2; // le fer traverse vers le filet : la balle s'envole
   let X = x0, Y = tee, H = 0.11;
   if (k > 0 && k < 0.55) { const u = k / 0.55; X = x0 + (r.tx - x0) * u; Y = tee + (34 - tee) * u; H = 0.11 + (r.th - 0.11) * u + 3.2 * u * (1 - u); }
   else if (k >= 0.55) { const u = Math.min(1, (k - 0.55) / 0.5); X = r.tx; Y = 36 + u * 4; H = r.th + (0.11 - r.th) * u; }
@@ -3437,14 +3450,27 @@ function makeRobot(color) {
     if (o.isMesh && o.material?.name === "Main") { o.material = o.material.clone(); o.material.color.set(color); o.userData.tourMaterial = true; }
     if (o.isMesh) o.frustumCulled = false; // les maillages animés sortent de leur boîte d'origine
   });
+  // L'os de la paume droite porte raquette et club ; au premier robot, sa pose de repos (orientation, échelle ×100 du
+  // squelette) est mesurée une fois pour toutes, avant toute animation.
+  let hand = null;
+  r.traverse(o => { if (o.isBone && HAND_BONE.test(o.name)) hand = o; });
+  if (hand && !handRest) {
+    r.updateMatrixWorld(true);
+    const q = new THREE.Quaternion(), s = new THREE.Vector3();
+    hand.matrixWorld.decompose(new THREE.Vector3(), q, s);
+    handRest = { q: q.invert(), s: s.x };
+  }
   g.add(r);
   const mixer = new THREE.AnimationMixer(r);
-  const actions = Object.fromEntries(t.animations.map(clip => {
+  // « Putt » : le coup de poing à mi-amplitude (mêlé à la pose de repos), pour un swing de green plus court qu'au practice.
+  t.putt ??= Object.assign(t.animations.find(clip => clip.name === "Punch")?.clone() ?? new THREE.AnimationClip("Putt", 0, []), { name: "Putt" });
+  const actions = Object.fromEntries([...t.animations, t.putt].map(clip => {
     const a = mixer.clipAction(clip);
     if (ONCE.has(clip.name)) { a.setLoop(THREE.LoopOnce); a.clampWhenFinished = true; }
+    if (clip === t.putt) a.weight = 0.5;
     return [clip.name, a];
   }));
-  Object.assign(g.userData, { mixer, actions, anim: null });
+  Object.assign(g.userData, { mixer, actions, anim: null, hand, held: null });
   play(g, "Idle");
   return g;
 }
@@ -3456,6 +3482,143 @@ function play(g, name) {
   u.actions[name].reset().fadeIn(0.35).play();
   if (u.anim) u.actions[u.anim].fadeOut(0.35);
   u.anim = name;
+}
+
+// ---------- raquettes et clubs ----------
+// Raquette de tennis, putter (green) et fer (practice) : modèles construits une fois, puis clonés pour chaque robot qui
+// joue. Un clone ne copie que les nœuds (géométries, matériaux et textures restent communs) : un agent qui part ne
+// libère donc rien de partagé (seuls ses matériaux marqués tourMaterial le sont). Le robot les tient dans la main
+// droite : « Hand.R » est un maillage déformé, pas un os ; l'os de la paume qui le porte est Palm2.R (« Palm2R » pour three.js).
+const HAND_BONE = /^Palm2\.?R$/;
+// Creux du poing dans le repère de cet os (en mètres) : entre les jointures et le bout des doigts repliés.
+const FIST = new THREE.Vector3(-0.04, 0.095, 0);
+// Bras au repos (bras ballants, ce que garde l'animation Idle), dans le repère du robot (face à +z, sa gauche vers +x) :
+// où pointe le manche depuis le poing (aim) et où regarde la face. Le reste suit la main : le coup (Punch) devient une
+// volée au tennis ; au golf, le robot se tient de profil, la cible à sa gauche, et le même geste devient un swing
+// (montée à droite, traversée vers la cible). Quand les bras balancent (course, marche), l'objet garde plutôt
+// l'orientation « carry » pour ne pas racler le sol, les mains du robot étant à hauteur de genou.
+const HELD_POSE = {
+  racket: { aim: [0.3, 0.4, 0.87], face: [-1, 0, 0], carry: [0.05, 0.9, 0.42] }, // en garde : tête devant, relevée, cordage de côté
+  putter: { aim: [0.5, -0.08, 0.86], face: [0, 1, 0], carry: [0.45, 0.12, 0.88] }, // tête posée au sol devant le robot
+  iron: { aim: [0.5, -0.06, 0.86], face: [0, 1, 0], carry: [0.45, 0.12, 0.88] },
+};
+const HELD_OF_SLOT = { Tennis: "racket", Golf: "putter", Practice: "iron" };
+const HELD_STEADY = new Set(["Running", "Walking", "WalkJump"]);
+const RACKET_COLORS = [["#1c1f26", "#e63946"], ["#f1f0ea", "#2a6df4"], ["#ffd23f", "#1c1f26"], ["#2a2f3a", "#7ee0b0"]];
+// Ovale du cadre, un peu plus large en haut comme une vraie tête de raquette.
+class OvalCurve extends THREE.Curve {
+  constructor(a, b, egg) { super(); Object.assign(this, { a, b, egg }); }
+  getPoint(k, target = new THREE.Vector3()) {
+    const u = k * Math.PI * 2, s = Math.sin(u);
+    return target.set(Math.cos(u) * this.a * (1 + this.egg * s), s * this.b, 0);
+  }
+}
+let heldModels = null, handRest = null;
+// Ruban enroulé en spirale (grip) : une bande diagonale par tour, répétée le long du manche.
+function wrapTexture(base, band, turns) {
+  const t = drawnTexture(64, 64, x => {
+    x.fillStyle = base; x.fillRect(0, 0, 64, 64);
+    x.strokeStyle = band; x.lineWidth = 9;
+    for (const o of [-64, 0, 64]) { x.beginPath(); x.moveTo(o, 0); x.lineTo(o + 64, 64); x.stroke(); }
+  });
+  t.wrapS = t.wrapT = THREE.RepeatWrapping;
+  t.repeat.set(1, turns);
+  return t;
+}
+// Orientation d'un objet tenu, dans le repère du robot : son axe y suit le manche (vers la tête pour la raquette,
+// vers le poing pour un club), son axe z la face.
+function heldRotation(kind, carry = false) {
+  const { aim, face } = HELD_POSE[kind];
+  const y = new THREE.Vector3(...carry ? HELD_POSE[kind].carry : aim).normalize();
+  if (kind !== "racket") y.negate();
+  const z = new THREE.Vector3(...face);
+  z.addScaledVector(y, -z.dot(y)).normalize();
+  return new THREE.Quaternion().setFromRotationMatrix(new THREE.Matrix4().makeBasis(new THREE.Vector3().crossVectors(y, z), y, z));
+}
+function buildHeldModels() {
+  // Raquette (0,69 m) : origine au milieu du grip, manche selon +y, cordage dans le plan xy.
+  const frameGeo = new THREE.TubeGeometry(new OvalCurve(0.118, 0.152, 0.05), 72, 0.0075, 6, true).scale(1, 1, 1.45);
+  const bed = new THREE.CircleGeometry(1, 40), pos = bed.attributes.position;
+  for (let i = 0; i < pos.count; i++) { const x = pos.getX(i), y = pos.getY(i); pos.setXY(i, x * 0.113 * (1 + 0.05 * y), y * 0.147); }
+  const strings = new THREE.MeshStandardMaterial({ side: THREE.DoubleSide, transparent: true, depthWrite: false, roughness: 0.6,
+    map: drawnTexture(128, 128, x => {
+      x.strokeStyle = "rgba(244,240,226,0.95)"; x.lineWidth = 1.6;
+      for (let k = 1; k < 16; k++) { x.beginPath(); x.moveTo(k * 8, 0); x.lineTo(k * 8, 128); x.stroke(); }
+      for (let k = 1; k < 19; k++) { x.beginPath(); x.moveTo(0, k * 6.74); x.lineTo(128, k * 6.74); x.stroke(); }
+    }) });
+  const overgrip = new THREE.MeshStandardMaterial({ map: wrapTexture("#f4f2ec", "#b9bcc4", 9), roughness: 0.9 });
+  const racket = ([frameColor, accentColor]) => {
+    const g = new THREE.Group(), frame = mat(frameColor, { roughness: 0.35, metalness: 0.3 }), accent = mat(accentColor, { roughness: 0.4, metalness: 0.2 });
+    cyl(g, 0.0165, 0.2, overgrip, 0, 0, 0, 8); // grip à huit pans
+    cyl(g, 0.019, 0.014, frame, 0, -0.105, 0, 8); // capuchon
+    box(g, 0.026, 0.05, 0.02, frame, 0, 0.125, 0); // cœur, puis la gorge en V jusqu'au cadre
+    for (const s of [-1, 1]) box(g, 0.013, 0.162, 0.019, accent, s * 0.036, 0.227, 0).rotation.z = -s * 0.357;
+    const head = new THREE.Mesh(frameGeo, frame);
+    head.position.y = 0.425;
+    const bedMesh = new THREE.Mesh(bed, strings);
+    bedMesh.position.y = 0.425;
+    g.add(head, bedMesh);
+    return g;
+  };
+  // Clubs (0,9 m) : origine au poing, manche selon −y, grip au-dessus. Bras au repos, la tête est posée à plat, la pointe
+  // vers l'avant du robot et la face vers sa gauche (la cible) : le manche entre au talon.
+  const rubber = new THREE.MeshStandardMaterial({ map: wrapTexture("#1e2126", "#3a3f48", 12), roughness: 0.85 });
+  const steel = mat("#d4d8e0", { metalness: 0.45, roughness: 0.3 }), dark = mat("#2a2e35", { metalness: 0.4, roughness: 0.45 });
+  const club = (kind, build) => {
+    const g = new THREE.Group();
+    cyl(g, 0.0125, 0.25, rubber, 0, -0.035, 0, 12);
+    cyl(g, 0.0055, 0.62, steel, 0, -0.47, 0, 8);
+    cyl(g, 0.0075, 0.03, dark, 0, -0.785, 0, 8); // bague du col
+    const head = new THREE.Group();
+    head.position.y = -0.8;
+    head.quaternion.copy(heldRotation(kind)).invert();
+    build(head);
+    g.add(head);
+    return g;
+  };
+  const putter = club("putter", h => {
+    box(h, 0.026, 0.026, 0.11, dark, 0, -0.02, 0.045); // lame
+    box(h, 0.003, 0.022, 0.1, steel, 0.0145, -0.02, 0.045); // face fraisée
+    box(h, 0.02, 0.002, 0.003, mat("#f4f1e8"), 0, -0.006, 0.045); // ligne de visée
+    cyl(h, 0.006, 0.03, steel, 0, -0.006, 0, 8); // col
+  });
+  const iron = club("iron", h => {
+    box(h, 0.014, 0.045, 0.08, steel, 0, -0.018, 0.04).rotation.z = 0.4; // lame ouverte (loft)
+    box(h, 0.024, 0.014, 0.08, steel, -0.004, -0.036, 0.04); // semelle
+    box(h, 0.006, 0.02, 0.06, dark, -0.012, -0.018, 0.04); // cavité au dos
+    cyl(h, 0.007, 0.04, steel, 0, -0.004, 0, 8); // col
+  });
+  return { racket: RACKET_COLORS.map(racket), putter: [putter], iron: [iron] };
+}
+// Met l'objet (ou rien) dans la main droite. Sans changement, ne fait rien : appelé à chaque image sans rien allouer.
+function holdProp(g, kind, style = 0) {
+  const u = g.userData;
+  if (u.held === kind) return;
+  u.held = kind;
+  for (const k in u.props) u.props[k].visible = k === kind;
+  if (!kind || !u.hand || !handRest || u.props?.[kind]) return;
+  heldModels ??= buildHeldModels();
+  const list = heldModels[kind], m = list[Math.floor(Math.abs(style) * list.length) % list.length].clone();
+  m.quaternion.copy(handRest.q).multiply(heldRotation(kind));
+  m.position.copy(FIST).divideScalar(handRest.s);
+  m.scale.setScalar(1 / handRest.s);
+  m.userData.rest = m.quaternion.clone();
+  m.userData.carry = heldRotation(kind, true);
+  u.hand.add(m);
+  (u.props ??= {})[kind] = m;
+}
+// Après l'animation de l'image : l'objet suit la main (frappe comprise) ; bras qui balancent, il garde l'orientation de
+// port dans le repère du robot (os de la main → robot : produit des rotations des parents, sans rien allouer).
+const heldTarget = new THREE.Quaternion();
+function steadyProp(g, dt) {
+  const u = g.userData, m = u.held && u.props?.[u.held];
+  if (!m) return;
+  if (HELD_STEADY.has(u.anim)) {
+    heldTarget.copy(u.hand.quaternion);
+    for (let o = u.hand.parent; o && o !== g; o = o.parent) heldTarget.premultiply(o.quaternion);
+    heldTarget.invert().multiply(m.userData.carry);
+  } else heldTarget.copy(m.userData.rest);
+  m.quaternion.slerp(heldTarget, Math.min(1, dt * 7));
 }
 
 const ringGeometry = new THREE.TorusGeometry(0.42, 0.035, 8, 36);
@@ -3672,7 +3835,7 @@ function animate(frameTime = performance.now()) {
       play(f.owner, "Sitting");
       f.owner.userData.mixer.update(dt);
     }
-    f.staff?.forEach(r => r.userData.mixer.update(dt));
+    f.staff?.forEach(r => { r.userData.mixer.update(dt); steadyProp(r, dt); });
     // Casino, tennis et golf : leurs animations (et les parties rejouées) n'avancent que sur l'étage affiché.
     f.tick?.(dt, t, reducedMotion.matches);
     f.dancers?.forEach((r, k) => {
@@ -3771,7 +3934,9 @@ function animate(frameTime = performance.now()) {
     g.rotation.y += turn * Math.min(1, dt * 8);
     // Animation selon le lieu : marche, assis au poste / au salon / aux toilettes, danse au Club, signe chez le résident.
     play(g, !settled ? "Walking" : SLOT_MOTION[u.slotAnim]?.(t, u.seed) ?? u.slotAnim ?? "Idle");
-    if (g.parent?.visible) u.mixer.update(dt); // les agents des étages fermés avancent sans être animés
+    // Raquette à une place de joueur du court, putter au green, fer au practice ; rien en chemin ni ailleurs.
+    holdProp(g, settled ? HELD_OF_SLOT[u.slotAnim] ?? null : null, u.seed);
+    if (g.parent?.visible) { u.mixer.update(dt); steadyProp(g, dt); } // les agents des étages fermés avancent sans être animés
     u.orb.position.y = 1.78 + Math.sin(t * 2 + u.seed * 6) * 0.04;
     u.cup.visible = settled && u.place === "cafe";
     u.puffs.forEach(p => {
@@ -3897,7 +4062,7 @@ const onFocus = () => [...agents.values()].filter(g => g.userData.floor === orde
 const onGiantTv = () => { const t = floors.get(order[focus])?.tv; return t && ray.intersectObject(t.frame).length ? t : null; };
 const onByte = () => { const c = floors.get(order[focus])?.cyber; return c && ray.intersectObject(c.hit, true).length ? c : null; };
 const onTv = () => order[focus] === "lounge" && tvFrame && ray.intersectObject(tvFrame).length > 0;
-// Machines, tables, court et green : un clic ouvre le dialogue Entreprise sur le bon onglet (résidents seulement).
+// Machines et tables : un clic ouvre le dialogue Entreprise sur le bon onglet ; court et green, le mini-jeu (résidents seulement).
 const onPlayTarget = () => {
   if (data?.viewer?.role === "spectator" || !myApt()?.economy) return null;
   const targets = floors.get(order[focus])?.playTargets;
@@ -3925,9 +4090,10 @@ renderer.domElement.addEventListener("pointerup", e => {
   if (giant) return open(giant.page, "_blank", "noopener");
   if (byte) return byte.poke();
   if (onTv()) return void open(tvPageUrl(), "_blank", "noopener");
-  // Machines, roulette, blackjack, court, green : le jeu s'ouvre dans « Entreprise ».
+  // Court et green : le mini-jeu ; machines, roulette, blackjack : l'onglet Casino d'« Entreprise ».
   const tab = onPlayTarget();
-  if (tab) economyUi.open(tab);
+  if (tab === "tennis" || tab === "golf") sportsGames.open(tab);
+  else if (tab) economyUi.open(tab);
 });
 renderer.domElement.addEventListener("pointermove", e => {
   if (e.buttons) return;
@@ -4071,10 +4237,16 @@ function render() {
     const jackpot = Number(data.casino?.jackpot);
     const casinoPlay = f.key === "casino" && !spectator && myGame?.economy
       ? `<div class="space-actions"><h4>Tables de jeu</h4><button type="button" class="space-act eco-casino-btn" data-eco-open="casino"><strong>🎰 Jouer</strong><span>Machine à sous, roulette, blackjack, course de robots · solde ${esc(money(economyUi.shownWallet(myGame.economy)))}${Number.isFinite(jackpot) ? ` · jackpot ${esc(money(jackpot))}` : ""}</span></button></div>` : "";
-    // Tennis et golf : le set contre le pro et les putts se jouent dans l'onglet Sport du dialogue Entreprise.
-    const sport = { tennis: ["Match contre le pro", "🎾 Jouer un set", "Attaque, jeu équilibré ou défense"], golf: ["Putting green", "⛳ Tenter un putt", "Putt de 1 m, 4 m ou 12 m"] }[f.key];
-    const sportPlay = sport && !spectator && myGame?.economy
-      ? `<div class="space-actions"><h4>${sport[0]}</h4><button type="button" class="space-act eco-casino-btn" data-eco-open="sport"><strong>${sport[1]}</strong><span>${sport[2]} · solde ${esc(money(economyUi.shownWallet(myGame.economy)))}</span></button></div>` : "";
+    // Tennis et golf : on joue pour de vrai (mini-jeu, sports-games.js) ; les paris sur un set ou un putt restent dans
+    // l'onglet Sport du dialogue Entreprise.
+    const sport = {
+      tennis: ["Court central", "🎮 Jouer au tennis", "Un vrai match contre le robot du club", "Un set contre le pro : attaque, jeu équilibré ou défense"],
+      golf: ["Putting green", "🎮 Jouer au golf", "Mini-golf en trois trous : vise et dose ta force", "Putt de 1 m, 4 m ou 12 m"],
+    }[f.key];
+    const sportBet = sport && myGame?.economy
+      ? `<button type="button" class="space-act" data-eco-open="sport"><strong>🎲 Parier</strong><span>${sport[3]} · solde ${esc(money(economyUi.shownWallet(myGame.economy)))}</span></button>` : "";
+    const sportPlay = sport && !spectator && myGame
+      ? `<div class="space-actions"><h4>${sport[0]}</h4><div class="space-grid"><button type="button" class="space-act eco-casino-btn" data-sport-open="${f.key}"><strong>${sport[1]}</strong><span>${sport[2]}</span></button>${sportBet}</div></div>` : "";
     setPanel(`<p class="kicker">${esc(f.def.kicker)}</p><h2>${f.def.icon} ${esc(f.name)}</h2>
       ${f.key === "lounge" ? remote() : ""}${casinoPlay}${sportPlay}
       <div class="apt-c"><span><b>${here.length}</b> agent(s) ici, de <b>${byRes.size}</b> résident(s)</span></div>
@@ -4318,9 +4490,13 @@ const economyUi = createEconomyUi({
   celebrate: showCelebrations,
 });
 $("#ecoBtn").addEventListener("click", () => economyUi.open());
+// Tennis et golf joués pour de vrai (sports-games.js) : le serveur renvoie la partie et l'économie à jour.
+const sportsGames = createSportsGames({ dialog: $("#sportDlg"), body: $("#sportBody"), esc, getToken: () => sessionStorage.getItem("penthouse.cle"), onResult: j => { const me = myApt(); if (me) { if (j.game) me.game = j.game; if (j.economy) me.economy = j.economy; } if (data) render(); }, celebrate: showCelebrations });
 document.addEventListener("click", e => {
   const b = e.target.closest("[data-eco-open]");
   if (b && data?.viewer?.role !== "spectator") economyUi.open(b.dataset.ecoOpen);
+  const s = e.target.closest("[data-sport-open]");
+  if (s && data?.viewer?.role !== "spectator") sportsGames.open(s.dataset.sportOpen);
 });
 
 // Parties jouées dans le dialogue Entreprise (economy-ui.js émet « penthouse:play » après chaque réponse du serveur) :
