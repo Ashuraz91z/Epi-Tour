@@ -129,7 +129,9 @@ export function ingest(store, src, host, p, now = Date.now() / 1000) {
   if (p.hook_event_name === "PostToolUse" && !(key in store.sessions)) return;
   const day = ((store.stats[dayOf(now)] ??= {})[src] ??= { sessions: 0, actions: 0 });
   day.sessions += key in store.sessions ? 0 : 1;
-  day.actions += !p.sync && ["PreToolUse", "pre_tool_call"].includes(p.hook_event_name) ? 1 : 0;
+  // Hooks : un événement par outil appelé. Lecteur de journaux : le nombre d'appels écrits depuis le relevé précédent.
+  const syncActions = p.sync && Number.isInteger(p.actions) ? Math.max(0, Math.min(p.actions, 200)) : 0;
+  day.actions += !p.sync && ["PreToolUse", "pre_tool_call"].includes(p.hook_event_name) ? 1 : syncActions;
   const s = (store.sessions[key] ??= { src, host, sid: n.sid.slice(0, 8), started: observed, task: "" });
   Object.assign(s, { state: n.state, action: n.action, updated: observed });
   if (n.task) s.task = n.task;

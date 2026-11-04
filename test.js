@@ -1340,3 +1340,33 @@ test("jackpot commun : alimenté par les mises, gagné au 7️⃣7️⃣7️⃣,
     assert.equal((await call("/api/game/action", { action: "golf_putt", floor: "tennis" }, { Cookie: cookie, "X-Tour-Token": token })).status, 400);
   } finally { app.close(); }
 });
+
+test("lecteur de journaux : les appels d'outils comptent comme actions, sans lire leur contenu", async () => {
+  const run = promisify(execFile);
+  const script = fileURLToPath(new URL("./collecteurs/tour-sync", import.meta.url));
+  const python = `import runpy,sys,json
+sys.dont_write_bytecode=True
+from pathlib import Path
+sys.path.insert(0,str(Path(sys.argv[1]).parent))
+count=runpy.run_path(sys.argv[1])['count_actions']
+stamp=runpy.run_path(sys.argv[1])['stamp']
+claude=[{'timestamp':'2026-11-04T10:00:00Z','type':'assistant','message':{'content':[{'type':'tool_use','name':'Bash','input':{'command':'SECRET'}},{'type':'text','text':'x'}]}},
+ {'timestamp':'2026-11-04T10:00:05Z','type':'user','message':{'content':[{'type':'tool_result','content':'SECRET'}]}},
+ {'timestamp':'2026-11-04T10:00:09Z','type':'assistant','message':{'content':[{'type':'tool_use','name':'Edit'},{'type':'tool_use','name':'Read'}]}}]
+lines=[json.dumps(r) for r in claude]+['pas du json']
+n,latest=count('claude',lines,0)
+assert n==3 and latest==stamp('2026-11-04T10:00:09Z')
+assert count('claude',lines,latest)[0]==0, 'déjà comptées'
+assert count('claude',lines,stamp('2026-11-04T10:00:01Z'))[0]==2
+codex=[{'timestamp':'2026-11-04T10:00:00Z','type':'response_item','payload':{'type':'function_call','name':'shell'}},
+ {'timestamp':'2026-11-04T10:00:01Z','type':'response_item','payload':{'type':'function_call_output','output':'SECRET'}},
+ {'timestamp':'2026-11-04T10:00:02Z','type':'response_item','payload':{'type':'custom_tool_call','name':'apply_patch'}}]
+assert count('codex',[json.dumps(r) for r in codex],0)[0]==2
+`;
+  await run("python3", ["-c", python, script]);
+  const store = createStore();
+  ingest(store, "claude", "mac", { hook_event_name: "PreToolUse", session_id: "s", sync: true, observed_at: 1000, actions: 7 }, 1010);
+  ingest(store, "claude", "mac", { hook_event_name: "PreToolUse", session_id: "s", sync: true, observed_at: 1005, actions: 1e9 }, 1010);
+  ingest(store, "claude", "mac", { hook_event_name: "PreToolUse", session_id: "t", sync: true, observed_at: 1006, actions: "12" }, 1010);
+  assert.equal(snapshot(store, 1010).today.claude.actions, 207, "7, puis 200 au plus par relevé, et rien d'un nombre mal formé");
+});

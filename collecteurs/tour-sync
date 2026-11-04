@@ -88,6 +88,31 @@ def parse(source, lines):
     return result
 
 
+def count_actions(source, lines, since):
+    """Nombre d'appels d'outils écrits après `since` (horodatage) : un simple compteur, aucun contenu lu."""
+    count, latest = 0, since
+    for line in lines:
+        try:
+            row = json.loads(line)
+        except (ValueError, UnicodeError):
+            continue
+        if not isinstance(row, dict):
+            continue
+        at = stamp(row.get('timestamp'))
+        if at <= since:
+            continue
+        latest = max(latest, at)
+        payload = row.get('payload') if isinstance(row.get('payload'), dict) else {}
+        if source == 'codex':
+            if row.get('type') == 'response_item' and payload.get('type') in ('function_call', 'custom_tool_call'):
+                count += 1
+        elif row.get('type') == 'assistant' and isinstance(row.get('message'), dict):
+            blocks = row['message'].get('content')
+            if isinstance(blocks, list):
+                count += sum(1 for block in blocks if isinstance(block, dict) and block.get('type') == 'tool_use')
+    return min(count, 200), latest
+
+
 def send(site, key, host, source, payload):
     query = urllib.parse.urlencode({'src': source, 'host': host})
     request(site, key, '/e?' + query, payload)
@@ -125,20 +150,26 @@ def main():
             # shortcut: 12 sessions récentes par outil et 300 Ko par journal ; étendre si une machine dépasse ce volume.
             for modified, name, size in sorted(candidates, reverse=True)[:12]:
                 signature = [modified, size]
-                if old.get(name) == signature:
-                    current[name] = signature
+                previous = old.get(name) if isinstance(old.get(name), list) else []
+                if previous[:2] == signature:
+                    current[name] = previous
                     continue
+                # Actions comptées depuis le dernier relevé de ce journal (ou sur la dernière heure au premier passage).
+                since = previous[2] if len(previous) > 2 and isinstance(previous[2], (int, float)) else time.time() - 3600
                 try:
                     with open(name, 'rb') as file:
                         header = file.readline()
                         file.seek(max(0, size - 300000))
                         lines = [header] + file.readlines()
                     payload = parse(source, lines)
+                    actions, latest = count_actions(source, lines, since)
                     if payload.get('session_id') and payload.get('observed_at', 0) > time.time() - 3600:
                         payload['sync'] = True
+                        if actions:
+                            payload['actions'] = actions
                         send(site, key, host, source, payload)
                         count += 1
-                    current[name] = signature
+                    current[name] = signature + [latest]
                 except (OSError, ValueError, ConnectionError):
                     continue  # Un envoi refusé n'est pas marqué comme reçu : il sera retenté.
         temp = checkpoint.with_suffix('.tmp')
