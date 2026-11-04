@@ -3555,7 +3555,7 @@ function buildHeldModels() {
     cyl(g, 0.0165, 0.2, overgrip, 0, 0, 0, 8); // grip à huit pans
     cyl(g, 0.019, 0.014, frame, 0, -0.105, 0, 8); // capuchon
     box(g, 0.026, 0.05, 0.02, frame, 0, 0.125, 0); // cœur, puis la gorge en V jusqu'au cadre
-    for (const s of [-1, 1]) box(g, 0.013, 0.162, 0.019, accent, s * 0.036, 0.227, 0).rotation.z = -s * 0.357;
+    for (const s of [-1, 1]) box(g, 0.013, 0.152, 0.019, accent, s * 0.0346, 0.2212, 0).rotation.z = -s * 0.357;
     const head = new THREE.Mesh(frameGeo, frame);
     head.position.y = 0.425;
     const bedMesh = new THREE.Mesh(bed, strings);
