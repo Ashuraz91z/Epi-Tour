@@ -1163,6 +1163,8 @@ function giantTv(f, tv) {
   const iframe = Object.assign(document.createElement("iframe"), { title: "Télé géante", allow: "autoplay; fullscreen; encrypted-media; picture-in-picture" });
   Object.assign(iframe.style, { width: "1280px", height: "720px", border: "0", background: "#000", backfaceVisibility: "hidden" });
   const view = new CSS3DObject(iframe);
+  // Le lecteur laisse passer les clics vers la 3D (CSS3DObject les réactive) : c'est l'écran qui ouvre le réglage ou la vidéo.
+  iframe.style.pointerEvents = "none";
   view.position.set(x + 0.07, y, z); view.rotation.y = Math.PI / 2; view.scale.setScalar(w / 1280);
   g.add(view);
   f.tv = { frame, iframe, view, shown: "", ...tvLinks(tv) };
@@ -2893,6 +2895,11 @@ renderer.domElement.addEventListener("pointerup", e => {
   while (o && !o.userData.key) o = o.parent;
   if (o) return showAgent(o.userData.apt, o.userData.s);
   const byte = onByte(), giant = onGiantTv();
+  // Sa propre télé : le clic ouvre le réglage du lien ; celle d'un autre résident s'ouvre avec le son.
+  if (giant && floors.get(order[focus])?.residentSlug === JSON.parse(localStorage.getItem(ME) ?? "null")?.slug) {
+    showCustomize();
+    return $("#customizeForm").tv.select();
+  }
   if (giant) return open(giant.page, "_blank", "noopener");
   if (byte) return byte.poke();
   if (onTv()) open(tvPageUrl(), "_blank", "noopener");
