@@ -240,6 +240,10 @@ body[data-spectating] .top { background: #08111ee8; backdrop-filter: blur(14px);
 .tagline-line { font-size: 13px; color: var(--gold); margin: -4px 0 10px; font-style: italic; }
 .leaderboard-floating { position: fixed; z-index: 4; right: 16px; bottom: 56px; width: min(240px, calc(100vw - 32px)); background: var(--panel); border: 1px solid var(--line); border-radius: 12px; padding: 10px 12px; font-size: 12px; box-shadow: 0 12px 40px #0008; }
 .leaderboard-floating h4 { margin: 0 0 8px; font-size: 11px; letter-spacing: .15em; text-transform: uppercase; color: var(--gold); }
+/* Beaucoup de résidents : la liste des étages s'arrête au-dessus du classement et défile, au lieu de passer dessous
+   (Casino, Tennis et Golf devenaient invisibles et impossibles à cliquer). */
+body:has(#leaderboardDlg:not([hidden])) .floornav { max-height: calc(100vh - var(--top-h, 64px) - 86px - min(280px, 40vh)); }
+body:has(#leaderboardDlg:not([hidden])) .leaderboard-floating { max-height: min(260px, 38vh); overflow: auto; }
 .leaderboard-floating ol { margin: 0; padding-left: 18px; color: var(--mute); }
 .leaderboard-floating b { color: var(--fg); }
 .history-table { width: 100%; border-collapse: collapse; font-size: 12px; margin: 12px 0; }
