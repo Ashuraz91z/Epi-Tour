@@ -1283,7 +1283,6 @@ function limitText(left) {
 // =====================================================================================================================
 export function createSportsGames({ dialog, body, esc, getToken, onResult, celebrate }) {
   const reduced = matchMedia("(prefers-reduced-motion: reduce)");
-  const coarse = matchMedia("(pointer: coarse)");
   const prefs = { level: "pro" };
   const left = { tennis: null, golf: null };
   const keys = { left: false, right: false, up: false, down: false, shift: false };
@@ -1297,7 +1296,6 @@ export function createSportsGames({ dialog, body, esc, getToken, onResult, celeb
     return {
       prefs,
       reduced: () => reduced.matches,
-      coarse: () => coarse.matches,
       wide: () => innerWidth > 760,
       left: s => left[s],
       say(text) { if (live() && el.status) el.status.textContent = text; },
@@ -1417,20 +1415,24 @@ export function createSportsGames({ dialog, body, esc, getToken, onResult, celeb
   }
 
   const KEYMAP = { ArrowLeft: "left", a: "left", q: "left", ArrowRight: "right", d: "right", ArrowUp: "up", w: "up", z: "up", ArrowDown: "down", s: "down" };
+  // Écouté sur le document tant que le dialogue est ouvert (le focus peut retomber sur <body> dans un dialogue modal) ;
+  // une touche utilisée par le jeu ne remonte pas jusqu'à la tour (↑ ↓ y changent d'étage).
   function onKey(e, down) {
-    if (!game || e.ctrlKey || e.metaKey || e.altKey) return;
+    if (!game || !dialog.open || e.ctrlKey || e.metaKey || e.altKey || !e.key) return;
     const tag = e.target?.tagName;
     const control = tag === "BUTTON" || tag === "INPUT" || tag === "SELECT" || tag === "SUMMARY" || tag === "A" || tag === "TEXTAREA";
+    const used = () => { e.preventDefault(); e.stopPropagation(); };
     keys.shift = e.shiftKey;
     const name = KEYMAP[e.key.length === 1 ? e.key.toLowerCase() : e.key];
     if (paused) {
-      if (down && !control && (e.key === " " || e.key === "Enter" || e.key.toLowerCase() === "p")) { e.preventDefault(); pause(false); }
+      if (down && (e.key.toLowerCase() === "p" || (!control && (e.key === " " || e.key === "Enter")))) { used(); pause(false); }
+      else if (name) used();
       return;
     }
-    if (down && e.key.toLowerCase() === "p" && game.playing()) { e.preventDefault(); pause(true); return; }
-    if (name && !(control && tag !== "BUTTON")) { keys[name] = down; if (e.key.startsWith("Arrow")) e.preventDefault(); }
+    if (down && e.key.toLowerCase() === "p" && game.playing()) { used(); pause(true); return; }
+    if (name && !(control && tag !== "BUTTON")) { keys[name] = down; if (e.key.startsWith("Arrow")) used(); }
     if (control && (e.key === " " || e.key === "Enter")) return;
-    if (game.key(e, down, keys)) e.preventDefault();
+    if (game.key(e, down, keys)) used();
   }
 
   function local(e) {
@@ -1462,8 +1464,8 @@ export function createSportsGames({ dialog, body, esc, getToken, onResult, celeb
       else if (b.dataset.act === "resume") pause(false);
       else game.act(b.dataset.act, b);
     }, { signal });
-    dialog.addEventListener("keydown", e => onKey(e, true), { signal });
-    dialog.addEventListener("keyup", e => onKey(e, false), { signal });
+    document.addEventListener("keydown", e => onKey(e, true), { signal });
+    document.addEventListener("keyup", e => onKey(e, false), { signal });
     canvas.addEventListener("pointerdown", e => {
       if (paused || !game) return;
       if (e.pointerType === "mouse" && e.button !== 0) return;
