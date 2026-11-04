@@ -3250,8 +3250,10 @@ function buildGolf(f, g, { at, tag, staff, back }) {
     box(g, 1.14, 0.025, 1.44, mat("#1b2a20"), m.x, 0.07, m.z);
     box(g, 1.1, 0.03, 1.4, mat("#43c260", { roughness: 1 }), m.x, 0.08, m.z);
     cyl(g, 0.012, 0.05, stick, at(x + GOLF_TEE.dx, 0).x, 0.11, at(0, GOLF_TEE.y).z, 6);
-    cyl(g, 0.12, 0.26, mat("#c8452c", { roughness: 0.5 }), m.x + 0.42, 0.22, m.z + 0.5, 12);
-    for (let b = 0; b < 3; b++) { const ball = new THREE.Mesh(ballGeometry, stick); ball.scale.setScalar(0.035); ball.position.set(m.x + 0.38 + b * 0.04, 0.37, m.z + 0.5 + (b % 2) * 0.03); g.add(ball); }
+    // Seau de balles devant le golfeur, côté filet : hors de son élan et derrière le club vu de la salle.
+    const pail = at(x + 5, 70);
+    cyl(g, 0.12, 0.26, mat("#c8452c", { roughness: 0.5 }), pail.x, 0.22, pail.z, 12);
+    for (let b = 0; b < 3; b++) { const ball = new THREE.Mesh(ballGeometry, stick); ball.scale.setScalar(0.035); ball.position.set(pail.x - 0.04 + b * 0.04, 0.37, pail.z + (b % 2) * 0.03); g.add(ball); }
   }
   const pro = staff("#c9a86a", GOLF_MATS[4] + GOLF_TEE.dx - GOLF_STANCE.ahead, GOLF_TEE.y + GOLF_STANCE.side, Math.PI / 2);
   holdProp(pro, "iron");
