@@ -11,7 +11,6 @@
   <key>CFBundleExecutable</key><string>Penthouse</string>
   <key>CFBundleIconFile</key><string>Penthouse</string>
   <key>LSMinimumSystemVersion</key><string>11.0</string>
-  <key>LSUIElement</key><true/>
   <key>NSAppleEventsUsageDescription</key><string>Penthouse ouvre le Terminal pour lancer Claude Code ou Codex à l'ouverture de session.</string>
 </dict>
 </plist>

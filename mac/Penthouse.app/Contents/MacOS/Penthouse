@@ -20,19 +20,19 @@ notify() { osascript -e "display notification \"$(q "$1")\" with title \"Penthou
 dialog() {
   local msg="$1" buttons="" b; shift
   for b in "$@"; do buttons="$buttons\"$(q "$b")\", "; done
-  osascript -e "button returned of (display dialog \"$(q "$msg")\" buttons {${buttons%, }} default button 1 with title \"Penthouse\" with icon note)" 2>/dev/null
+  osascript -e 'activate' -e "button returned of (display dialog \"$(q "$msg")\" buttons {${buttons%, }} default button 1 with title \"Penthouse\" with icon note)" 2>/dev/null
 }
 # ask "message" "valeur par défaut" [hidden] -> texte saisi (vide si annulé)
 ask() {
   local hidden=""; [ "${3:-}" = hidden ] && hidden="with hidden answer"
-  osascript -e "text returned of (display dialog \"$(q "$1")\" default answer \"$(q "$2")\" $hidden buttons {\"Annuler\", \"OK\"} default button 2 with title \"Penthouse\")" 2>/dev/null
+  osascript -e 'activate' -e "text returned of (display dialog \"$(q "$1")\" default answer \"$(q "$2")\" $hidden buttons {\"Annuler\", \"OK\"} default button 2 with title \"Penthouse\")" 2>/dev/null
 }
 # choose "message" "défauts séparés par |" choix... -> choix retenus, un par ligne ; "ANNULE" si annulé
 choose() {
   local msg="$1" defaults="$2" items="" d="" i; shift 2
   for i in "$@"; do items="$items\"$(q "$i")\", "; done
   local IFS='|'; for i in $defaults; do [ -n "$i" ] && d="$d\"$(q "$i")\", "; done; unset IFS
-  osascript -e "set r to choose from list {${items%, }} with prompt \"$(q "$msg")\" default items {${d%, }} with multiple selections allowed with empty selection allowed with title \"Penthouse\"" \
+  osascript -e 'activate' -e "set r to choose from list {${items%, }} with prompt \"$(q "$msg")\" default items {${d%, }} with multiple selections allowed with empty selection allowed with title \"Penthouse\"" \
     -e 'if r is false then return "ANNULE"' -e "set AppleScript's text item delimiters to linefeed" -e 'return r as text' 2>/dev/null
 }
 
