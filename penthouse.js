@@ -22,6 +22,7 @@ const FILES = {
   "/penthouse-extras.js": ["public/penthouse-extras.js", "text/javascript"],
   "/gamify-ui.js": ["public/gamify-ui.js", "text/javascript"],
   "/upgrades-client.js": ["public/upgrades-client.js", "text/javascript"],
+  "/wings-client.js": ["public/wings-client.js", "text/javascript"],
   "/style.css": ["public/style.css", "text/css"],
   "/tour-hook": ["collecteurs/tour-hook", "text/plain"], "/install-hook.py": ["collecteurs/install-hook.py", "text/plain"],
   "/hermes-handler.py": ["collecteurs/hermes-hook/handler.py", "text/plain"],
@@ -69,11 +70,40 @@ async function liveChannels() {
 // Limite les essais du code d'entrée : 10 par adresse et par 10 minutes.
 const attempts = new Map();
 function tooMany(ip, now = Date.now()) {
+  // Ménage des adresses anciennes : la table ne grossit pas indéfiniment.
+  if (attempts.size > 5000) for (const [k, v] of attempts) if (!v.some(t => now - t < 600_000)) attempts.delete(k);
   const recent = (attempts.get(ip) ?? []).filter(t => now - t < 600_000);
   recent.push(now);
   attempts.set(ip, recent);
   return recent.length > 10;
 }
+// Derrière le proxy de l'hébergeur (par défaut), la dernière adresse de X-Forwarded-For est la vraie.
+// Serveur exposé directement : TRUST_PROXY=0, sinon un visiteur choisirait son adresse et contournerait la limite.
+const trustProxy = () => process.env.TRUST_PROXY !== "0";
+
+// Lien perso de la télé (idée de la branche de Quentin) : seulement une vidéo YouTube ou une chaîne Twitch,
+// normalisées ici. Jamais d'URL arbitraire dans l'iframe que tout le penthouse regarde.
+export function parseTvLink(raw) {
+  let u;
+  try { u = new URL(String(raw ?? "").trim().slice(0, 500)); } catch { return null; }
+  if (u.protocol !== "https:" && u.protocol !== "http:") return null;
+  const host = u.hostname.toLowerCase().replace(/^(www|m|music)\./, ""), video = /^[A-Za-z0-9_-]{11}$/;
+  if (host === "youtu.be") {
+    const id = u.pathname.split("/")[1];
+    return video.test(id ?? "") ? { kind: "youtube", id } : null;
+  }
+  if (host === "youtube.com" || host === "youtube-nocookie.com") {
+    const id = u.searchParams.get("v") ?? /^\/(?:embed|shorts|live)\/([^/]+)/.exec(u.pathname)?.[1];
+    return id && video.test(id) ? { kind: "youtube", id } : null;
+  }
+  if (host === "twitch.tv") {
+    const channel = (u.pathname.split("/")[1] ?? "").toLowerCase();
+    return /^[a-z0-9_]{3,25}$/.test(channel) && !["directory", "videos", "settings", "downloads", "search"].includes(channel)
+      ? { kind: "twitch", channel } : null;
+  }
+  return null;
+}
+export const publicTv = tv => ({ channel: tv?.channel ?? "auto", ...(tv?.custom ? { custom: tv.custom } : {}) });
 
 // Vue publique : activité et quotas autorisés, sans conversations, machines ni détails de compte.
 export function spectatorSnapshot(a) {
@@ -107,6 +137,31 @@ export function createApp({ code, db }) {
   const byToken = token => typeof token === "string" && token ? db.byTokenHash(sha(token)) : null;
   const newToken = () => randomBytes(24).toString("base64url");
 
+  // État complet envoyé aux résidents, ou filtré pour les spectateurs. Un seul calcul des étages pour les deux.
+  const payloads = (now = Date.now() / 1000) => {
+    const apartments = db.snapshots(now);
+    const tv = db.setting("tv") ?? { channel: "auto" };
+    const room = roomName();
+    let resident, spectator;
+    return {
+      resident: () => resident ??= { now, viewer: { role: "resident", room }, tv, apartments },
+      spectator: () => spectator ??= { now, viewer: { role: "spectator", room }, tv: publicTv(tv), apartments: apartments.map(spectatorSnapshot) },
+    };
+  };
+  // Flux SSE : un seul minuteur pour tous les onglets ouverts, l'état est calculé une fois toutes les 2 s.
+  const streams = new Set();
+  let streamTimer = null;
+  const broadcast = () => {
+    if (!streams.size) return;
+    let built;
+    try { built = payloads(); } catch { return; }
+    const text = { resident: null, spectator: null };
+    for (const client of streams) {
+      const role = client.spectator ? "spectator" : "resident";
+      try { client.res.write(text[role] ??= `data: ${JSON.stringify(built[role]())}\n\n`); } catch { streams.delete(client); }
+    }
+  };
+
   const server = createServer((req, res) => {
     const send = (status, body = "", type = "text/plain; charset=utf-8", headers = {}) =>
       res.writeHead(status, { "Content-Type": type, "Cache-Control": "no-store", "X-Content-Type-Options": "nosniff", ...headers }).end(body);
@@ -124,7 +179,7 @@ export function createApp({ code, db }) {
       return send(302, "", "text/plain; charset=utf-8", { Location: "/", "Set-Cookie": cookieFor(spectatorPass) });
     }
     // Dernière adresse de X-Forwarded-For : celle ajoutée par le proxy de l'hébergeur, que le visiteur ne choisit pas.
-    const ip = String(req.headers["x-forwarded-for"] ?? req.socket.remoteAddress ?? "").split(",").pop().trim();
+    const ip = String((trustProxy() ? req.headers["x-forwarded-for"] : null) ?? req.socket.remoteAddress ?? "").split(",").pop().trim();
 
     const serve = (file, type, cache = "public, max-age=0, must-revalidate") => {
       let resource;
@@ -160,11 +215,8 @@ export function createApp({ code, db }) {
     }
     if (req.method === "GET" && url.pathname === "/api/state") {
       if (!canView) return json(401, { error: "entrée requise" });
-      const now = Date.now() / 1000;
-      const apartments = db.snapshots(now);
-      const tv = db.setting("tv") ?? { channel: "auto" };
-      return json(200, { now, viewer: { role: isSpectator ? "spectator" : "resident", room: roomName() },
-        tv: isSpectator ? { channel: tv.channel } : tv, apartments: isSpectator ? apartments.map(spectatorSnapshot) : apartments });
+      const built = payloads();
+      return json(200, isSpectator ? built.spectator() : built.resident());
     }
     if (req.method === "GET" && url.pathname === "/api/stream") {
       if (!canView) return json(401, { error: "entrée requise" });
@@ -174,23 +226,19 @@ export function createApp({ code, db }) {
         Connection: "keep-alive",
         "X-Content-Type-Options": "nosniff",
       });
-      res.write(": connected\n\n");
-      let closed = false;
-      req.on("close", () => { closed = true; clearInterval(timer); });
-      const push = () => {
-        if (closed) return;
-        try {
-          const now = Date.now() / 1000;
-          const apartments = db.snapshots(now);
-          const tv = db.setting("tv") ?? { channel: "auto" };
-          const payload = { now, viewer: { role: isSpectator ? "spectator" : "resident", room: roomName() },
-            tv: isSpectator ? { channel: tv.channel } : tv,
-            apartments: isSpectator ? apartments.map(spectatorSnapshot) : apartments };
-          res.write(`data: ${JSON.stringify(payload)}\n\n`);
-        } catch { closed = true; clearInterval(timer); }
-      };
-      push();
-      const timer = setInterval(push, 2000);
+      // Reconnexion conseillée au navigateur après 5 s si le flux tombe.
+      res.write("retry: 5000\n: connected\n\n");
+      const client = { res, spectator: isSpectator };
+      try {
+        const built = payloads();
+        res.write(`data: ${JSON.stringify(isSpectator ? built.spectator() : built.resident())}\n\n`);
+      } catch { return res.end(); }
+      streams.add(client);
+      streamTimer ??= setInterval(broadcast, 2000);
+      req.on("close", () => {
+        streams.delete(client);
+        if (!streams.size && streamTimer) { clearInterval(streamTimer); streamTimer = null; }
+      });
       return;
     }
     if (req.method !== "POST") return send(404);
@@ -199,6 +247,14 @@ export function createApp({ code, db }) {
     let size = 0;
     req.on("data", c => { size += c.length; if (size > MAX_BODY) req.destroy(); else chunks.push(c); });
     req.on("end", () => {
+      // Une requête mal formée renvoie une erreur ; elle ne doit jamais arrêter le processus pour tout le monde.
+      try { handlePost(); }
+      catch (error) {
+        console.error("penthouse :", url.pathname, "en erreur :", error?.message ?? error);
+        if (!res.headersSent) send(500, "erreur interne");
+      }
+    });
+    function handlePost() {
       const body = Buffer.concat(chunks);
       let p;
       try { p = JSON.parse(body); } catch { return send(400); }
@@ -219,7 +275,7 @@ export function createApp({ code, db }) {
         if (!apt) return send(401);
         const now = Date.now() / 1000;
         db.change(apt.slug, store => {
-          const prev = Object.fromEntries(Object.entries(store.sessions).map(([k, s]) => [k, { state: s.state }]));
+          const prev = Object.fromEntries(Object.entries(store.sessions).map(([k, s]) => [k, { state: s.state, updated: s.updated }]));
           ingest(store, String(url.searchParams.get("src") ?? "?").slice(0, 20), String(url.searchParams.get("host") ?? "?").slice(0, 40), p, now);
           onIngestGame(store, prev, p, now);
         });
@@ -232,52 +288,56 @@ export function createApp({ code, db }) {
         db.change(apt.slug, store => { store.profile = sanitizeProfile(p.profile, store.profile); });
         return json(200, { slug: apt.slug, profile: sanitizeProfile(db.get(apt.slug).store.profile) });
       }
-      if (url.pathname === "/api/game/action") {
-        if (isSpectator || !same(cookie, pass)) return json(401, { error: "entrée requise" });
+      // Actions de jeu d'un résident : cookie d'entrée et clé de son étage. Le serveur décide seul du résultat.
+      const residentApt = () => {
+        if (isSpectator || !same(cookie, pass)) { json(401, { error: "entrée requise" }); return null; }
         const apt = byToken(req.headers["x-tour-token"]);
-        if (!apt) return json(403, { error: "Clé de ton étage requise." });
-        const action = String(p.action ?? "").slice(0, 32);
-        const floor = String(p.floor ?? "").slice(0, 16);
-        const agentsHere = Number(p.agentsHere ?? 0);
+        if (!apt) { json(403, { error: "Clé de ton étage requise." }); return null; }
+        return apt;
+      };
+      const play = (apt, fn) => {
         let result, toasts = [];
         db.change(apt.slug, store => {
-          result = performSpaceAction(store, action, Date.now() / 1000, { floor, agentsHere: Number.isFinite(agentsHere) ? agentsHere : 0 });
-          toasts = pullToasts(store);
+          result = fn(store, Date.now() / 1000);
+          toasts = [...(result?.toasts ?? []), ...pullToasts(store)];
         });
-        if (result?.error) return json(400, { error: result.error });
-        return json(200, { game: result.game, toasts });
+        if (!result || result.error) return json(400, { error: result?.error ?? "Action impossible." });
+        const { toasts: _ignored, ...rest } = result;
+        return json(200, { ...rest, toasts });
+      };
+      if (url.pathname === "/api/game/action") {
+        const apt = residentApt();
+        if (!apt) return;
+        const action = String(p.action ?? "").slice(0, 32), floor = String(p.floor ?? "").slice(0, 48);
+        return play(apt, (store, now) => performSpaceAction(store, action, now, { floor, slug: apt.slug }));
       }
       if (url.pathname === "/api/game/claim") {
-        if (isSpectator || !same(cookie, pass)) return json(401, { error: "entrée requise" });
-        const apt = byToken(req.headers["x-tour-token"]);
-        if (!apt) return json(403, { error: "Clé de ton étage requise." });
+        const apt = residentApt();
+        if (!apt) return;
         const questId = String(p.questId ?? "").slice(0, 24);
-        let result, toasts = [];
-        db.change(apt.slug, store => {
-          result = claimQuest(store, questId);
-          toasts = pullToasts(store);
-        });
-        if (result?.error) return json(400, { error: result.error });
-        return json(200, { game: result.game, toasts });
+        return play(apt, (store, now) => claimQuest(store, questId, now));
       }
       if (url.pathname === "/api/game/visit") {
-        if (isSpectator || !same(cookie, pass)) return json(401, { error: "entrée requise" });
-        const apt = byToken(req.headers["x-tour-token"]);
-        if (!apt) return json(403, { error: "Clé de ton étage requise." });
+        const apt = residentApt();
+        if (!apt) return;
         const floorKey = String(p.floor ?? "").slice(0, 48);
-        let result, toasts = [];
-        db.change(apt.slug, store => {
-          result = visitWing(store, floorKey);
-          toasts = pullToasts(store);
-        });
-        return json(200, { game: result.game, toasts, skipped: !!result.skipped });
+        return play(apt, (store, now) => visitWing(store, floorKey, now, apt.slug));
       }
       // Télé du Salon : la chaîne est commune à tout le penthouse.
       if (url.pathname === "/api/tv") {
         if (!same(cookie, pass)) return json(401, { error: "entrée requise" });
         const channel = String(p.channel ?? "");
+        // Le nom affiché vient de la clé quand elle est fournie : on ne choisit pas la télé « au nom » d'un autre.
+        const by = byToken(req.headers["x-tour-token"])?.name ?? String(p.by ?? "").trim().slice(0, 32);
+        if (channel === "custom") {
+          const custom = parseTvLink(p.url);
+          if (!custom) return json(400, { error: "Colle un lien YouTube (vidéo ou live) ou une chaîne Twitch." });
+          const tv = { channel, custom, by, at: Date.now() / 1000 };
+          db.setSetting("tv", tv);
+          return json(200, tv);
+        }
         if (channel !== "auto" && !CHANNELS.includes(channel)) return json(400, { error: "Chaîne inconnue." });
-        const tv = { channel, by: String(p.by ?? "").trim().slice(0, 32), at: Date.now() / 1000 };
+        const tv = { channel, by, at: Date.now() / 1000 };
         db.setSetting("tv", tv);
         return json(200, tv);
       }
@@ -313,7 +373,8 @@ export function createApp({ code, db }) {
         return json(200, { slug, name: apt.name, token }, { "Set-Cookie": cookie });
       }
       send(404);
-    });
+    }
   });
+  server.on("close", () => { if (streamTimer) clearInterval(streamTimer); streamTimer = null; streams.clear(); });
   return server;
 }

@@ -867,3 +867,134 @@ test("flux SSE : premier paquet d'état pour un résident", async () => {
     app.close();
   }
 });
+
+// ---------- Corrections de novembre 2026 : site qui charge, serveur qui tient, jeu sans triche ----------
+
+test("client : chaque module importé par la page est servi (sinon la page entière reste vide)", async () => {
+  const { app, url } = await open();
+  try {
+    const { readdirSync } = await import("node:fs");
+    const publicDir = new URL("./public/", import.meta.url);
+    const wanted = new Set();
+    const html = readFileSync(new URL("index.html", publicDir), "utf8");
+    for (const [, src] of html.matchAll(/<script[^>]+src="([^"]+)"/g)) wanted.add("/" + src.replace(/^\.?\//, ""));
+    for (const [, href] of html.matchAll(/<link[^>]+rel="stylesheet"[^>]+href="([^"h][^"]*)"/g)) wanted.add("/" + href.replace(/^\.?\//, ""));
+    for (const file of readdirSync(publicDir).filter(f => f.endsWith(".js"))) {
+      const source = readFileSync(new URL(file, publicDir), "utf8");
+      for (const [, path] of source.matchAll(/^\s*import\b[^"']*["'](\.\/[^"']+)["']/gm)) wanted.add(path.slice(1));
+      for (const [, path] of source.matchAll(/\bimport\(\s*["'](\.\/[^"']+)["']\s*\)/g)) wanted.add(path.slice(1));
+    }
+    assert.ok(wanted.has("/wings-client.js") && wanted.has("/app.js"));
+    for (const path of wanted) assert.equal((await fetch(url + path)).status, 200, `${path} doit être servi`);
+  } finally { app.close(); }
+});
+
+test("collecte : un événement mal formé est refusé sans arrêter le serveur", async () => {
+  const { app, url, call } = await open();
+  try {
+    const { token } = await (await call("/api/join", { name: "Robuste", code: "porte" }, { "X-Forwarded-For": "10.1.0.1" })).json();
+    const post = body => fetch(url + "/e?src=claude&host=mac", { method: "POST", body: JSON.stringify(body), headers: { "X-Tour-Token": token } });
+    for (const body of [
+      { hook_event_name: "Stop", session_id: "a", cwd: 123 },
+      { hook_event_name: "PreToolUse", session_id: "b", tool_name: 42, tool_input: { command: ["x"] } },
+      { hook_event_name: "PermissionRequest", session_id: "c", tool_name: { x: 1 } },
+      { hook_event_name: "UserPromptSubmit", session_id: "d", prompt: { long: "x" }, usage: "n'importe quoi", info: [1, 2] },
+      { hook_event_name: "health", health: { services: "x".repeat(20000) } },
+    ]) assert.ok([204, 400].includes((await post(body)).status));
+    // Le serveur répond toujours, et l'étage garde des données propres.
+    const state = await fetch(url + "/api/connection", { headers: { "X-Tour-Token": token } });
+    assert.equal(state.status, 200);
+  } finally { app.close(); }
+});
+
+test("collecte : machines et objets libres bornés", () => {
+  const store = createStore();
+  for (let i = 0; i < 40; i++) ingest(store, "claude", "m" + i, { hook_event_name: "Stop", session_id: "s" + i, info: { big: "x".repeat(i === 3 ? 5000 : 10) } }, 1000 + i);
+  assert.equal(Object.keys(store.seen).length, 24);
+  assert.ok(store.seen.m39 && !store.seen.m0);
+  ingest(store, "claude", "vieux", { hook_event_name: "Stop", session_id: "v" }, 1000);
+  ingest(store, "claude", "neuf", { hook_event_name: "Stop", session_id: "n" }, 1000 + 31 * 86400);
+  assert.equal(store.seen.vieux, undefined);
+  ingest(store, "codex", "neuf", { hook_event_name: "usage", usage: { chatgpt: { ts: 5, plan: "pro", five_hour: { pct: 12, resets_at: 99, secret: "x" }, extra: "y".repeat(1000) } } }, 1000 + 31 * 86400);
+  assert.deepEqual(store.usage.chatgpt, { plan: "pro", five_hour: { pct: 12, resets_at: 99 }, ts: 5 });
+});
+
+test("jeu : ailes inventées, verrouillées ou d'un autre étage ne rapportent rien", async () => {
+  const { visitWing, performSpaceAction } = await import("./gamify.js");
+  const store = createStore(), now = Date.UTC(2026, 10, 4, 12) / 1000;
+  for (let i = 0; i < 20; i++) visitWing(store, "moi:fake" + i, now, "moi");
+  visitWing(store, "moi:studio", now, "moi");
+  assert.equal(store.game.xp, 0);
+  assert.ok(performSpaceAction(store, "studio_focus", now, { floor: "moi:studio", slug: "moi" }).error);
+  assert.ok(performSpaceAction(store, "roof_breathe", now, {}).error, "l'étage est obligatoire");
+  assert.ok(performSpaceAction(store, "club_dance", now, { floor: "club", agentsHere: 99 }).error, "le serveur compte lui-même les agents en pause");
+  store.game.xp = 10_000; // niveau 12 : toutes les ailes
+  assert.equal(visitWing(store, "autre:lab", now, "moi").skipped, true);
+  const visit = visitWing(store, "moi:lab", now, "moi");
+  assert.equal(visit.skipped, undefined);
+  assert.equal(store.game.xp, 10_012);
+  assert.equal(visitWing(store, "moi:lab", now, "moi").skipped, true, "une fois par jour");
+  assert.ok(performSpaceAction(store, "studio_focus", now, { floor: "moi:studio", slug: "moi" }).ok);
+});
+
+test("jeu : la série de jours suit l'activité réelle, pas les visites du site", async () => {
+  const { onIngestGame } = await import("./gamify.js");
+  const store = createStore(), day = Date.UTC(2026, 10, 1, 12) / 1000;
+  for (let d = 0; d < 5; d++) snapshot(store, day + d * 86400);
+  assert.equal(snapshot(store, day + 5 * 86400).game.streak, 0);
+  for (let d = 10; d < 13; d++) {
+    const prev = Object.fromEntries(Object.entries(store.sessions).map(([k, s]) => [k, { state: s.state, updated: s.updated }]));
+    ingest(store, "claude", "mac", { hook_event_name: "UserPromptSubmit", session_id: "s" + d }, day + d * 86400);
+    onIngestGame(store, prev, {}, day + d * 86400);
+  }
+  assert.equal(snapshot(store, day + 12 * 86400).game.streak, 3);
+  assert.equal(snapshot(store, day + 14 * 86400).game.streak, 0, "un jour sans activité casse la série");
+});
+
+test("jeu : les toasts d'une visite d'aile arrivent au client", async () => {
+  const { app, call, db } = await open();
+  try {
+    const join = await call("/api/join", { name: "Visiteur", code: "porte" }, { "X-Forwarded-For": "10.1.0.2" });
+    const { token } = await join.json(), cookie = join.headers.get("set-cookie").split(";")[0];
+    db.change("visiteur", store => { store.game.xp = 2000; });
+    const r = await call("/api/game/visit", { floor: "visiteur:lab" }, { Cookie: cookie, "X-Tour-Token": token });
+    const body = await r.json();
+    assert.equal(r.status, 200);
+    assert.ok(body.toasts.some(t => t.title === "Aile · Labo IA"));
+  } finally { app.close(); }
+});
+
+test("télé : lien perso YouTube/Twitch normalisé, toute autre adresse refusée", async () => {
+  const { parseTvLink } = await import("./penthouse.js");
+  assert.deepEqual(parseTvLink("https://www.youtube.com/watch?v=dQw4w9WgXcQ&t=3"), { kind: "youtube", id: "dQw4w9WgXcQ" });
+  assert.deepEqual(parseTvLink("https://youtu.be/dQw4w9WgXcQ"), { kind: "youtube", id: "dQw4w9WgXcQ" });
+  assert.deepEqual(parseTvLink("https://www.youtube.com/live/jfKfPfyJRdk"), { kind: "youtube", id: "jfKfPfyJRdk" });
+  assert.deepEqual(parseTvLink("https://www.twitch.tv/Zerator"), { kind: "twitch", channel: "zerator" });
+  for (const bad of ["javascript:alert(1)", "https://evil.example/watch?v=dQw4w9WgXcQ", "https://youtube.com.evil.example/watch?v=dQw4w9WgXcQ",
+    "https://www.youtube.com/watch?v=<script>", "data:text/html,x", "https://www.twitch.tv/directory", ""]) assert.equal(parseTvLink(bad), null, bad);
+  const { app, call } = await open();
+  try {
+    const join = await call("/api/join", { name: "Teleur", code: "porte" }, { "X-Forwarded-For": "10.1.0.3" });
+    const { token } = await join.json(), cookie = join.headers.get("set-cookie").split(";")[0];
+    const ok = await call("/api/tv", { channel: "custom", url: "https://youtu.be/dQw4w9WgXcQ", by: "Quelqu'un d'autre" }, { Cookie: cookie, "X-Tour-Token": token });
+    assert.deepEqual((({ channel, custom, by }) => ({ channel, custom, by }))(await ok.json()), { channel: "custom", custom: { kind: "youtube", id: "dQw4w9WgXcQ" }, by: "Teleur" });
+    assert.equal((await call("/api/tv", { channel: "custom", url: "javascript:alert(1)" }, { Cookie: cookie })).status, 400);
+  } finally { app.close(); }
+});
+
+test("historique CSV : les formules de tableur sont neutralisées", async () => {
+  const { historyCsv } = await import("./public/penthouse-extras.js");
+  const csv = historyCsv({ sessions: [{ updated: 1, src: "claude", project: "=HYPERLINK(\"x\")", state: "fini", action: "+cmd" }], feed: [] });
+  assert.match(csv, /"'=HYPERLINK\(""x""\)"/);
+  assert.match(csv, /"'\+cmd"/);
+});
+
+test("limite d'essais : X-Forwarded-For ignoré quand le serveur est exposé directement", async () => {
+  process.env.TRUST_PROXY = "0";
+  const { app, call } = await open();
+  try {
+    let last;
+    for (let i = 0; i < 12; i++) last = await call("/api/join", { name: "x", code: "faux" }, { "X-Forwarded-For": "9.9.9." + i });
+    assert.equal(last.status, 429);
+  } finally { delete process.env.TRUST_PROXY; app.close(); }
+});

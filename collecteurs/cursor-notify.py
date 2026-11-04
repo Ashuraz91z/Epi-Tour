@@ -4,6 +4,7 @@ import argparse
 import json
 import os
 import sys
+import urllib.parse
 from pathlib import Path
 
 ROOT = Path(__file__).resolve().parent
@@ -39,13 +40,16 @@ def main():
     if not secret.is_file():
         print("Clé absente : relie d'abord ta machine via install.sh", file=sys.stderr)
         return 2
-    conf = Path.home() / ".config/tour/config.json"
-    site = json.loads(conf.read_text()).get("site", "") if conf.is_file() else ""
+    # install.sh écrit l'adresse dans ~/.config/tour/url ; config.json reste lu pour les anciennes installations.
+    conf = Path.home() / ".config/tour"
+    site = (conf / "url").read_text().strip() if (conf / "url").is_file() else ""
+    if not site and (conf / "config.json").is_file():
+        site = json.loads((conf / "config.json").read_text()).get("site", "")
     if not site:
-        print("Site absent dans ~/.config/tour/config.json", file=sys.stderr)
+        print("Adresse du penthouse absente : relance la commande de Relier mes agents.", file=sys.stderr)
         return 2
     key = secret.read_text().strip()
-    query = f"/e?src=cursor&host={args.host}"
+    query = "/e?" + urllib.parse.urlencode({"src": "cursor", "host": args.host})
     try:
         request(site, key, query, payload)
     except ConnectionError as error:

@@ -8,6 +8,7 @@ export const BADGE_LABELS = {
   streak7: "Pilier",
   social: "Social",
   architect: "Architecte",
+  night: "Noctambule",
 };
 
 export function xpBarHtml(game, esc) {
@@ -66,7 +67,10 @@ export function showCelebrations(toasts) {
   for (const t of toasts) {
     const el = document.createElement("div");
     el.className = "game-toast";
-    el.innerHTML = `<strong>${t.title}</strong><span>${t.body ?? ""}</span>`;
+    const title = document.createElement("strong"), body = document.createElement("span");
+    title.textContent = t.title ?? "";
+    body.textContent = t.body ?? "";
+    el.append(title, body);
     root.appendChild(el);
     setTimeout(() => el.classList.add("on"), 20);
     setTimeout(() => { el.classList.remove("on"); setTimeout(() => el.remove(), 400); }, 4200);

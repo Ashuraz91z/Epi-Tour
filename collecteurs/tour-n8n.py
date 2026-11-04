@@ -1,13 +1,21 @@
 #!/usr/bin/env python3
-"""Relais n8n : lit les exécutions dans la base SQLite de n8n (lecture seule) et les envoie à la tour."""
+"""Relais n8n : lit les exécutions dans la base SQLite de n8n (lecture seule) et les envoie à la tour.
+
+Réglages par variables d'environnement (les valeurs par défaut gardent l'installation historique) :
+  N8N_DB       chemin de database.sqlite de n8n
+  TOUR_URL     adresse du penthouse, ex. https://agent.ashuraz.xyz
+  TOUR_SECRET  fichier contenant la clé de l'étage (défaut /etc/tour/secret)
+Plus simple pour une nouvelle installation : des nœuds HTTP Request dans n8n (voir « Relier mes agents »).
+"""
 import json
+import os
 import sqlite3
 import time
 import urllib.request
 
-DB = "file:/var/lib/docker/volumes/n8n_n8n_data/_data/database.sqlite?mode=ro"
-TOUR = "http://192.168.0.209:8790/e?src=n8n&host=n8n"
-SECRET = open("/etc/tour/secret").read().strip()
+DB = "file:" + os.environ.get("N8N_DB", "/var/lib/docker/volumes/n8n_n8n_data/_data/database.sqlite") + "?mode=ro"
+TOUR = os.environ.get("TOUR_URL", "http://192.168.0.209:8790").rstrip("/") + "/e?src=n8n&host=n8n"
+SECRET = open(os.environ.get("TOUR_SECRET", "/etc/tour/secret")).read().strip()
 EVENT = {"new": "n8n:running", "running": "n8n:running", "waiting": "n8n:running", "success": "n8n:success"}
 QUERY = """select e.id, coalesce(w.name, e.workflowId), e.status from execution_entity e
 left join workflow_entity w on w.id = e.workflowId

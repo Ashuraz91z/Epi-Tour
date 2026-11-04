@@ -49,6 +49,9 @@ def parse(source, lines):
                     measured = stamp(row.get('timestamp'))
                     if windows and measured >= (usage or {}).get('ts', 0):
                         usage = {**(usage or {}), **windows, 'ts': measured}
+                        # Formule ChatGPT (plus, pro…) : sert au rôle de Codex dans le jeu, rien d'autre n'est lu du compte.
+                        if isinstance(limits.get('plan_type'), str):
+                            usage['plan'] = limits['plan_type'][:24]
             elif row.get('type') == 'response_item':
                 if kind in ('function_call', 'custom_tool_call'):
                     event, tool = 'PreToolUse', payload.get('name')

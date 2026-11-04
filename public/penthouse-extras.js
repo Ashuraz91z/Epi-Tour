@@ -50,14 +50,16 @@ export function historyEntries(apt, tools, esc, hm) {
   return { sessionRows, feedRows };
 }
 
+// Cellule CSV : guillemets doublés, et une formule (=, +, -, @) neutralisée pour les tableurs.
+const csvCell = v => {
+  let text = String(v ?? "");
+  if (/^[=+\-@\t\r]/.test(text)) text = "'" + text;
+  return `"${text.replace(/"/g, '""')}"`;
+};
 export function historyCsv(apt) {
   const lines = ["type,time,source,project,state,action"];
-  for (const s of apt.sessions ?? []) {
-    lines.push(["session", s.updated, s.src, s.project ?? "", s.state, (s.action ?? "").replace(/"/g, '""')].map(v => `"${v}"`).join(","));
-  }
-  for (const e of apt.feed ?? []) {
-    lines.push(["feed", e.t, e.src, e.project ?? "", e.state ?? "", (e.action ?? "").replace(/"/g, '""')].map(v => `"${v}"`).join(","));
-  }
+  for (const s of apt.sessions ?? []) lines.push(["session", s.updated, s.src, s.project ?? "", s.state, s.action ?? ""].map(csvCell).join(","));
+  for (const e of apt.feed ?? []) lines.push(["feed", e.t, e.src, e.project ?? "", e.state ?? "", e.action ?? ""].map(csvCell).join(","));
   return lines.join("\n");
 }
 
@@ -83,14 +85,33 @@ export function applyKioskFromUrl() {
   return kiosk;
 }
 
+// Flux temps réel. Une coupure réseau est reprise par le navigateur ; un refus (401, serveur redémarré)
+// ferme le flux : on le rouvre alors avec un délai croissant, sans repasser définitivement au relevé toutes les 2 s.
 export function startStateStream(onPayload) {
-  if (typeof EventSource === "undefined") return null;
-  const es = new EventSource("/api/stream");
-  es.onmessage = ev => {
-    try { onPayload(JSON.parse(ev.data)); } catch { /* frame invalide */ }
+  if (typeof EventSource === "undefined") return { close() {}, restart() {} };
+  let es = null, retry = null, delay = 5000, stopped = false;
+  const open = () => {
+    clearTimeout(retry);
+    es?.close();
+    if (stopped) return;
+    es = new EventSource("/api/stream");
+    es.onopen = () => { delay = 5000; };
+    es.onmessage = ev => {
+      let payload;
+      try { payload = JSON.parse(ev.data); } catch { return; /* trame invalide */ }
+      try { onPayload(payload); } catch (error) { console.warn("tour : rendu en erreur", error); }
+    };
+    es.onerror = () => {
+      if (es.readyState !== EventSource.CLOSED) return;
+      retry = setTimeout(open, delay);
+      delay = Math.min(delay * 2, 60_000);
+    };
   };
-  es.onerror = () => { es.close(); };
-  return es;
+  open();
+  return {
+    close() { stopped = true; clearTimeout(retry); es?.close(); es = null; },
+    restart() { stopped = false; delay = 5000; open(); },
+  };
 }
 
 export async function saveProfile(token, profile) {

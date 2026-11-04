@@ -1,5 +1,5 @@
 // Progression, quêtes quotidiennes et activités des espaces communs.
-import { SHARED_EXTRAS, WING_ACTIVITIES, wingsForLevel, parseFloorKey } from "./wings.js";
+import { SHARED_EXTRAS, WING_ACTIVITIES, WING_DEFS, wingsForLevel, parseFloorKey } from "./wings.js";
 import { officePublic, officeTierForLevel } from "./upgrades.js";
 const DAY = t => new Date(t * 1000).toLocaleDateString("sv-SE");
 
@@ -73,14 +73,19 @@ function ensureDay(game, now) {
   game.spaceDaily = {};
   game.counters = { approvals: 0, quota: 0, spaceActions: 0, nightClub: game.counters?.nightClub ?? 0, wingsVisited: 0 };
   game.wingDaily = {};
-  if (game.lastDay) {
-    const yesterday = new Date(now * 1000);
-    yesterday.setDate(yesterday.getDate() - 1);
-    if (DAY(yesterday.getTime() / 1000) === game.lastDay) game.streak = (game.streak ?? 0) + 1;
-    else game.streak = 1;
-  } else game.streak = 1;
+}
+
+// Série de jours : ne compte que les jours où le résident ou ses agents ont réellement fait quelque chose
+// (et pas les jours où quelqu'un a simplement regardé le site).
+const yesterdayOf = now => { const d = new Date(now * 1000); d.setDate(d.getDate() - 1); return DAY(d.getTime() / 1000); };
+export function markActive(game, now) {
+  const day = DAY(now);
+  if (game.lastDay === day) return;
+  game.streak = game.lastDay === yesterdayOf(now) ? (game.streak ?? 0) + 1 : 1;
   game.lastDay = day;
 }
+// Série affichée : retombe à 0 dès qu'une journée entière est passée sans activité.
+const currentStreak = (game, now) => [DAY(now), yesterdayOf(now)].includes(game.lastDay) ? game.streak ?? 0 : 0;
 
 function pushToast(game, title, body, xp = 0) {
   game.toast.push({ id: `${Date.now()}-${Math.random()}`, title, body, xp, at: Date.now() / 1000 });
@@ -131,15 +136,18 @@ function questProgress(store, game, quest, now) {
       return game.counters?.quota ?? 0;
     case "spaces":
       return game.counters?.spaceActions ?? 0;
-    case "club_crowd": {
-      const pause = Object.values(store.sessions ?? {}).filter(s => ["fini", "attend", "silencieux"].includes(s.state)).length;
-      return pause >= 2 ? 2 : pause;
-    }
+    case "club_crowd":
+      return Math.min(2, pausedAgents(store, now));
     case "wings":
       return game.counters?.wingsVisited ?? 0;
     default:
       return 0;
   }
+}
+
+// Agents en pause : tour fini, ou silencieux depuis plus de 10 minutes.
+export function pausedAgents(store, now) {
+  return Object.values(store.sessions ?? {}).filter(s => s.state === "fini" || (s.state === "travaille" && now - s.updated > 600)).length;
 }
 
 function refreshQuests(store, game, now) {
@@ -162,28 +170,34 @@ export function onIngestGame(store, prevSessions, p, now = Date.now() / 1000) {
       }
     }
   }
+  let active = false;
   for (const [key, s] of Object.entries(store.sessions ?? {})) {
-    const was = prevSessions?.[key]?.state;
-    if (was === "autorisation" && s.state !== "autorisation")
+    const was = prevSessions?.[key];
+    if (was?.state === "autorisation" && s.state !== "autorisation")
       game.counters.approvals = (game.counters.approvals ?? 0) + 1;
+    if (s.updated !== was?.updated) active = true;
   }
+  if (active) markActive(game, now);
   refreshQuests(store, game, now);
   unlockBadges(game);
 }
 
-export function visitWing(store, floorKey, now = Date.now() / 1000) {
-  const { wing } = parseFloorKey(floorKey);
-  if (!wing || wing === "work") return { ok: true, game: publicGame(store, now), skipped: true };
+// Visite d'une aile de son propre étage, une fois par jour et par aile réellement débloquée.
+export function visitWing(store, floorKey, now = Date.now() / 1000, slug = null) {
+  const { slug: owner, wing } = parseFloorKey(floorKey);
   const game = (store.game ??= createGame());
+  const unlocked = wingsForLevel(levelFromXp(game.xp)).some(w => w.id === wing);
+  if (!wing || wing === "work" || !unlocked || (slug && owner !== slug)) return { ok: true, game: publicGame(store, now), skipped: true };
   ensureDay(game, now);
   game.wingDaily ??= {};
   if (game.wingDaily[wing]) return { ok: true, game: publicGame(store, now), skipped: true };
   game.wingDaily[wing] = true;
   game.counters.wingsVisited = (game.counters.wingsVisited ?? 0) + 1;
-  grantXp(game, 12, `Aile · ${wing}`);
+  markActive(game, now);
+  grantXp(game, 12, `Aile · ${WING_DEFS.find(w => w.id === wing)?.name ?? wing}`);
   refreshQuests(store, game, now);
   unlockBadges(game);
-  return { ok: true, game: publicGame(store, now), toasts: pullToasts(store) };
+  return { ok: true, game: publicGame(store, now) };
 }
 
 function actionDef(id) {
@@ -195,11 +209,14 @@ export function performSpaceAction(store, actionId, now = Date.now() / 1000, opt
   if (!def) return { error: "Activité inconnue." };
   const game = (store.game ??= createGame());
   ensureDay(game, now);
+  const floor = String(opts.floor ?? "");
   if (def.wing) {
-    const { wing } = parseFloorKey(String(opts.floor ?? ""));
-    if (wing !== def.wing) return { error: "Ouvre d'abord la bonne aile de ton étage." };
-  } else if (opts.floor && opts.floor !== def.floor) return { error: "Va d'abord à cet étage commun." };
-  const agents = Number(opts.agentsHere ?? 0);
+    const { slug, wing } = parseFloorKey(floor);
+    if (wing !== def.wing || (opts.slug && slug !== opts.slug)) return { error: "Ouvre d'abord la bonne aile de ton étage." };
+    if (!wingsForLevel(levelFromXp(game.xp)).some(w => w.id === def.wing)) return { error: "Cette aile n'est pas encore débloquée." };
+  } else if (floor !== def.floor) return { error: "Va d'abord à cet étage commun." };
+  // Agents en pause, comptés par le serveur (ils descendent dans les étages communs) : le client ne décide pas.
+  const agents = pausedAgents(store, now);
   if (def.floor === "club" && actionId === "club_dance" && agents < 1)
     return { error: "Amène au moins un agent en pause au club." };
   if (def.daily && game.spaceDaily[actionId]) return { error: "Déjà fait aujourd'hui." };
@@ -213,6 +230,7 @@ export function performSpaceAction(store, actionId, now = Date.now() / 1000, opt
 
   game.spaceAt[actionId] = now;
   if (def.daily) game.spaceDaily[actionId] = true;
+  markActive(game, now);
   if (def.floor === "club" && new Date(now * 1000).getHours() >= 22) game.counters.nightClub = 1;
 
   grantXp(game, def.xp, def.title);
@@ -246,7 +264,7 @@ export function publicGame(store, now = Date.now() / 1000) {
   return {
     xp: game.xp,
     level: progress.level,
-    streak: game.streak ?? 0,
+    streak: currentStreak(game, now),
     xpBar: { current: progress.current, need: progress.need, next: progress.next },
     badges: [...(game.badges ?? [])],
     quests: DAILY_QUESTS.map(q => {

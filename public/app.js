@@ -111,15 +111,18 @@ const clubAnimation = (t, seed) => {
   return phase % 12 < 2 ? CLUB_EMOTES[Math.floor(phase / 12) % CLUB_EMOTES.length] : "Dance";
 };
 // Casino : tables, machines à sous, bar
-const CASINO_TABLES = [[200, 200], [400, 200], [600, 200], [200, 400], [400, 400], [600, 400]];
-const CASINO_SLOT_MACHINES = [
-  [150, 380], [350, 380], [550, 380], [750, 380],
-  [200, 460], [400, 460], [600, 460], [800, 460],
-  [280, 540], [520, 540], [760, 540],
+// Mêmes positions que les meubles dessinés dans buildShared (tables de jeu et machines à sous).
+const CASINO_TABLES = [[150, 120], [350, 120], [550, 120], [150, 350], [350, 350], [550, 350]];
+const CASINO_MACHINES = [
+  [150, 420], [350, 420], [550, 420], [750, 420],
+  [200, 500], [400, 500], [600, 500], [800, 500],
+  [280, 580], [520, 580], [760, 580],
 ];
+// Le joueur se tient devant l'écran (côté caméra), tourné vers la machine ; il arrive par le côté pour ne pas la traverser.
+const CASINO_SLOT_MACHINES = CASINO_MACHINES.map(([x, y]) => [x, y + 36, y > 560 ? -48 : 48]);
 const CASINO_SLOTS = [
-  ...CASINO_TABLES.flatMap(([cx, cy]) => around(cx, cy, 45, 5, Math.PI / 5, "Sitting")),
-  ...CASINO_SLOT_MACHINES.map(([x, y]) => [x, y, 0, "Sitting", [[x, y + 40]]]),
+  ...CASINO_TABLES.flatMap(([cx, cy]) => around(cx, cy, 60, 5, Math.PI / 5, "Idle")),
+  ...CASINO_SLOT_MACHINES.map(([x, y, side]) => [x, y, Math.PI, "Idle", [[x + side, y]]]),
   ...[150, 250, 350, 450, 550, 650].map(x => [x, 550, Math.PI, "Idle"]),
   ...[300, 400, 500].map(x => [x, 100, 0, "Idle"]),
 ];
@@ -1465,7 +1468,7 @@ function buildShared(def) {
           t.x + Math.cos(angle) * 0.6, 0.98, t.z + Math.sin(angle) * 0.6, 12);
       }
       // Croupier
-      staff(["#c98a3e", "#d9dde8", "#a37cf0", "#ff6fd8"][tablePositions.indexOf([x, y, type]) % 4], x, y + 80, Math.PI);
+      staff(["#c98a3e", "#d9dde8", "#a37cf0", "#ff6fd8"][tablePositions.findIndex(([tx, ty]) => tx === x && ty === y) % 4], x, y + 80, Math.PI);
       // Étiquette
       sign(g, type, 1.2, 0.3, { color: "#ffd700", font: "700 60px Sora, sans-serif", blur: 8 }, t.x, 1.3, back + 0.05);
     }
@@ -1510,7 +1513,8 @@ function buildShared(def) {
 
       // Écran principal
       const screenY = height - topBoxH - screenH / 2 - 0.05;
-      const screenBase = mat("#050515", { roughness: 0.1 });
+      // Matériau propre à chaque machine : son écran s'allume seul quand un agent y joue.
+      const screenBase = new THREE.MeshStandardMaterial({ color: "#050515", roughness: 0.1, emissive: themeColor, emissiveIntensity: 0 });
       const screen = box(g, 0.6, screenH, 0.03, screenBase, p.x, screenY, p.z + 0.29);
       box(g, 0.62, screenH + 0.02, 0.02, mat("#b8860b", { metalness: 0.8, roughness: 0.2 }), p.x, screenY, p.z + 0.28);
 
@@ -2018,7 +2022,7 @@ function animate(frameTime = performance.now()) {
         if (u.floor === "casino" && u.place === "casino" && u.slot) {
           const dx = u.slot.x - machine.pos.x;
           const dz = u.slot.z - machine.pos.z;
-          if (Math.sqrt(dx * dx + dz * dz) < 0.6 && u.state === "fini") {
+          if (Math.abs(dx) < 0.3 && dz > 0 && dz < 1.2 && u.state === "fini" && !u.path.length) {
             agentPlaying = true;
             break;
           }
@@ -2069,7 +2073,6 @@ function animate(frameTime = performance.now()) {
         if (machine.screen && machine.screen.material) {
           const pulse = Math.sin(t * 20) * 0.3 + 0.7;
           machine.screen.material.emissiveIntensity = pulse * 0.5;
-          machine.screen.material.emissive = machine.screen.material.emissive || new THREE.Color(machine.themeColor || "#ff6fd8");
         }
 
         // Arrêter après le timer
@@ -2560,7 +2563,14 @@ $("#notifyBtn").addEventListener("click", async () => {
 });
 
 applyKioskFromUrl();
-startStateStream(payload => { lastStreamAt = Date.now(); data = payload; applyLoadedState(); });
+// Flux temps réel : ouvert une fois l'entrée acceptée et les modèles 3D chargés (sinon les étages se construiraient
+// sans robot) ; rouvert après un changement de rôle (entrée résident, mode spectateur).
+let stateStream = null;
+function ensureStream(restart = false) {
+  if (!modelsReady) return;
+  if (!stateStream) stateStream = startStateStream(payload => { lastStreamAt = Date.now(); data = payload; applyLoadedState(); });
+  else if (restart) stateStream.restart();
+}
 
 $("#spectate").addEventListener("submit", async e => {
   e.preventDefault();
@@ -2571,7 +2581,9 @@ $("#spectate").addEventListener("submit", async e => {
     if (!r.ok) throw new Error(j.error ?? "Salle inaccessible.");
     sessionStorage.removeItem("penthouse.cle"); order = [];
     $("#spectatorDlg").close();
+    lastStreamAt = 0;
     await tick();
+    ensureStream(true);
   } catch (error) { $("#spectateErr").textContent = error.message; }
   finally { button.disabled = false; }
 });
@@ -2595,7 +2607,9 @@ $("#join").addEventListener("submit", async e => {
     if (j.token) sessionStorage.setItem("penthouse.cle", j.token);
     else sessionStorage.removeItem("penthouse.cle");
     order = [];
+    lastStreamAt = 0;
     await tick();
+    ensureStream(true);
     if (j.token) showLink();
   } catch (error) { $("#joinErr").textContent = error.message || "Serveur injoignable. Réessaie."; }
   finally { button.disabled = false; }
@@ -2637,15 +2651,17 @@ async function tick() {
   try {
     const r = await fetch("/api/state", { cache: "no-store" });
     if (r.status === 401) {
+      stateStream?.close(); stateStream = null; lastStreamAt = 0;
       $("#lobby").hidden = false; $("#app").hidden = true;
       $("#permissionBanner").hidden = true; $("#permissionGlow").hidden = true;
       previousApprovals.clear(); activeApproval = null;
       $("#permissionFlash").getAnimations().forEach(animation => animation.cancel());
       return;
     }
+    if (!r.ok) throw new Error("État indisponible (HTTP " + r.status + ").");
     data = await r.json();
-    if (!r.ok) throw new Error("État indisponible.");
     applyLoadedState();
+    ensureStream();
   } catch (e) { console.warn("tour : nouvel essai au prochain tour", e); }
   finally { tickPending = false; }
 }
@@ -2679,7 +2695,7 @@ async function loadModels() {
   MODELS.robot = { scene: robot.scene, animations: robot.animations, scale: 1.45 / h };
 }
 
-let modelsReady = false;
+var modelsReady = false; // var : lu par ensureStream, défini plus haut, avant la fin du chargement
 document.addEventListener("visibilitychange", () => { if (modelsReady && !document.hidden) { tick(); refreshLive(); } });
 setInterval(() => { if (document.hidden) return; $("#clock").textContent = new Date().toLocaleTimeString("fr-FR", { hour: "2-digit", minute: "2-digit" }); }, 1000);
 await Promise.all([document.fonts.ready, loadModels()]);
