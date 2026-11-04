@@ -99,7 +99,7 @@ function Install-App {
     if (-not $main) { throw "Penthouse.ps1 absent de l'archive." }
     New-Item -ItemType Directory -Force -Path $target | Out-Null
     Get-ChildItem -LiteralPath $main.DirectoryName | Copy-Item -Destination $target -Recurse -Force
-    if (Get-Command Unblock-File -ErrorAction SilentlyContinue) { Get-ChildItem -LiteralPath $target -Recurse -File | Unblock-File }
+    try { Get-ChildItem -LiteralPath $target -Recurse -File | Unblock-File } catch { }   # retire la marque « téléchargé d'Internet »
   } catch {
     Say "App Penthouse non installée (facultative) : le suivi de tes agents fonctionne quand même."
     return

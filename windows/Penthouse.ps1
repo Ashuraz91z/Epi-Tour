@@ -50,7 +50,6 @@ function New-Window {
   $form.TopMost = $true
   $form.AutoSize = $true
   $form.AutoSizeMode = 'GrowAndShrink'
-  $form.Padding = New-Object System.Windows.Forms.Padding 12
   $form.Tag = ''
   if ($script:Icon) { $form.Icon = $script:Icon }
   $layout = New-Object System.Windows.Forms.FlowLayoutPanel
@@ -58,6 +57,8 @@ function New-Window {
   $layout.WrapContents = $false
   $layout.AutoSize = $true
   $layout.AutoSizeMode = 'GrowAndShrink'
+  $layout.Location = New-Object System.Drawing.Point(12, 12)
+  $layout.Margin = New-Object System.Windows.Forms.Padding(0, 0, 12, 12)
   $form.Controls.Add($layout)
   return $form
 }
@@ -498,10 +499,18 @@ function Start-Tool($App) {
   return $true
 }
 
-# Relance tout de suite la tâche de suivi (installée par install.ps1), qui tourne ensuite chaque minute.
+# Relance tout de suite la tâche de suivi (installée par install.ps1), qui tourne ensuite chaque minute ;
+# sans la tâche, un passage direct de tour-sync, sans fenêtre.
 function Start-Sync {
   $ErrorActionPreference = 'Continue'
   & schtasks /Run /TN $Task 2>&1 | Out-Null
+  if ($LASTEXITCODE -eq 0) { return }
+  $python = Find-Python
+  $sync = Join-Path $Conf 'tour-sync'
+  if (-not $python -or -not (Test-Path -LiteralPath $sync)) { return }
+  $pythonw = Join-Path (Split-Path -Parent $python) 'pythonw.exe'
+  if (-not (Test-Path -LiteralPath $pythonw)) { $pythonw = $python }
+  Start-Process -FilePath $pythonw -ArgumentList ('"' + $sync + '"') -WindowStyle Hidden
 }
 
 function Start-Tools {
@@ -523,7 +532,7 @@ function Copy-App {
   if ($source -eq $target) { return }
   New-Item -ItemType Directory -Force -Path $target | Out-Null
   Get-ChildItem -LiteralPath $source -File | Copy-Item -Destination $target -Force
-  if (Get-Command Unblock-File -ErrorAction SilentlyContinue) { Get-ChildItem -LiteralPath $target -File | Unblock-File }
+  try { Get-ChildItem -LiteralPath $target -File | Unblock-File } catch { }   # retire la marque « téléchargé d'Internet »
 }
 
 # Raccourci vers l'app : pythonw + Penthouse.pyw (aucune console), sinon PowerShell réduit et masqué.

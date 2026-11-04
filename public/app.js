@@ -5529,13 +5529,15 @@ function showAgent(a, s) {
 // « Relier mes agents » : une commande selon le système, qui relie la machine ET installe l'app (Mac, Windows).
 function installBlock(token) {
   const unix = `curl -fsSL ${location.origin}/install.sh | sh -s -- ${token}`;
-  const win = `powershell -ExecutionPolicy Bypass -NoProfile -Command "& ([scriptblock]::Create((irm '${location.origin}/install.ps1'))) -Key '${token}'"`;
+  // TLS 1.2 forcé : Windows PowerShell 5.1 ne l'active pas toujours, et irm échouerait en HTTPS. Aucun $ : la commande
+  // se colle telle quelle dans PowerShell, cmd ou Win+R.
+  const win = `powershell -ExecutionPolicy Bypass -NoProfile -Command "[Net.ServicePointManager]::SecurityProtocol=[Net.ServicePointManager]::SecurityProtocol -bor 3072; & ([scriptblock]::Create((irm '${location.origin}/install.ps1'))) -Key '${token}'"`;
   const isWindows = /Windows/i.test(navigator.userAgent);
   const block = (title, cmd, where, open) => `<details class="os-install"${open ? " open" : ""}><summary>${title}</summary>
     <p>${where}</p><div class="code"><span>${esc(cmd)}</span><button type="button" data-copy="${esc(cmd)}">Copier</button></div></details>`;
   return `<p class="connect-intro"><strong>Une commande par machine, et c’est connecté.</strong> Ta clé est déjà dedans.</p>
     ${block("🍎 Mac", unix, "Ouvre l’app Terminal, colle, Entrée. L’app Penthouse s’installe avec : coche les outils à lancer à chaque ouverture de session.", !isWindows)}
-    ${block("🪟 Windows", win, "Ouvre PowerShell (menu Démarrer › « PowerShell »), colle, Entrée. Python 3 est nécessaire : la commande t’explique comment l’installer s’il manque.", isWindows)}
+    ${block("🪟 Windows", win, "Ouvre PowerShell (menu Démarrer › « PowerShell »), colle, Entrée. L’app Penthouse s’installe avec : coche les outils à lancer à chaque ouverture de session. Python 3 est nécessaire : la commande t’explique comment l’installer s’il manque.", isWindows)}
     ${block("🐧 Linux", unix, "Dans un terminal : suivi chaque minute via cron.", false)}
     <p>Ensuite, donne une tâche à Claude Code ou Codex : ton robot s’assoit à ton bureau dans les 15 secondes. Même commande sur une autre machine pour la relier au même étage.</p>
     <p class="extras-muted">Applis à télécharger à la main si tu préfères : <a href="/Penthouse.zip" download>Penthouse pour Mac</a> · <a href="/Penthouse-Windows.zip" download>Penthouse pour Windows</a>.</p>

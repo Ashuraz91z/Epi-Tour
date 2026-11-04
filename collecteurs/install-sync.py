@@ -13,7 +13,7 @@ from xml.sax.saxutils import escape
 
 TASK = 'Penthouse - suivi'
 # Ce que « schtasks /SC MINUTE » ne règle pas : le suivi continue sur batterie, rattrape un passage manqué (veille),
-# ne tourne jamais deux fois en parallèle et s'arrête au bout de 5 minutes s'il reste bloqué.
+# ne tourne jamais deux fois en parallèle et s'arrête au bout de 10 minutes s'il reste bloqué.
 # Ordre des balises : celui des tâches exportées par le Planificateur de tâches.
 TASK_XML = """<?xml version="1.0" encoding="UTF-16"?>
 <Task version="1.2" xmlns="http://schemas.microsoft.com/windows/2004/02/mit/task">
@@ -52,7 +52,7 @@ TASK_XML = """<?xml version="1.0" encoding="UTF-16"?>
     <Hidden>false</Hidden>
     <RunOnlyIfIdle>false</RunOnlyIfIdle>
     <WakeToRun>false</WakeToRun>
-    <ExecutionTimeLimit>PT5M</ExecutionTimeLimit>
+    <ExecutionTimeLimit>PT10M</ExecutionTimeLimit>
     <Priority>7</Priority>
   </Settings>
   <Actions Context="Author">

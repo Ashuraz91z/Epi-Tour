@@ -67,6 +67,16 @@ L'app n'est pas signée par Apple : la première fois, clic droit > Ouvrir, ou R
 sécurité > « Ouvrir quand même ». Claude Code et Codex apparaissent dans la tour dès qu'ils travaillent ; Cursor et Grok
 sont seulement ouverts (leur suivi passe par leurs ponts décrits dans « Relier mes agents »).
 
+## App Windows (Penthouse-Windows.zip)
+
+La commande Windows de « Relier mes agents » (`install.ps1`, PowerShell 5.1 ou 7, Python 3.8+ requis) relie le PC
+(tâche planifiée « Penthouse - suivi » chaque minute, sans fenêtre, même sur batterie) puis installe l'app dans
+`%LOCALAPPDATA%\Penthouse` depuis `/Penthouse-Windows.zip` (dossier `windows/`). L'app fait le même parcours que sur Mac :
+clé, outils à cocher (Claude, Claude Code et Codex dans un terminal, ChatGPT, Cursor, Windsurf, Grok, le site), lancement
+à chaque ouverture de session (raccourci du dossier Démarrage), et ses Réglages (vérifier, autre clé, arrêter, désinstaller)
+sont dans menu Démarrer > Penthouse. Sans la commande : décompresser le zip et double-cliquer sur « Installer Penthouse.cmd »
+(SmartScreen : « Informations complémentaires » > « Exécuter quand même »). Clé : `$HOME\.config\tour\secret`.
+
 ## Administration
 
 Sur le serveur, avec le même `DATA_DIR` que `server.js` (le serveur peut tourner pendant ce temps) :

@@ -13,7 +13,7 @@ import { buyItem, onIngestEconomy, playCasino, playSport, questReward, setSubscr
 
 const ROOT = dirname(fileURLToPath(import.meta.url));
 // Version affichée dans le menu « ⋯ » : permet de vérifier que le site a bien repris la dernière version.
-export const VERSION = "2026-11-04.7";
+export const VERSION = "2026-11-04.8";
 const MAX_BODY = 256 * 1024;
 const MAX_APARTMENTS = 50;
 const acceptsGzip = req => /(?:^|,)\s*gzip\s*(?:,|$)/i.test(req.headers["accept-encoding"] ?? "");
@@ -128,7 +128,8 @@ export function folderZip(parent, folder, rename = folder) {
     const full = join(base, rel), st = statSync(full);
     if (st.isDirectory()) {
       entries.push({ name: rename + rel.slice(folder.length) + "/", mode: 0o40755, data: Buffer.alloc(0) });
-      for (const child of readdirSync(full).sort()) walk(rel + "/" + child);
+      // Fichiers de cache ou système laissés sur le disque : jamais dans l'app téléchargée.
+      for (const child of readdirSync(full).sort()) if (!["__pycache__", ".DS_Store"].includes(child)) walk(rel + "/" + child);
     } else entries.push({ name: rename + rel.slice(folder.length), mode: st.mode & 0o111 ? 0o100755 : 0o100644, data: readFileSync(full) });
   };
   walk(folder);

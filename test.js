@@ -1702,6 +1702,18 @@ test("accès : anciens noms vers l'étage gardé, entrée par clé, version, app
 z=zipfile.ZipFile(sys.argv[1]); assert z.testzip() is None
 print(oct(z.getinfo("Penthouse.app/Contents/MacOS/Penthouse").external_attr>>16))`, join(dir, "p.zip")]);
       assert.equal(stdout.trim(), "0o100755");
+      // L'app Windows : le dossier Penthouse complet, sans fichier de cache.
+      const winZip = await fetch(url + "/Penthouse-Windows.zip");
+      assert.equal(winZip.status, 200);
+      writeFileSync(join(dir, "w.zip"), Buffer.from(await winZip.arrayBuffer()));
+      const names = (await promisify(execFile)("python3", ["-c", `import zipfile,sys
+z=zipfile.ZipFile(sys.argv[1]); assert z.testzip() is None
+print("\\n".join(z.namelist()))`, join(dir, "w.zip")])).stdout.trim().split("\n");
+      for (const f of ["Penthouse/Penthouse.ps1", "Penthouse/Penthouse.pyw", "Penthouse/Installer Penthouse.cmd", "Penthouse/Lisez-moi.txt"]) assert.ok(names.includes(f), f);
+      assert.ok(!names.some(n => n.includes("__pycache__")));
+      // Le script d'installation Windows, servi sans BOM (sinon [scriptblock]::Create échoue).
+      const ps1 = Buffer.from(await (await fetch(url + "/install.ps1")).arrayBuffer());
+      assert.notDeepEqual([...ps1.subarray(0, 3)], [0xef, 0xbb, 0xbf]);
     } finally { rmSync(dir, { recursive: true, force: true }); }
   } finally { app.close(); }
 });
