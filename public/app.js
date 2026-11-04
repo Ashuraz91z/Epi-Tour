@@ -125,21 +125,27 @@ const golfAnimation = (t, seed) => {
   return k < 0.83 ? "Punch" : k > 5.3 && Math.floor(phase / 7) % 3 === 1 ? "Yes" : "Idle";
 };
 const SLOT_MOTION = { Dance: clubAnimation, Tennis: tennisAnimation, Golf: golfAnimation };
-// Casino : tables, machines à sous, bar
-// Mêmes positions que les meubles dessinés dans buildShared (tables de jeu et machines à sous).
-const CASINO_TABLES = [[150, 120], [350, 120], [550, 120], [150, 350], [350, 350], [550, 350]];
-const CASINO_MACHINES = [
-  [150, 420], [350, 420], [550, 420], [750, 420],
-  [200, 500], [400, 500], [600, 500], [800, 500],
-  [280, 580], [520, 580], [760, 580],
-];
-// Le joueur se tient devant l'écran (côté caméra), tourné vers la machine ; il arrive par le côté pour ne pas la traverser.
-const CASINO_SLOT_MACHINES = CASINO_MACHINES.map(([x, y]) => [x, y + 36, y > 560 ? -48 : 48]);
+// Casino : tables (roulette, blackjack, poker) au fond à gauche, bar au fond à droite, deux rangées de machines à sous
+// devant, carré VIP devant à droite. Mêmes positions que les meubles dessinés par buildCasino ; l'allée (y = 310) reste libre.
+const CASINO_TABLES = { roulette: [170, 165], blackjack: [400, 160], poker: [600, 165] };
+const CASINO_MACHINES = [400, 520].flatMap(y => [90, 190, 290, 390, 490, 590].map(x => [x, y]));
+const CASINO_FEATURED = 3; // la machine « JACKPOT », au centre du premier rang : elle rejoue les tirages du dialogue
+const BLACKJACK_SEATS = [25, 62, 90, 118, 155].map(d => [400 + 70 * Math.cos(d * Math.PI / 180), 160 + 70 * Math.sin(d * Math.PI / 180)]);
+const VIP = { x0: 765, y0: 385, gap: [460, 540], table: [870, 500], seats: [820, 870, 920] };
 const CASINO_SLOTS = [
-  ...CASINO_TABLES.flatMap(([cx, cy]) => around(cx, cy, 60, 5, Math.PI / 5, "Idle")),
-  ...CASINO_SLOT_MACHINES.map(([x, y, side]) => [x, y, Math.PI, "Idle", [[x + side, y]]]),
-  ...[150, 250, 350, 450, 550, 650].map(x => [x, 550, Math.PI, "Idle"]),
-  ...[300, 400, 500].map(x => [x, 100, 0, "Idle"]),
+  // Machines (places 0 à 11, dans l'ordre des machines) : le joueur se tient devant l'écran et arrive par le passage entre deux machines.
+  ...CASINO_MACHINES.map(([x, y]) => [x, y + 38, Math.PI, "Idle", [[x + 50, y + 38]]]),
+  // Roulette : trois places devant, une au bout ; blackjack : en arc autour de la table ; poker : trois places.
+  ...[[130, 220, Math.PI], [180, 220, Math.PI], [230, 220, Math.PI], [257, 165, -Math.PI / 2]].map(([x, y, r]) => [x, y, r, "Idle"]),
+  ...BLACKJACK_SEATS.map(([x, y]) => [x, y, Math.atan2(400 - x, 160 - y), "Idle"]),
+  ...[[545, 212], [600, 227], [655, 212]].map(([x, y]) => [x, y, Math.atan2(600 - x, 165 - y), "Idle"]),
+  // Bar : debout au comptoir.
+  ...[750, 800, 850, 900, 950].map(x => [x, 150, Math.PI, "Idle"]),
+  // Carré VIP : entrée par l'ouverture du cordon, puis entre la table basse et la banquette.
+  ...VIP.seats.flatMap(x => [
+    [x, 445, 0, "Sitting", [[730, 500], [790, 500], [790, 470], [x, 470]], 0.21],
+    [x, 555, Math.PI, "Sitting", [[730, 500], [790, 500], [790, 530], [x, 530]], 0.21],
+  ]),
 ];
 // Places assises : la 6e valeur est la hauteur de la racine du robot (assise − 0,24 m de bassin), la racine étant
 // 10 unités (0,20 m) devant le bassin. Un point de passage peut porter une hauteur : l'agent monte les gradins en marchant.
@@ -1240,6 +1246,161 @@ function ambientSmoke(parent, origin, color, count, spread, rise) {
 }
 const reducedMotion = matchMedia("(prefers-reduced-motion: reduce)");
 
+// ---------- étages de jeu : casino, tennis, golf ----------
+// Textures et géométries communes créées une seule fois ; chaque matériau animé appartient à son objet (rien de partagé n'est modifié).
+const hitMaterial = new THREE.MeshBasicMaterial({ visible: false }); // zones de clic : jamais dessinées, mais touchées par le rayon
+const discGeometry = new THREE.CircleGeometry(1, 48).rotateX(-Math.PI / 2);
+const ballGeometry = new THREE.SphereGeometry(1, 14, 10);
+const cardGeometry = new THREE.PlaneGeometry(0.11, 0.155).rotateX(-Math.PI / 2);
+const reelGeometry = new THREE.PlaneGeometry(0.17, 0.4);
+const mod1 = v => v - Math.floor(v);
+const easeOut = k => 1 - (1 - k) ** 3;
+const BULB_ON = new THREE.Color("#ffe9a8"), BULB_DIM = new THREE.Color("#4a2a0c");
+function canvasTexture(w, h, draw) {
+  const c = document.createElement("canvas");
+  c.width = w; c.height = h;
+  draw(c.getContext("2d"), w, h);
+  const t = new THREE.CanvasTexture(c);
+  t.colorSpace = THREE.SRGBColorSpace;
+  t.anisotropy = renderer.capabilities.getMaxAnisotropy();
+  return t;
+}
+// Panneau dessiné à la main : sa texture n'est renvoyée à la carte graphique que quand son contenu change (clé comparée).
+function canvasPanel(parent, w, h, pxW, pxH, x, y, z, ry = 0) {
+  const tex = canvasTexture(pxW, pxH, () => {});
+  const mesh = new THREE.Mesh(new THREE.PlaneGeometry(w, h), new THREE.MeshBasicMaterial({ map: tex, toneMapped: false }));
+  mesh.position.set(x, y, z);
+  mesh.rotation.y = ry;
+  parent.add(mesh);
+  return { ctx: tex.image.getContext("2d"), tex, mesh, w: pxW, h: pxH, key: "" };
+}
+// Zone de clic qui ouvre un onglet du dialogue Entreprise (« casino » ou « sport »).
+function playTarget(f, parent, w, h, d, x, y, z, tab, ry = 0) {
+  const m = box(parent, w, h, d, hitMaterial, x, y, z, ry);
+  m.userData.tab = tab;
+  (f.playTargets ??= []).push(m);
+  return m;
+}
+const agoText = s => s < 90 ? "à l'instant" : s < 3600 ? `il y a ${Math.round(s / 60)} min` : s < 86400 ? `il y a ${Math.round(s / 3600)} h` : `il y a ${Math.round(s / 86400)} j`;
+
+// Machines à sous : les six symboles du serveur, dessinés au trait (pas d'émoji : même rendu partout) sur une bande
+// verticale ; chaque rouleau en est une copie (même image envoyée une fois à la carte graphique) dont on décale la vue.
+const SLOT_SYMBOLS = ["🍒", "🍋", "🔔", "⭐", "💎", "7️⃣"];
+let slotStrip = null, reelShade = null, netMap = null;
+function drawSlotSymbol(x, i, cx, cy) {
+  x.save();
+  x.lineJoin = "round";
+  if (i === 0) { // cerises
+    x.strokeStyle = "#2f7d32"; x.lineWidth = 5;
+    x.beginPath(); x.moveTo(cx - 20, cy + 6); x.quadraticCurveTo(cx - 6, cy - 26, cx + 12, cy - 38);
+    x.moveTo(cx + 22, cy + 10); x.quadraticCurveTo(cx + 20, cy - 16, cx + 12, cy - 38); x.stroke();
+    x.fillStyle = "#48a64c"; x.beginPath(); x.ellipse(cx + 26, cy - 38, 14, 7, -0.4, 0, Math.PI * 2); x.fill();
+    for (const [dx, dy] of [[-20, 18], [22, 22]]) {
+      const gr = x.createRadialGradient(cx + dx - 7, cy + dy - 7, 2, cx + dx, cy + dy, 22);
+      gr.addColorStop(0, "#ff9a9a"); gr.addColorStop(0.5, "#e01b2f"); gr.addColorStop(1, "#7a0614");
+      x.fillStyle = gr; x.beginPath(); x.arc(cx + dx, cy + dy, 21, 0, Math.PI * 2); x.fill();
+    }
+  } else if (i === 1) { // citron
+    const gr = x.createRadialGradient(cx - 12, cy - 10, 4, cx, cy, 46);
+    gr.addColorStop(0, "#fff7a8"); gr.addColorStop(0.6, "#ffd21f"); gr.addColorStop(1, "#d48f00");
+    x.fillStyle = gr;
+    x.beginPath(); x.ellipse(cx, cy, 40, 28, -0.25, 0, Math.PI * 2); x.fill();
+    x.beginPath(); x.ellipse(cx + 39, cy - 10, 9, 6, -0.25, 0, Math.PI * 2); x.ellipse(cx - 39, cy + 10, 9, 6, -0.25, 0, Math.PI * 2); x.fill();
+    x.strokeStyle = "#a06c00"; x.lineWidth = 2; x.beginPath(); x.ellipse(cx, cy, 40, 28, -0.25, 0, Math.PI * 2); x.stroke();
+  } else if (i === 2) { // cloche
+    const gr = x.createLinearGradient(cx - 42, 0, cx + 42, 0);
+    gr.addColorStop(0, "#a8740a"); gr.addColorStop(0.42, "#ffe27a"); gr.addColorStop(1, "#9a6a08");
+    x.fillStyle = gr;
+    x.beginPath(); x.moveTo(cx, cy - 40);
+    x.bezierCurveTo(cx + 30, cy - 40, cx + 28, cy - 2, cx + 40, cy + 22); x.lineTo(cx - 40, cy + 22);
+    x.bezierCurveTo(cx - 28, cy - 2, cx - 30, cy - 40, cx, cy - 40); x.fill();
+    x.fillRect(cx - 44, cy + 20, 88, 9);
+    x.fillStyle = "#6e4904";
+    x.beginPath(); x.arc(cx, cy + 35, 9, 0, Math.PI * 2); x.fill();
+    x.beginPath(); x.arc(cx, cy - 44, 6, 0, Math.PI * 2); x.fill();
+  } else if (i === 3) { // étoile
+    const gr = x.createRadialGradient(cx - 8, cy - 6, 4, cx, cy, 48);
+    gr.addColorStop(0, "#fff3a0"); gr.addColorStop(0.55, "#ffc21a"); gr.addColorStop(1, "#ff8a00");
+    x.fillStyle = gr; x.beginPath();
+    for (let k = 0; k < 10; k++) { const a = -Math.PI / 2 + k * Math.PI / 5, r = k % 2 ? 19 : 46; x.lineTo(cx + Math.cos(a) * r, cy + 4 + Math.sin(a) * r); }
+    x.closePath(); x.fill(); x.strokeStyle = "#b35a00"; x.lineWidth = 3; x.stroke();
+  } else if (i === 4) { // diamant
+    const gr = x.createLinearGradient(cx - 36, cy - 34, cx + 36, cy + 40);
+    gr.addColorStop(0, "#d4fbff"); gr.addColorStop(0.5, "#46d3f5"); gr.addColorStop(1, "#1677b8");
+    x.fillStyle = gr; x.beginPath();
+    for (const [dx, dy] of [[-36, -12], [-18, -34], [18, -34], [36, -12], [0, 40]]) x.lineTo(cx + dx, cy + dy);
+    x.closePath(); x.fill();
+    x.strokeStyle = "rgba(255,255,255,0.75)"; x.lineWidth = 2.5; x.beginPath();
+    x.moveTo(cx - 36, cy - 12); x.lineTo(cx + 36, cy - 12);
+    x.moveTo(cx - 18, cy - 34); x.lineTo(cx - 8, cy - 12); x.lineTo(cx, cy + 40); x.lineTo(cx + 8, cy - 12); x.lineTo(cx + 18, cy - 34);
+    x.stroke();
+  } else { // sept
+    x.font = "900 104px Sora, sans-serif"; x.textAlign = "center"; x.textBaseline = "middle";
+    x.lineWidth = 8; x.strokeStyle = "#5a0010"; x.strokeText("7", cx, cy + 6);
+    const gr = x.createLinearGradient(0, cy - 45, 0, cy + 45);
+    gr.addColorStop(0, "#ff6a7c"); gr.addColorStop(1, "#c3001c");
+    x.fillStyle = gr; x.fillText("7", cx, cy + 6);
+  }
+  x.restore();
+}
+function slotStripTexture() {
+  slotStrip ??= canvasTexture(128, 128 * SLOT_SYMBOLS.length, x => SLOT_SYMBOLS.forEach((_, i) => {
+    x.fillStyle = i % 2 ? "#f3ecdc" : "#fbf7ec"; x.fillRect(0, i * 128, 128, 128);
+    x.fillStyle = "rgba(0,0,0,0.08)"; x.fillRect(0, i * 128, 128, 3);
+    drawSlotSymbol(x, i, 64, i * 128 + 64);
+  }));
+  slotStrip.wrapT = THREE.RepeatWrapping;
+  return slotStrip;
+}
+// Vue d'une bande de rouleau : trois symboles visibles, celui de l'indice i au centre (sur la ligne de paiement).
+const reelOffset = i => mod1(0.75 - (i + 0.5) / SLOT_SYMBOLS.length);
+// Ombre haute et basse devant les rouleaux : ils paraissent bombés.
+function reelShadeTexture() {
+  return reelShade ??= canvasTexture(8, 128, (x, w, h) => {
+    const gr = x.createLinearGradient(0, 0, 0, h);
+    gr.addColorStop(0, "rgba(0,0,0,0.85)"); gr.addColorStop(0.3, "rgba(0,0,0,0)"); gr.addColorStop(0.7, "rgba(0,0,0,0)"); gr.addColorStop(1, "rgba(0,0,0,0.85)");
+    x.fillStyle = gr; x.fillRect(0, 0, w, h);
+  });
+}
+// Maille de filet (tennis, practice) : chaque filet en prend une copie à sa propre répétition.
+function netTexture(rx, ry) {
+  netMap ??= canvasTexture(64, 64, x => {
+    x.strokeStyle = "rgba(240,244,240,0.9)"; x.lineWidth = 2;
+    for (let k = 0; k <= 64; k += 8) { x.beginPath(); x.moveTo(k, 0); x.lineTo(k, 64); x.moveTo(0, k); x.lineTo(64, k); x.stroke(); }
+  });
+  const t = netMap.clone();
+  t.wrapS = t.wrapT = THREE.RepeatWrapping;
+  t.repeat.set(rx, ry);
+  return t;
+}
+// Cartes : une texture par carte, créée au premier tirage puis réutilisée ; « ?? » est le dos (carte cachée de la banque).
+const cardTextures = new Map();
+function cardTexture(label) {
+  if (!cardTextures.has(label)) cardTextures.set(label, canvasTexture(128, 180, (x, w, h) => {
+    x.fillStyle = label === "??" ? "#8c1c2b" : "#fbfaf5";
+    x.beginPath(); x.roundRect(2, 2, w - 4, h - 4, 12); x.fill();
+    if (label === "??") {
+      x.strokeStyle = "#e9c46a"; x.lineWidth = 3; x.beginPath(); x.roundRect(12, 12, w - 24, h - 24, 8); x.stroke();
+      x.strokeStyle = "rgba(233,196,106,0.45)"; x.lineWidth = 2;
+      for (let k = -h; k < w; k += 14) { x.beginPath(); x.moveTo(k, 16); x.lineTo(k + h, h - 16); x.moveTo(k + h, 16); x.lineTo(k, h - 16); x.stroke(); }
+      return;
+    }
+    const suit = label.slice(-1), rank = label.slice(0, -1);
+    x.fillStyle = "♥♦".includes(suit) ? "#c8102e" : "#15161c";
+    x.textAlign = "center"; x.textBaseline = "middle";
+    x.font = "700 36px Sora, sans-serif"; x.fillText(rank, 26, 28); x.fillText(suit, 26, 62);
+    x.font = "86px serif"; x.fillText(suit, w / 2 + 8, h / 2 + 18);
+    x.save(); x.translate(w, h); x.rotate(Math.PI); x.font = "700 36px Sora, sans-serif"; x.fillText(rank, 26, 28); x.restore();
+  }));
+  return cardTextures.get(label);
+}
+// Roulette européenne : ordre réel des cases (comme la roue du dialogue), dans le sens des aiguilles d'une montre vu de dessus.
+const ROULETTE_WHEEL = [0, 32, 15, 19, 4, 21, 2, 25, 17, 34, 6, 27, 13, 36, 11, 30, 8, 23, 10, 5, 24, 16, 33, 1, 20, 14, 31, 9, 22, 18, 29, 7, 28, 12, 35, 3, 26];
+const ROULETTE_RED = new Set([1, 3, 5, 7, 9, 12, 14, 16, 18, 19, 21, 23, 25, 27, 30, 32, 34, 36]);
+const POCKET = Math.PI * 2 / ROULETTE_WHEEL.length;
+const rouletteColor = n => n === 0 ? "#1f8f4e" : ROULETTE_RED.has(n) ? "#b3243a" : "#17181e";
+const ROTOR_R = 0.33, TRACK_R = 0.385, REST_R = 0.207;
+
 function buildShared(def) {
   const f = shell(def.floor, { glass: !def.top });
   const g = f.group;
@@ -1262,6 +1423,7 @@ function buildShared(def) {
     play(r, anim);
     g.add(r);
     f.staff.push(r);
+    return r;
   };
 
   if (def.id === "roof") {
@@ -1661,241 +1823,1131 @@ function buildShared(def) {
     // Le videur, bras croisés près de l'ascenseur
     staff("#15171f", 70, 240, Math.PI / 2);
   }
-  if (def.id === "casino") {
-    // Casino : tables de jeu, machines à sous, bar, zone VIP - un seul espace unifié sans murs
-    const carpet = mat("#4a1830");
-    zone(20, 20, 980, 580, "#1a0f15");
-
-    tag("Tables de jeu", 20, 20);
-    tag("Machines à sous", 20, 300);
-    tag("Bar", 800, 20);
-    tag("VIP", 800, 300);
-  
-    // Tables de jeu (Blackjack, Roulette, Poker)
-    const tablePositions = [
-      [150, 120, "Blackjack"], [350, 120, "Roulette"], [550, 120, "Poker"],
-      [150, 350, "Blackjack"], [350, 350, "Baccarat"], [550, 350, "Poker"]
-    ];
-  
-    for (const [x, y, type] of tablePositions) {
-      const t = at(x, y);
-      // Table - base en bois
-      box(g, 1.8, 0.9, 1.2, mat("#1a3a2e"), t.x, 0.45, t.z);
-      // Contour doré du tapis (sous le tapis, pas glow)
-      box(g, 1.85, 0.04, 1.25, mat("#b8860b", { metalness: 0.7, roughness: 0.3 }), t.x, 0.92, t.z);
-      // Tapis de jeu vert (surface principale)
-      box(g, 1.65, 0.025, 1.15, mat("#0d5a1f", { roughness: 0.9 }), t.x, 0.945, t.z);
-      // Lignes de mise (marquages blanc discret)
-      box(g, 1.4, 0.005, 0.02, mat("#ffffff", { opacity: 0.4, transparent: true }), t.x, 0.96, t.z - 0.45);
-      box(g, 1.4, 0.005, 0.02, mat("#ffffff", { opacity: 0.4, transparent: true }), t.x, 0.96, t.z + 0.45);
-      box(g, 0.02, 0.005, 0.9, mat("#ffffff", { opacity: 0.4, transparent: true }), t.x - 0.7, 0.96, t.z);
-      box(g, 0.02, 0.005, 0.9, mat("#ffffff", { opacity: 0.4, transparent: true }), t.x + 0.7, 0.96, t.z);
-      // Jetons sur la table
-      for (let i = 0; i < 8; i++) {
-        const angle = (i / 8) * Math.PI * 2;
-        cyl(g, 0.08, 0.03, mat(i % 3 === 0 ? "#c0392b" : i % 3 === 1 ? "#27ae60" : "#2980b9"),
-          t.x + Math.cos(angle) * 0.6, 0.98, t.z + Math.sin(angle) * 0.6, 12);
-      }
-      // Croupier
-      staff(["#c98a3e", "#d9dde8", "#a37cf0", "#ff6fd8"][tablePositions.findIndex(([tx, ty]) => tx === x && ty === y) % 4], x, y + 80, Math.PI);
-      // Étiquette
-      sign(g, type, 1.2, 0.3, { color: "#ffd700", font: "700 60px Sora, sans-serif", blur: 8 }, t.x, 1.3, back + 0.05);
-    }
-  
-    // Machines à sous diversifiées - moins nombreuses, différents types
-    f.slotMachines = [];
-
-    // Configuration des machines : [x, y, type, nom, themeColor]
-    const machineConfigs = [
-      // Rangée 1 : machines classiques (3 rouleaux)
-      [150, 420, "classic", "LUCKY 7", "#ffd700"],
-      [350, 420, "classic", "DIAMOND", "#44ffff"],
-      [550, 420, "classic", "CHERRY", "#ff4444"],
-      [750, 420, "classic", "BELL", "#ffaa00"],
-      // Rangée 2 : vidéo poker / machines modernes
-      [200, 500, "video", "JACKS OR BETTER", "#44ff44"],
-      [400, 500, "video", "DEUCES WILD", "#ff44ff"],
-      [600, 500, "video", "BONUS POKER", "#4488ff"],
-      [800, 500, "video", "MEGA JACKPOT", "#ff6fd8"],
-      // Rangée 3 : machines à thème (plus espacées)
-      [280, 580, "themed", "PHARAOH'S GOLD", "#ffd700"],
-      [520, 580, "themed", "DRAGON'S FORTUNE", "#ff4444"],
-      [760, 580, "themed", "COSMIC QUEST", "#4444ff"],
-    ];
-
-    for (const [x, y, type, name, themeColor] of machineConfigs) {
-      const p = at(x, y);
-      const isVideo = type === "video";
-      const isThemed = type === "themed";
-      const height = isThemed ? 2.1 : isVideo ? 1.95 : 1.9;
-      const screenH = isThemed ? 1.1 : isVideo ? 1.0 : 0.9;
-
-      // Armoire principale selon le type
-      const cabinetMat = mat("#0d0a10", { metalness: 0.3, roughness: 0.7 });
-      box(g, 0.75, height, 0.55, cabinetMat, p.x, height / 2, p.z);
-
-      // Panneau supérieur (top box)
-      const topBoxH = isThemed ? 0.5 : 0.4;
-      box(g, 0.78, topBoxH, 0.58, mat("#1a1020", { metalness: 0.5 }), p.x, height - topBoxH / 2, p.z);
-      box(g, 0.7, 0.3, 0.04, glow(themeColor, 0.3), p.x, height - 0.05, p.z + 0.31);
-      sign(g, name, 0.6, 0.2, { color: themeColor, font: "700 48px Sora, sans-serif", blur: 4 }, p.x, height - 0.05, p.z + 0.33);
-
-      // Écran principal
-      const screenY = height - topBoxH - screenH / 2 - 0.05;
-      // Matériau propre à chaque machine : son écran s'allume seul quand un agent y joue.
-      const screenBase = new THREE.MeshStandardMaterial({ color: "#050515", roughness: 0.1, emissive: themeColor, emissiveIntensity: 0 });
-      const screen = box(g, 0.6, screenH, 0.03, screenBase, p.x, screenY, p.z + 0.29);
-      box(g, 0.62, screenH + 0.02, 0.02, mat("#b8860b", { metalness: 0.8, roughness: 0.2 }), p.x, screenY, p.z + 0.28);
-
-      // Contenu de l'écran selon le type
-      const reels = [];
-      const symbols = ["🍒", "🔔", "7️⃣", "⭐", "💎", "🍋", "🍊", "💰", "A♠", "K♥", "Q♦", "J♣"];
-      const numReels = isVideo ? 5 : 3;
-      const reelWidth = isVideo ? 0.11 : 0.15;
-      const startX = p.x - (numReels - 1) * reelWidth / 2;
-
-      for (let s = 0; s < numReels; s++) {
-        const reelX = startX + s * reelWidth;
-        const reelY = screenY;
-        const reelZ = p.z + 0.30;
-        box(g, reelWidth, screenH - 0.1, 0.015, mat("#0a0a2a"), reelX, reelY, reelZ);
-        const reelSymbols = [];
-        const visibleSymbols = isVideo ? 4 : 3;
-        for (let v = 0; v < visibleSymbols; v++) {
-          const symY = reelY + (screenH - 0.1) / 2 - 0.1 - v * (screenH - 0.1) / visibleSymbols;
-          const sym = symbols[Math.floor(Math.random() * symbols.length)];
-          const symMesh = sign(g, sym, reelWidth * 0.8, 0.12,
-            { color: ["#ffd700", "#ff4444", "#44ff44", "#4444ff", "#ff8800", "#ff44ff"][Math.floor(Math.random() * 6)],
-              font: `600 ${isVideo ? 36 : 48}px Sora, sans-serif` }, reelX, symY, reelZ + 0.01);
-          reelSymbols.push(symMesh);
-        }
-        reels.push({ x: reelX, y: reelY, z: reelZ, symbols: reelSymbols, height: screenH - 0.1 });
-      }
-
-      // Panneau boutons
-      const buttonY = 0.7;
-      box(g, 0.7, 0.35, 0.05, mat("#1a1020", { metalness: 0.4 }), p.x, buttonY, p.z + 0.3);
-      const btnLabels = isVideo ? ["DEAL", "HOLD", "CASH"] : ["SPIN", "BET", "CASH"];
-      for (let b = 0; b < 3; b++) {
-        const btnX = p.x - 0.15 + b * 0.15;
-        cyl(g, 0.045, 0.06, glow(b === 0 ? "#ff4444" : b === 1 ? "#ffd700" : "#44ff44", 0.8), btnX, buttonY + 0.03, p.z + 0.33, 16);
-        sign(g, btnLabels[b], 0.12, 0.05, { color: "#fff", font: "600 24px Sora, sans-serif" }, btnX, buttonY + 0.03, p.z + 0.34);
-      }
-
-      // Levier latéral (seulement pour classic)
-      let leverArm = null, handle = null;
-      if (!isVideo) {
-        const leverBase = p.x + 0.38;
-        cyl(g, 0.02, 0.05, mat("#b8860b", { metalness: 0.9 }), leverBase, 1.15, p.z + 0.05, 8);
-        leverArm = cyl(g, 0.025, 0.45, mat("#c0392b", { metalness: 0.8 }), leverBase, 1.35, p.z + 0.05, 8);
-        handle = new THREE.Mesh(new THREE.TorusGeometry(0.06, 0.015, 8, 16), mat("#b8860b", { metalness: 0.9 }));
-        handle.position.set(leverBase, 1.58, p.z + 0.05);
-        handle.rotation.x = Math.PI / 2;
-        g.add(handle);
-      }
-
-      // Bac à pièces
-      box(g, 0.5, 0.08, 0.15, mat("#b8860b", { metalness: 0.7, roughness: 0.3 }), p.x, 0.12, p.z + 0.35);
-      box(g, 0.45, 0.03, 0.1, mat("#0d0a10"), p.x, 0.18, p.z + 0.35);
-
-      // Éclairage d'ambiance
-      box(g, 0.7, 0.02, 0.5, glow(themeColor, 0.15), p.x, 0.03, p.z);
-
-      // Décoration thème pour machines thématiques
-      if (isThemed) {
-        // Éléments décoratifs sur les côtés
-        for (const side of [-1, 1]) {
-          const decoX = p.x + side * 0.4;
-          const deco = new THREE.Group();
-          deco.position.set(decoX, 1.2, p.z + 0.1);
-          g.add(deco);
-          // Petit élément 3D décoratif
-          box(deco, 0.15, 0.6, 0.15, mat(themeColor, { metalness: 0.5, emissive: themeColor, emissiveIntensity: 0.3 }), 0, 0.3, 0);
-          box(deco, 0.2, 0.2, 0.2, glow(themeColor, 0.8), 0, 0.7, 0);
-        }
-      }
-
-      // Stocker la machine pour animation
-      f.slotMachines.push({
-        pos: { x: p.x, z: p.z },
-        screen,
-        reels,
-        lever: leverArm,
-        handle,
-        isPlaying: false,
-        playTimer: 0,
-        spinSpeed: 0,
-        type,
-        themeColor
-      });
-    }
-  
-    // Bar
-    const bar = at(880, 150);
-    box(g, 3.0, 1.1, 0.7, mat("#2a1018"), bar.x, 0.55, bar.z);
-    box(g, 3.2, 0.08, 0.8, glow("#ffd700", 0.5), bar.x, 1.12, bar.z);
-    // 3 tabourets centrés sur le bar (bar à x=880, largeur 3.0 -> 865 à 895)
-    // at(880) = 7.6, on veut 3 tabourets vers 7.1, 7.6, 8.1 -> map: 855, 880, 905
-    for (const x of [855, 880, 905]) {
-      put(g, "stoolBar", at(x, 100).x, at(x, 100).z, Math.PI / 2);
-    }
-    staff("#2b2f3a", 940, 150, -Math.PI / 2);
-    // Bouteilles
-    box(g, 0.25, 0.04, 5.5, mat("#1a0a10"), at(950, 150).x, 1.6, at(950, 150).z);
-    box(g, 0.25, 0.04, 5.5, mat("#1a0a10"), at(950, 150).x, 2.1, at(950, 150).z);
-    for (let k = 0; k < 20; k++) {
-      const p = at(950, 80 + (k % 10) * 50);
-      const colors = ["#ffd700", "#c0392b", "#27ae60", "#2980b9", "#8e44ad", "#e67e22", "#1abc9c", "#34495e", "#f39c12", "#e74c3c"];
-      cyl(g, 0.04, 0.3, glow(colors[k % colors.length], 0.6), p.x, k < 10 ? 1.75 : 2.25, p.z, 8);
-    }
-  
-    // Zone VIP - au fond, sans séparation (décalée pour éviter les machines)
-    for (const y of [360, 520]) put(g, "loungeDesignSofa", at(960, y).x, at(960, y).z, 0, 2.2);
-    put(g, "tableCoffee", at(960, 440).x, at(960, 440).z, 0, 2);
-    sign(g, "VIP", 1.4, 0.5, { color: "#ffd700", font: "700 90px Sora, sans-serif", w: 256 }, at(970, 300).x, 2.2, at(0, 300).z);
-  
-    // Champagne et cocktails
-    const champagne = at(960, 440);
-    cyl(g, 0.14, 0.22, mat("#8995a7", { metalness: 0.8, roughness: 0.25 }), champagne.x, 0.85, champagne.z);
-    cyl(g, 0.055, 0.4, mat("#294a36"), champagne.x, 1.02, champagne.z, 12);
-    for (const dx of [-0.3, 0.3]) {
-      cyl(g, 0.015, 0.18, mat("#c5dfeb"), champagne.x + dx, 0.87, champagne.z);
-      cyl(g, 0.06, 0.12, mat("#eed18a"), champagne.x + dx, 1.02, champagne.z, 12);
-    }
-  
-    // Cocktails sur le bar
-    for (const y of [80, 180, 280, 380, 480]) {
-      const p = at(880, y);
-      cyl(g, 0.06, 0.18, mat("#b8dce8", { transparent: true, opacity: 0.6 }), p.x, 1.24, p.z, 12);
-      cyl(g, 0.05, 0.09, glow(y % 2 === 0 ? "#ee966e" : "#9fd67b", 0.4), p.x, 1.22, p.z, 12);
-      box(g, 0.015, 0.2, 0.015, mat("#f3e5c4"), p.x + 0.025, 1.35, p.z).rotation.z = 0.25;
-    }
-  
-    // Lumières d'ambiance néon
-    f.neons = [];
-    for (let i = 0; i < 8; i++) {
-      const colors = ["#ff6fd8", "#7ec3f0", "#ffd36e", "#4ade80", "#ff4d6d", "#a37cf0", "#ff8800", "#44ff44"];
-      const neon = box(g, 4, 0.15, 0.05, glow(colors[i], 1.2), 400, 1.5 + i * 0.4, -5.9);
-      neon.rotation.y = Math.PI / 2;
-      f.neons.push({ mesh: neon, color: colors[i], phase: i * 0.5 });
-    }
-  
-    // Machines à fumée
-    f.haze = [200, 700].map(x => {
-      const p = at(x, 80);
-      box(g, 0.45, 0.25, 0.6, mat("#181b29"), p.x, 0.23, p.z);
-      return ambientSmoke(g, P(x, 90, 0.4), "#ae92d1", 20, 1.0, 1.2);
-    });
-  
-    // Vigile à l'entrée
-    staff("#15171f", 100, 240, Math.PI / 2);
-  
-    // Pas de garde-corps : espace casino entièrement ouvert pour dégager machines à sous et ascenseur
-  
-    // Panneau d'entrée
-    sign(g, "CASINO", 4, 1, { color: "#ffd700", font: "900 120px Sora, sans-serif", blur: 20 }, 0, 3.5, -5.8);
-  }
+  const helpers = { at, zone, tag, staff, back };
+  if (def.id === "casino") buildCasino(f, g, helpers);
+  if (def.id === "tennis") buildTennis(f, g, helpers);
+  if (def.id === "golf") buildGolf(f, g, helpers);
   return f;
+}
+
+// ---------- Casino ----------
+// Tables au fond à gauche (roulette, blackjack, poker), bar au fond à droite, jackpot commun sur la vitre du fond,
+// deux rangées de machines à sous devant, carré VIP devant à droite, lustre au-dessus de l'allée.
+const MACHINE_THEMES = [["LUCKY 7", "#ffd23f"], ["DIAMANT", "#5ce1ff"], ["CERISE", "#ff4d6d"], ["JACKPOT", "#ffb000"], ["CLOCHE", "#ff9a3c"], ["ÉTOILE", "#b18cff"],
+  ["PHARAON", "#e8c45a"], ["DRAGON", "#ff5a36"], ["COSMOS", "#6b8cff"], ["JOKER", "#4ade80"], ["TRÉSOR", "#f2c14e"], ["MÉGA", "#ff6fd8"]];
+const BJ_SHOE = { x: 0.62, y: 0.9, z: 0.14 };
+const BJ_STATUS = { playing: "À toi de jouer", blackjack: "BLACKJACK !", win: "Gagné !", lose: "Perdu", push: "Égalité", bust: "Sauté" };
+function buildCasino(f, g, { at, zone, tag, staff, back }) {
+  const c = f.casino = { machines: [], neons: [], party: 0, partyTime: 0, hue: 0, bulbStep: -1, dummy: new THREE.Object3D() };
+  const m4 = new THREE.Matrix4(), tint = new THREE.Color();
+  const brass = mat("#c9a24a", { metalness: 0.85, roughness: 0.3 }), wood = mat("#3b2116", { roughness: 0.5 });
+  const leather = mat("#24120e", { roughness: 0.45 }), felt = mat("#0f5a33", { roughness: 0.95 });
+
+  // Moquette de casino : un motif dessiné une fois et répété ; tapis bordé d'or sur l'allée de l'ascenseur.
+  const carpetMap = canvasTexture(256, 256, x => {
+    x.fillStyle = "#3a0d1c"; x.fillRect(0, 0, 256, 256);
+    x.strokeStyle = "#6e2236"; x.lineWidth = 4;
+    for (const [cx, cy] of [[64, 64], [192, 192], [64, 192], [192, 64]]) { x.beginPath(); x.arc(cx, cy, 36, 0, Math.PI * 2); x.stroke(); }
+    x.fillStyle = "#b8903c";
+    for (const [cx, cy] of [[64, 64], [192, 192]]) { x.beginPath(); x.moveTo(cx, cy - 18); x.lineTo(cx + 18, cy); x.lineTo(cx, cy + 18); x.lineTo(cx - 18, cy); x.fill(); }
+    x.fillStyle = "#1d5c5c";
+    for (const [cx, cy] of [[64, 192], [192, 64]]) { x.beginPath(); x.arc(cx, cy, 12, 0, Math.PI * 2); x.fill(); }
+    x.fillStyle = "#5a1428";
+    for (let i = 0; i <= 256; i += 128) for (let j = 0; j <= 256; j += 128) { x.beginPath(); x.arc(i, j, 8, 0, Math.PI * 2); x.fill(); }
+  });
+  carpetMap.wrapS = carpetMap.wrapT = THREE.RepeatWrapping;
+  carpetMap.repeat.set(10, 6.2);
+  const carpet = new THREE.Mesh(new THREE.PlaneGeometry(20.3, 12.3).rotateX(-Math.PI / 2), new THREE.MeshStandardMaterial({ map: carpetMap, roughness: 0.95 }));
+  carpet.position.y = 0.045;
+  g.add(carpet);
+  zone(20, 288, 990, 332, "#1a0810");
+  for (const y of [288, 332]) box(g, 19.4, 0.008, 0.04, brass, at(505, y).x, 0.068, at(505, y).z);
+  f.roomTags = [tag("Tables de jeu", 40, 40), tag("Bar", 720, 40), tag("Machines à sous", 50, 350), tag("Carré VIP", VIP.x0, VIP.y0)];
+
+  // Roulette : table en longueur, roue à gauche (37 cases, rotor, bille), tapis des mises à droite, tableau des derniers numéros.
+  const rt = at(...CASINO_TABLES.roulette);
+  box(g, 2.4, 0.76, 1.1, wood, rt.x, 0.38, rt.z);
+  box(g, 2.62, 0.012, 1.3, brass, rt.x, 0.765, rt.z);
+  box(g, 2.6, 0.05, 1.28, leather, rt.x, 0.79, rt.z);
+  box(g, 2.42, 0.03, 1.12, felt, rt.x, 0.82, rt.z);
+  for (const dz of [-0.6, 0.6]) box(g, 2.6, 0.06, 0.08, leather, rt.x, 0.86, rt.z + dz);
+  for (const dx of [-1.26, 1.26]) box(g, 0.08, 0.06, 1.28, leather, rt.x + dx, 0.86, rt.z);
+  const layout = canvasTexture(512, 320, (x, w, h) => {
+    x.fillStyle = "#0f5a33"; x.fillRect(0, 0, w, h);
+    x.strokeStyle = "#f4efe2"; x.lineWidth = 3; x.textAlign = "center"; x.textBaseline = "middle";
+    const cw = 34, ch = 62, ox = 50, oy = 24;
+    x.fillStyle = rouletteColor(0);
+    x.beginPath(); x.moveTo(ox, oy); x.lineTo(ox, oy + 3 * ch); x.lineTo(ox - 36, oy + 1.5 * ch); x.closePath(); x.fill(); x.stroke();
+    x.font = "700 22px Sora, sans-serif"; x.fillStyle = "#ffffff"; x.fillText("0", ox - 13, oy + 1.5 * ch);
+    for (let col = 0; col < 12; col++) for (let row = 0; row < 3; row++) {
+      const n = col * 3 + 3 - row, px = ox + col * cw, py = oy + row * ch;
+      x.fillStyle = rouletteColor(n); x.fillRect(px, py, cw, ch); x.strokeRect(px, py, cw, ch);
+      x.save(); x.translate(px + cw / 2, py + ch / 2); x.rotate(-Math.PI / 2); x.fillStyle = "#ffffff"; x.fillText(String(n), 0, 0); x.restore();
+    }
+    const by = oy + 3 * ch;
+    x.font = "700 17px Sora, sans-serif";
+    ["1re douzaine", "2e douzaine", "3e douzaine"].forEach((t, k) => { x.strokeRect(ox + k * 4 * cw, by, 4 * cw, 40); x.fillStyle = "#f4efe2"; x.fillText(t, ox + (k * 4 + 2) * cw, by + 20); });
+    ["MANQUE", "PAIR", "", "", "IMPAIR", "PASSE"].forEach((t, k) => {
+      const px = ox + k * 2 * cw;
+      x.strokeRect(px, by + 40, 2 * cw, 40);
+      if (t) { x.fillStyle = "#f4efe2"; x.font = "700 14px Sora, sans-serif"; x.fillText(t, px + cw, by + 60); return; }
+      x.fillStyle = k === 2 ? "#b3243a" : "#17181e";
+      x.beginPath(); x.moveTo(px + cw, by + 46); x.lineTo(px + cw + 20, by + 60); x.lineTo(px + cw, by + 74); x.lineTo(px + cw - 20, by + 60); x.closePath(); x.fill();
+    });
+  });
+  const layoutMesh = new THREE.Mesh(new THREE.PlaneGeometry(1.45, 0.9).rotateX(-Math.PI / 2), new THREE.MeshStandardMaterial({ map: layout, roughness: 0.95 }));
+  layoutMesh.position.set(rt.x + 0.47, 0.837, rt.z);
+  g.add(layoutMesh);
+  for (let k = 0; k < 6; k++) cyl(g, 0.035, 0.03 + (k % 3) * 0.02, mat(["#c0392b", "#f4efe2", "#2980b9"][k % 3]), rt.x + 0.1 + k * 0.17, 0.85, rt.z + 0.25 - (k % 2) * 0.42, 14);
+  const wheelTexture = canvasTexture(512, 512, x => {
+    const o = 256;
+    x.fillStyle = "#3a2214"; x.beginPath(); x.arc(o, o, 256, 0, Math.PI * 2); x.fill();
+    x.textAlign = "center"; x.textBaseline = "middle"; x.font = "700 26px Sora, sans-serif";
+    ROULETTE_WHEEL.forEach((n, i) => {
+      const a0 = i * POCKET, a1 = a0 + POCKET;
+      x.fillStyle = rouletteColor(n);
+      x.beginPath(); x.arc(o, o, 252, a0, a1); x.arc(o, o, 185, a1, a0, true); x.closePath(); x.fill();
+      x.globalAlpha = 0.7; x.beginPath(); x.arc(o, o, 185, a0, a1); x.arc(o, o, 140, a1, a0, true); x.closePath(); x.fill(); x.globalAlpha = 1;
+      x.strokeStyle = "#d8b45a"; x.lineWidth = 3;
+      x.beginPath(); x.moveTo(o + Math.cos(a0) * 140, o + Math.sin(a0) * 140); x.lineTo(o + Math.cos(a0) * 252, o + Math.sin(a0) * 252); x.stroke();
+      x.save(); x.translate(o, o); x.rotate(a0 + POCKET / 2); x.translate(219, 0); x.rotate(Math.PI / 2);
+      x.fillStyle = "#ffffff"; x.fillText(String(n), 0, 0); x.restore();
+    });
+    x.strokeStyle = "#d8b45a"; x.lineWidth = 4;
+    for (const r of [140, 185, 252]) { x.beginPath(); x.arc(o, o, r, 0, Math.PI * 2); x.stroke(); }
+    const gr = x.createRadialGradient(o, o, 10, o, o, 140);
+    gr.addColorStop(0, "#d4ae55"); gr.addColorStop(0.35, "#6b3f22"); gr.addColorStop(1, "#3a2214");
+    x.fillStyle = gr; x.beginPath(); x.arc(o, o, 138, 0, Math.PI * 2); x.fill();
+    x.lineWidth = 3;
+    for (let k = 0; k < 8; k++) { const a = k * Math.PI / 4; x.beginPath(); x.moveTo(o + Math.cos(a) * 30, o + Math.sin(a) * 30); x.lineTo(o + Math.cos(a) * 128, o + Math.sin(a) * 128); x.stroke(); }
+  });
+  const wheel = new THREE.Group();
+  wheel.position.set(rt.x - 0.72, 0, rt.z);
+  g.add(wheel);
+  cyl(wheel, 0.47, 0.12, wood, 0, 0.84, 0, 48);
+  const track = new THREE.Mesh(new THREE.RingGeometry(ROTOR_R, 0.445, 48).rotateX(-Math.PI / 2), mat("#2a160e", { roughness: 0.25, metalness: 0.2 }));
+  track.position.y = 0.902;
+  wheel.add(track);
+  const lip = new THREE.Mesh(new THREE.TorusGeometry(0.455, 0.022, 8, 48).rotateX(Math.PI / 2), brass);
+  lip.position.y = 0.905;
+  wheel.add(lip);
+  const rotor = new THREE.Group();
+  rotor.position.y = 0.905;
+  wheel.add(rotor);
+  const face = new THREE.Mesh(discGeometry, new THREE.MeshStandardMaterial({ map: wheelTexture, roughness: 0.35, metalness: 0.15 }));
+  face.scale.set(ROTOR_R, 1, ROTOR_R);
+  rotor.add(face);
+  const turret = new THREE.Mesh(new THREE.ConeGeometry(0.05, 0.1, 16), brass);
+  turret.position.y = 0.05;
+  rotor.add(turret);
+  for (const r of [0, Math.PI / 2]) box(rotor, 0.2, 0.012, 0.012, brass, 0, 0.085, 0, r);
+  const rBall = new THREE.Mesh(ballGeometry, mat("#f7f7f2", { roughness: 0.2 }));
+  rBall.scale.setScalar(0.017);
+  wheel.add(rBall);
+  const pole = at(245, 118);
+  cyl(g, 0.025, 1.45, brass, pole.x, 0.73, pole.z, 8);
+  c.roulette = { rotor, ball: rBall, alpha: 0, number: 0, spin: null, history: [],
+    board: canvasPanel(g, 0.62, 0.34, 256, 140, pole.x, 1.62, pole.z + 0.03, -0.25) };
+  drawRouletteBoard(c.roulette);
+  staff("#c98a3e", 140, 108, 0);
+
+  // Blackjack : table en demi-lune, la banque au fond ; les cartes de la main jouée au dialogue arrivent du sabot.
+  const bjp = at(...CASINO_TABLES.blackjack), bj = new THREE.Group();
+  bj.position.set(bjp.x, 0, bjp.z);
+  g.add(bj);
+  const half = (r, h, m, y) => {
+    const mesh = new THREE.Mesh(new THREE.CylinderGeometry(r, r, h, 40, 1, false, -Math.PI / 2, Math.PI), m);
+    mesh.position.y = y; bj.add(mesh); return mesh;
+  };
+  half(0.86, 0.76, wood, 0.38);
+  box(bj, 1.72, 0.76, 0.04, wood, 0, 0.38, 0);
+  half(1.0, 0.05, leather, 0.785);
+  const bjFelt = canvasTexture(512, 512, (x, w) => {
+    x.fillStyle = "#0e5631"; x.fillRect(0, 0, w, w);
+    x.textAlign = "center"; x.textBaseline = "middle";
+    x.fillStyle = "#e9c46a"; x.font = "700 25px Sora, sans-serif"; x.fillText("LE BLACKJACK PAIE 3 POUR 2", 256, 256 + 99);
+    x.fillStyle = "#f4efe2"; x.font = "600 17px Sora, sans-serif"; x.fillText("LA BANQUE TIRE À 16 ET RESTE À 17", 256, 256 + 124);
+    x.strokeStyle = "#f4efe2"; x.lineWidth = 3;
+    for (const d of [25, 62, 90, 118, 155]) { const a = d * Math.PI / 180; x.beginPath(); x.arc(256 + Math.cos(a) * 200, 256 + Math.sin(a) * 200, 22, 0, Math.PI * 2); x.stroke(); }
+  });
+  const bjTop = new THREE.Mesh(new THREE.CircleGeometry(0.93, 40, Math.PI, Math.PI).rotateX(-Math.PI / 2), new THREE.MeshStandardMaterial({ map: bjFelt, roughness: 0.95 }));
+  bjTop.position.y = 0.812;
+  bj.add(bjTop);
+  const bjRail = new THREE.Mesh(new THREE.TorusGeometry(0.97, 0.045, 8, 40, Math.PI).rotateX(Math.PI / 2), leather);
+  bjRail.position.y = 0.83;
+  bj.add(bjRail);
+  box(bj, 2.0, 0.06, 0.08, leather, 0, 0.83, -0.02);
+  box(bj, 0.56, 0.035, 0.13, mat("#151515"), -0.05, 0.83, 0.08);
+  ["#c0392b", "#27ae60", "#2980b9", "#f4efe2", "#8e44ad", "#f1c40f"].forEach((col, k) => cyl(bj, 0.022, 0.03, mat(col), -0.27 + k * 0.088, 0.86, 0.08, 12));
+  box(bj, 0.16, 0.1, 0.26, mat("#5a1020", { roughness: 0.4 }), BJ_SHOE.x, BJ_SHOE.y - 0.04, BJ_SHOE.z);
+  for (const d of [25, 62, 118, 155]) { const a = d * Math.PI / 180; cyl(bj, 0.03, 0.04, mat(d < 90 ? "#c0392b" : "#2980b9"), Math.cos(a) * 0.73, 0.835, Math.sin(a) * 0.73, 12); }
+  for (const dx of [-0.6, 0.6]) cyl(bj, 0.006, 1.0, mat("#1a1a1a"), dx, 2.95, 0.1, 4);
+  c.blackjack = { player: [], dealer: [], anim: [],
+    cards: [...Array(12)].map(() => {
+      const m = new THREE.Mesh(cardGeometry, new THREE.MeshBasicMaterial({ map: cardTexture("??") }));
+      m.visible = false; bj.add(m); return m;
+    }),
+    board: canvasPanel(bj, 1.4, 0.4, 512, 146, 0, 2.3, 0.1) };
+  drawBlackjackBoard(c.blackjack, null);
+  staff("#d9dde8", 400, 140, 0);
+
+  // Poker : table ovale, cartes communes, pot et cartes cachées des joueurs.
+  const pk = at(...CASINO_TABLES.poker);
+  cyl(g, 1, 0.74, wood, pk.x, 0.37, pk.z, 32).scale.set(0.95, 0.74, 0.55);
+  cyl(g, 1, 0.04, felt, pk.x, 0.8, pk.z, 32).scale.set(1.05, 0.04, 0.62);
+  const pkRail = new THREE.Mesh(new THREE.TorusGeometry(1, 0.05, 8, 40).rotateX(Math.PI / 2), leather);
+  pkRail.scale.set(1.08, 1, 0.66);
+  pkRail.position.set(pk.x, 0.83, pk.z);
+  g.add(pkRail);
+  ["A♠", "K♥", "10♦", "J♣", "Q♠"].forEach((label, k) => {
+    const card = new THREE.Mesh(cardGeometry, new THREE.MeshBasicMaterial({ map: cardTexture(label) }));
+    card.position.set(pk.x - 0.3 + k * 0.15, 0.825, pk.z - 0.05); g.add(card);
+  });
+  for (const [x, y] of [[545, 212], [600, 227], [655, 212]]) {
+    const s = at(x + (600 - x) * 0.45, y - (y - 165) * 0.62);
+    for (const dx of [-0.04, 0.04]) {
+      const card = new THREE.Mesh(cardGeometry, new THREE.MeshBasicMaterial({ map: cardTexture("??") }));
+      card.position.set(s.x + dx, 0.826, s.z); card.rotation.y = dx * 4; g.add(card);
+    }
+  }
+  for (let k = 0; k < 5; k++) cyl(g, 0.03, 0.02 + k * 0.012, mat(["#c0392b", "#27ae60", "#2980b9", "#f4efe2", "#f1c40f"][k]), pk.x + 0.25 + (k % 2) * 0.07, 0.83 + k * 0.006, pk.z + 0.12 - (k > 2) * 0.07, 12);
+  staff("#a37cf0", 600, 112, 0);
+  sign(g, "POKER", 1.0, 0.3, { color: "#ffd700", font: "700 70px Sora, sans-serif", blur: 8 }, pk.x, 2.3, pk.z - 0.9);
+  sign(g, "ROULETTE", 1.4, 0.3, { color: "#ffd700", font: "700 70px Sora, sans-serif", blur: 8 }, rt.x, 2.3, rt.z - 0.9);
+  playTarget(f, g, 2.8, 1.4, 1.5, rt.x, 0.7, rt.z, "casino");
+  playTarget(f, bj, 2.1, 1.4, 1.1, 0, 0.7, 0.5, "casino");
+
+  // Machines à sous : rouleaux qui défilent vraiment (une bande de symboles, vue décalée), levier, lampe de toit qui clignote.
+  const cabinet = mat("#15101c", { metalness: 0.45, roughness: 0.45 }), chrome = mat("#c9ccd6", { metalness: 0.9, roughness: 0.22 });
+  const shadeGeometry = new THREE.PlaneGeometry(0.52, 0.45), shadeMat = new THREE.MeshBasicMaterial({ map: reelShadeTexture(), transparent: true, depthWrite: false });
+  const strip = slotStripTexture();
+  CASINO_MACHINES.forEach(([mx, my], k) => {
+    const [name, theme] = MACHINE_THEMES[k], mg = new THREE.Group();
+    mg.position.copy(at(mx, my));
+    g.add(mg);
+    box(mg, 0.72, 1.18, 0.56, cabinet, 0, 0.59, 0);
+    box(mg, 0.76, 0.03, 0.6, glow(theme, 0.9), 0, 0.075, 0);
+    for (const sx of [-0.37, 0.37]) box(mg, 0.025, 1.9, 0.025, glow(theme, 1.4), sx, 1.05, 0.28);
+    box(mg, 0.72, 0.64, 0.5, cabinet, 0, 1.5, -0.03);
+    box(mg, 0.6, 0.5, 0.02, mat("#07040c"), 0, 1.5, 0.225);
+    const reels = [-0.17, 0, 0.17].map(rx => {
+      const map = strip.clone(), pos = Math.floor(Math.random() * SLOT_SYMBOLS.length);
+      map.repeat.set(1, 0.5);
+      map.offset.y = reelOffset(pos);
+      const reel = new THREE.Mesh(reelGeometry, new THREE.MeshBasicMaterial({ map, toneMapped: false }));
+      reel.position.set(rx, 1.5, 0.238);
+      mg.add(reel);
+      return { map, pos: map.offset.y, from: 0, dist: 0, stop: 0, target: 0 };
+    });
+    const shade = new THREE.Mesh(shadeGeometry, shadeMat);
+    shade.position.set(0, 1.5, 0.242);
+    mg.add(shade);
+    box(mg, 0.54, 0.008, 0.004, glow("#ff2d55", 2), 0, 1.5, 0.246);
+    for (const dy of [-0.25, 0.25]) box(mg, 0.64, 0.035, 0.04, chrome, 0, 1.5 + dy, 0.235);
+    for (const dx of [-0.3, 0.3]) box(mg, 0.035, 0.5, 0.04, chrome, dx, 1.5, 0.235);
+    box(mg, 0.72, 0.06, 0.32, cabinet, 0, 1.0, 0.36).rotation.x = 0.3;
+    ["#ff3b3b", "#ffd23f", "#4ade80"].forEach((col, b) => cyl(mg, 0.035, 0.03, glow(col, 1.2), -0.18 + b * 0.18, 1.045, 0.34, 12));
+    const topper = new THREE.MeshStandardMaterial({ color: theme, emissive: theme, emissiveIntensity: 0.8, roughness: 0.4 });
+    box(mg, 0.74, 0.34, 0.48, topper, 0, 2.0, -0.04);
+    sign(mg, name, 0.68, 0.22, { color: "#1b0a12", font: "900 72px Sora, sans-serif", blur: 0, w: 400, h: 128 }, 0, 2.0, 0.205);
+    box(mg, 0.5, 0.07, 0.14, chrome, 0, 0.32, 0.33);
+    box(mg, 0.44, 0.02, 0.1, mat("#0a0610"), 0, 0.36, 0.33);
+    let lever = null;
+    if (k < 6) {
+      cyl(mg, 0.045, 0.1, chrome, 0.4, 1.12, 0.05, 12).rotation.z = Math.PI / 2;
+      lever = new THREE.Group();
+      lever.position.set(0.44, 1.12, 0.05);
+      mg.add(lever);
+      cyl(lever, 0.016, 0.5, chrome, 0, 0.25, 0, 8);
+      const knob = new THREE.Mesh(ballGeometry, glow("#e01b2f", 0.6));
+      knob.scale.setScalar(0.045); knob.position.y = 0.52; lever.add(knob);
+    }
+    if (k === CASINO_FEATURED) {
+      // La machine du jackpot : gyrophare sur le toit, il tourne et clignote pendant la fête.
+      c.beacon = new THREE.MeshBasicMaterial({ color: "#ff8a00", toneMapped: false });
+      cyl(mg, 0.09, 0.16, c.beacon, 0, 2.25, -0.04, 16);
+    }
+    playTarget(f, mg, 0.8, 2.3, 0.75, 0, 1.15, 0.05, "casino");
+    c.machines.push({ group: mg, reels, topper, lever, leverT: 0, active: false, time: 0, stopAt: 0, flash: 0, wait: Math.random() * 3, busy: false, onDone: null });
+  });
+
+  // Bar : comptoir de marbre éclairé par-dessous, arrière-bar rétroéclairé, bouteilles lumineuses (un seul maillage).
+  const bar = at(840, 100), shelfZ = at(0, 24).z;
+  box(g, 4.8, 1.04, 0.62, mat("#1a0b10", { roughness: 0.35 }), bar.x, 0.52, bar.z);
+  for (let k = 0; k < 24; k++) box(g, 0.02, 0.86, 0.012, brass, bar.x - 2.3 + k * 0.2, 0.5, bar.z + 0.315);
+  box(g, 5.0, 0.07, 0.78, mat("#e3dccf", { roughness: 0.18, metalness: 0.05 }), bar.x, 1.075, bar.z);
+  box(g, 4.9, 0.025, 0.025, glow("#ffb347", 1.6), bar.x, 1.02, bar.z + 0.4);
+  box(g, 4.9, 0.025, 0.025, glow("#ffb347", 1.2), bar.x, 0.06, bar.z + 0.33);
+  staff("#2b2f3a", 840, 52, 0);
+  box(g, 4.7, 1.9, 0.04, glow("#ff9f43", 0.28), bar.x, 1.85, shelfZ - 0.06);
+  const bottleShape = [[0, 0], [0.05, 0], [0.055, 0.02], [0.055, 0.17], [0.042, 0.21], [0.018, 0.245], [0.018, 0.31], [0.022, 0.32], [0, 0.32]].map(([r, y]) => new THREE.Vector2(r, y));
+  const bottles = new THREE.InstancedMesh(new THREE.LatheGeometry(bottleShape, 10), new THREE.MeshBasicMaterial({ color: "#ffffff", toneMapped: false }), 48);
+  const tones = ["#ffb347", "#ff6b6b", "#5ce1ff", "#9bff6b", "#ffd23f", "#ff6fd8", "#c18cff", "#ffe7b0"];
+  for (let row = 0; row < 3; row++) {
+    const y = 1.12 + row * 0.55;
+    box(g, 4.6, 0.03, 0.3, mat("#a9c7d6", { transparent: true, opacity: 0.5, roughness: 0.1 }), bar.x, y, shelfZ + 0.1);
+    box(g, 4.6, 0.02, 0.02, glow("#fff1d6", 1.5), bar.x, y - 0.02, shelfZ + 0.24);
+    for (let k = 0; k < 16; k++) {
+      bottles.setMatrixAt(row * 16 + k, m4.makeTranslation(bar.x - 2.2 + k * 0.29, y + 0.015, shelfZ + 0.1));
+      bottles.setColorAt(row * 16 + k, tint.set(tones[(k * 3 + row * 5) % tones.length]));
+    }
+  }
+  g.add(bottles);
+  for (let k = 0; k < 4; k++) {
+    const x = bar.x - 1.9 + k * 1.25;
+    cyl(g, 0.055, 0.16, mat("#b8dce8", { transparent: true, opacity: 0.55 }), x, 1.19, bar.z + 0.15, 12);
+    cyl(g, 0.045, 0.08, glow(["#ee966e", "#9fd67b", "#ff6fd8", "#ffd23f"][k], 0.6), x, 1.16, bar.z + 0.15, 12);
+  }
+  sign(g, "BAR", 1.4, 0.45, { color: "#ffb347" }, bar.x, 3.15, shelfZ - 0.02);
+
+  // Jackpot commun : grand panneau cerné d'ampoules qui défilent (montant et dernier gagnant, redessinés s'ils changent).
+  box(g, 6.2, 1.95, 0.08, mat("#22070f", { metalness: 0.4, roughness: 0.4 }), 0, 2.75, back + 0.02);
+  for (const dy of [-0.95, 0.95]) box(g, 6.24, 0.05, 0.1, brass, 0, 2.75 + dy, back + 0.04);
+  for (const dx of [-3.1, 3.1]) box(g, 0.05, 1.95, 0.1, brass, dx, 2.75, back + 0.04);
+  c.jackpot = canvasPanel(g, 5.6, 1.5, 1024, 274, 0, 2.75, back + 0.07);
+  drawJackpot(c, null, 0);
+  const ring = [];
+  for (let k = 0; k < 30; k++) ring.push([-2.9 + k * 0.2, 3.62]);
+  for (let k = 0; k < 8; k++) ring.push([2.98, 3.5 - k * 0.2]);
+  for (let k = 0; k < 30; k++) ring.push([2.9 - k * 0.2, 1.88]);
+  for (let k = 0; k < 8; k++) ring.push([-2.98, 2.0 + k * 0.2]);
+  c.bulbs = new THREE.InstancedMesh(ballGeometry, new THREE.MeshBasicMaterial({ color: "#ffffff", toneMapped: false }), ring.length);
+  ring.forEach(([x, y], i) => { c.bulbs.setMatrixAt(i, m4.makeScale(0.04, 0.04, 0.04).setPosition(x, y, back + 0.1)); c.bulbs.setColorAt(i, i % 3 ? BULB_DIM : BULB_ON); });
+  g.add(c.bulbs);
+  sign(g, "CASINO", 4.2, 1.0, { color: "#ffd700", font: "900 120px Sora, sans-serif", blur: 22 }, 0, 4.2, back + 0.05);
+
+  // Néons sur le haut des vitres (fond, côtés, angles) : leurs couleurs défilent et s'emballent pour un jackpot.
+  const neon = (w, h, x, y, z, ry = 0) => {
+    const m = new THREE.MeshBasicMaterial({ color: "#ff6fd8", toneMapped: false });
+    box(g, w, h, 0.06, m, x, y, z, ry);
+    m.color.setHSL(mod1(c.neons.length * 0.045 + 0.85), 0.95, 0.55);
+    c.neons.push(m);
+  };
+  for (let k = 0; k < 8; k++) neon(2.4, 0.06, -8.75 + k * 2.5, 4.7, -6.3);
+  for (const x of [-10.25, 10.25]) for (let k = 0; k < 5; k++) neon(2.3, 0.06, x, 4.7, -5 + k * 2.5, Math.PI / 2);
+  for (const x of [-10.2, 10.2]) neon(0.06, 4.4, x, 2.5, -6.3);
+
+  // Lustre de cristal au-dessus de l'allée : anneaux dorés, ampoules et pampilles (deux maillages instanciés).
+  const lustre = c.lustre = new THREE.Group();
+  lustre.position.set(0, 3.75, -0.2);
+  g.add(lustre);
+  const gold = mat("#d4af37", { metalness: 0.9, roughness: 0.22 });
+  cyl(lustre, 0.018, 1.4, gold, 0, 0.95, 0, 6);
+  const lights = [], drops = [];
+  for (const [r, y] of [[0.9, 0], [0.6, 0.25], [0.32, 0.46]]) {
+    const tor = new THREE.Mesh(new THREE.TorusGeometry(r, 0.022, 8, 48).rotateX(Math.PI / 2), gold);
+    tor.position.y = y; lustre.add(tor);
+    const n = Math.round(r * 18), nd = Math.round(r * 26);
+    for (let k = 0; k < n; k++) { const a = k / n * Math.PI * 2; lights.push([Math.cos(a) * r, y + 0.07, Math.sin(a) * r]); }
+    for (let k = 0; k < nd; k++) { const a = (k + 0.5) / nd * Math.PI * 2; drops.push([Math.cos(a) * r, y - 0.1 - (k % 2) * 0.09, Math.sin(a) * r]); }
+  }
+  for (let k = 0; k < 3; k++) box(lustre, 1.8, 0.02, 0.02, gold, 0, 0, 0, k * Math.PI / 3);
+  for (let k = 0; k < 6; k++) drops.push([0, -0.14 - k * 0.075, 0]);
+  const bulbs = new THREE.InstancedMesh(ballGeometry, new THREE.MeshBasicMaterial({ color: "#ffe6a8", toneMapped: false }), lights.length);
+  lights.forEach(([x, y, z], i) => bulbs.setMatrixAt(i, m4.makeScale(0.032, 0.05, 0.032).setPosition(x, y, z)));
+  const crystalMat = new THREE.MeshStandardMaterial({ color: "#f4f8ff", metalness: 0.3, roughness: 0.05, emissive: "#9fc3ff", emissiveIntensity: 0.45 });
+  const crystals = new THREE.InstancedMesh(new THREE.OctahedronGeometry(1), crystalMat, drops.length);
+  drops.forEach(([x, y, z], i) => crystals.setMatrixAt(i, m4.makeScale(0.03, 0.055, 0.03).setPosition(x, y, z)));
+  const orb = new THREE.Mesh(ballGeometry, crystalMat);
+  orb.scale.setScalar(0.09); orb.position.y = -0.62;
+  lustre.add(bulbs, crystals, orb);
+
+  // Carré VIP : moquette bordeaux, poteaux dorés et cordons de velours (ouverts côté allée), banquettes capitonnées face à face.
+  zone(VIP.x0 + 5, VIP.y0 + 5, 985, 605, "#4b0f24");
+  const velvet = mat("#9b1030", { roughness: 0.7 });
+  const post = ([x, y]) => {
+    const p = at(x, y);
+    cyl(g, 0.12, 0.04, brass, p.x, 0.08, p.z, 16);
+    cyl(g, 0.03, 0.9, brass, p.x, 0.5, p.z, 10);
+    const top = new THREE.Mesh(ballGeometry, brass); top.scale.setScalar(0.05); top.position.set(p.x, 0.97, p.z); g.add(top);
+  };
+  const rope = (a, b) => {
+    const p = at(...a), q = at(...b);
+    const curve = new THREE.QuadraticBezierCurve3(new THREE.Vector3(p.x, 0.86, p.z), new THREE.Vector3((p.x + q.x) / 2, 0.6, (p.z + q.z) / 2), new THREE.Vector3(q.x, 0.86, q.z));
+    g.add(new THREE.Mesh(new THREE.TubeGeometry(curve, 12, 0.018, 6), velvet));
+  };
+  const chains = [[[VIP.x0, VIP.gap[0]], [VIP.x0, 425], [VIP.x0, VIP.y0], [820, VIP.y0], [875, VIP.y0], [930, VIP.y0], [985, VIP.y0]],
+    [[VIP.x0, VIP.gap[1]], [VIP.x0, 575], [VIP.x0, 605]]];
+  for (const chain of chains) { chain.forEach(post); chain.slice(1).forEach((p, k) => rope(chain[k], p)); }
+  const plush = mat("#7a1430", { roughness: 0.8 }), plushDark = mat("#5a0e22", { roughness: 0.8 });
+  const rbox = (w, h, d, m, x, y, z) => { const mesh = new THREE.Mesh(new RoundedBoxGeometry(w, h, d, 2, 0.05), m); mesh.position.set(x, y, z); g.add(mesh); };
+  for (const [seatY, backY] of [[432, 414], [568, 586]]) {
+    const s = at(870, seatY), b = at(870, backY);
+    box(g, 3.0, 0.24, 0.5, mat("#1c0a10"), s.x, 0.12, s.z);
+    rbox(3.0, 0.2, 0.55, plush, s.x, 0.34, s.z);
+    rbox(3.0, 0.62, 0.16, plush, b.x, 0.66, b.z);
+    for (let k = 0; k < 11; k++) box(g, 0.02, 0.5, 0.17, plushDark, b.x - 1.25 + k * 0.25, 0.68, b.z);
+    box(g, 3.04, 0.03, 0.2, brass, b.x, 0.98, b.z);
+  }
+  const vt = at(...VIP.table);
+  box(g, 1.2, 0.36, 0.28, brass, vt.x, 0.2, vt.z);
+  box(g, 1.4, 0.05, 0.42, mat("#101014", { roughness: 0.15, metalness: 0.3 }), vt.x, 0.42, vt.z);
+  cyl(g, 0.12, 0.2, mat("#8995a7", { metalness: 0.8, roughness: 0.25 }), vt.x, 0.55, vt.z, 16);
+  cyl(g, 0.045, 0.36, mat("#294a36"), vt.x, 0.68, vt.z, 12);
+  for (const dx of [-0.4, 0.4]) {
+    cyl(g, 0.012, 0.14, mat("#c5dfeb"), vt.x + dx, 0.52, vt.z, 6);
+    cyl(g, 0.04, 0.1, mat("#eed18a", { transparent: true, opacity: 0.8 }), vt.x + dx, 0.64, vt.z, 12);
+  }
+  sign(g, "VIP", 1.1, 0.42, { color: "#ffd700", font: "800 110px Sora, sans-serif", w: 256 }, at(875, VIP.y0).x, 1.45, at(0, VIP.y0).z);
+  for (const [x, y] of [[975, 398], [975, 600]]) put(g, "pottedPlant", at(x, y).x, at(x, y).z, 0, 2.4);
+  staff("#15171f", 745, 588, Math.PI / 2); // videur du carré
+  staff("#15171f", 55, 240, Math.PI / 2); // vigile près de l'ascenseur
+
+  // Pièces d'or du jackpot : cachées, lancées depuis la machine du jackpot pendant la fête.
+  c.coins = new THREE.InstancedMesh(new THREE.CylinderGeometry(0.05, 0.05, 0.012, 14), mat("#ffd23f", { metalness: 0.85, roughness: 0.25, emissive: "#a86b00", emissiveIntensity: 0.4 }), 40);
+  c.coins.visible = false;
+  c.coins.frustumCulled = false;
+  g.add(c.coins);
+  // Par pièce : vitesse en x, en hauteur, vers la salle, puis son retard au départ.
+  const spread = [k => (k - 0.5) * 2.4, k => 2.4 + k * 2.2, k => 0.5 + k * 1.6, k => k * 0.9];
+  c.coinFlight = Float32Array.from({ length: 160 }, (_, i) => spread[i % 4](Math.random()));
+  f.tick = (dt, t, reduced) => tickCasino(c, dt, t, reduced);
+}
+
+function drawJackpot(c, casino, now) {
+  const p = c.jackpot, w = casino?.lastWinner, known = Number.isFinite(Number(casino?.jackpot));
+  const at = Number(w?.at) > 1e12 ? Number(w.at) / 1000 : Number(w?.at) || 0;
+  const line = w?.name ? `Dernier gagnant : ${w.name} · ${money(w.amount)}${at && now ? " · " + agoText(Math.max(0, now - at)) : ""}`
+    : "Trois 7 à la machine à sous remportent tout";
+  const key = `${known ? Math.round(Number(casino.jackpot)) : "?"}|${line}`;
+  if (key === p.key) return;
+  p.key = key;
+  const x = p.ctx, W = p.w, H = p.h;
+  const bg = x.createLinearGradient(0, 0, 0, H);
+  bg.addColorStop(0, "#3b0614"); bg.addColorStop(1, "#14020a");
+  x.fillStyle = bg; x.fillRect(0, 0, W, H);
+  x.textAlign = "center"; x.textBaseline = "middle";
+  x.shadowColor = "#ffb000"; x.shadowBlur = 18;
+  x.fillStyle = "#ffd76a"; x.font = "800 58px Sora, sans-serif"; x.fillText("★  JACKPOT  ★", W / 2, 52);
+  x.shadowBlur = 26; x.fillStyle = "#fff4d0"; x.font = "900 108px Sora, sans-serif";
+  x.fillText(known ? money(Math.round(Number(casino.jackpot))) : "· · ·", W / 2, 148, W - 80);
+  x.shadowBlur = 0; x.fillStyle = "#f3cf9a"; x.font = "500 32px Sora, sans-serif"; x.fillText(line, W / 2, 238, W - 60);
+  p.tex.needsUpdate = true;
+}
+
+function drawRouletteBoard(r) {
+  const p = r.board, key = r.history.join(",");
+  if (key === p.key) return;
+  p.key = key;
+  const x = p.ctx, W = p.w, H = p.h;
+  x.fillStyle = "#0b0b10"; x.fillRect(0, 0, W, H);
+  x.textAlign = "center"; x.textBaseline = "middle";
+  x.fillStyle = "#e9c46a"; x.font = "700 20px Sora, sans-serif"; x.fillText("DERNIERS NUMÉROS", W / 2, 18);
+  const [last, ...rest] = r.history;
+  if (last === undefined) { x.fillStyle = "#c9c9d1"; x.font = "600 24px Sora, sans-serif"; x.fillText("Faites vos jeux", W / 2, 80); }
+  else {
+    x.fillStyle = rouletteColor(last); x.beginPath(); x.arc(64, 80, 40, 0, Math.PI * 2); x.fill();
+    x.fillStyle = "#ffffff"; x.font = "900 44px Sora, sans-serif"; x.fillText(String(last), 64, 82);
+    rest.slice(0, 5).forEach((n, k) => {
+      x.fillStyle = rouletteColor(n); x.beginPath(); x.arc(134 + k * 26, 80, 12, 0, Math.PI * 2); x.fill();
+      x.fillStyle = "#ffffff"; x.font = "700 13px Sora, sans-serif"; x.fillText(String(n), 134 + k * 26, 81);
+    });
+  }
+  p.tex.needsUpdate = true;
+}
+
+function drawBlackjackBoard(b, hand) {
+  const p = b.board, st = String(hand?.status ?? "");
+  const title = hand ? BJ_STATUS[st] ?? st : "BLACKJACK";
+  const hidden = (hand?.dealer ?? []).includes("??");
+  const line = hand ? `Toi ${hand.playerTotal ?? "?"} · Banque ${hidden ? "?" : hand.dealerTotal ?? "?"}` : "Faites vos jeux";
+  const key = `${title}|${line}`;
+  if (key === p.key) return;
+  p.key = key;
+  const x = p.ctx, W = p.w, H = p.h;
+  x.fillStyle = "#08130d"; x.fillRect(0, 0, W, H);
+  x.strokeStyle = "#e9c46a"; x.lineWidth = 4; x.strokeRect(4, 4, W - 8, H - 8);
+  x.textAlign = "center"; x.textBaseline = "middle";
+  x.fillStyle = st === "lose" || st === "bust" ? "#ff8a8a" : "#ffd76a"; x.font = "800 50px Sora, sans-serif"; x.fillText(title, W / 2, 50, W - 30);
+  x.fillStyle = "#e8f0ea"; x.font = "600 32px Sora, sans-serif"; x.fillText(line, W / 2, 108, W - 30);
+  p.tex.needsUpdate = true;
+}
+
+// Rouleaux : vers la vue du symbole tiré ; sans animation, ils s'y placent tout de suite.
+function spinMachine(m, symbols, animate) {
+  m.reels.forEach((r, i) => {
+    const k = SLOT_SYMBOLS.indexOf(symbols?.[i]);
+    r.target = reelOffset(k >= 0 ? k : Math.floor(Math.random() * SLOT_SYMBOLS.length));
+    if (!animate) { r.pos = r.target; r.map.offset.y = r.target; }
+    r.stop = -1;
+  });
+  m.active = animate;
+  m.time = 0;
+  m.stopAt = 1.1;
+  if (animate) m.leverT = 0.6;
+}
+function tickMachine(m, dt) {
+  m.time += dt;
+  let done = true;
+  for (let i = 0; i < m.reels.length; i++) {
+    const r = m.reels[i];
+    if (r.stop < 0) {
+      r.pos += dt * 4.5;
+      if (m.time >= m.stopAt + i * 0.45) { r.from = r.pos; r.dist = mod1(r.target - r.pos) + 1; r.stop = m.time; }
+      done = false;
+    } else {
+      const k = Math.min(1, (m.time - r.stop) / 0.75);
+      r.pos = r.from + r.dist * easeOut(k);
+      if (k < 1) done = false;
+    }
+    r.map.offset.y = mod1(r.pos);
+  }
+  if (done) {
+    m.active = false;
+    const finish = m.onDone;
+    m.onDone = null;
+    finish?.();
+  }
+}
+
+// Roulette : le rotor ralentit, la bille tourne à l'envers puis tombe dans la case du numéro tiré et suit le rotor.
+function spinRoulette(r, number, animate) {
+  r.number = number;
+  const target = (ROULETTE_WHEEL.indexOf(number) + 0.5) * POCKET;
+  const show = () => { r.history.unshift(number); r.history.length = Math.min(r.history.length, 6); drawRouletteBoard(r); };
+  if (!animate) { r.spin = null; show(); return; }
+  const T = 7, Tb = 5.4, A = Math.PI * 2 * 1.6, a0 = r.alpha, b0 = Math.atan2(r.ball.position.z, r.ball.position.x);
+  const landing = target - (a0 + A * easeOut(Tb / T)) - b0;
+  const B = landing - Math.PI * 2 * Math.floor(landing / (Math.PI * 2)) - Math.PI * 2 * 5;
+  r.spin = { t: 0, T, Tb, a0, A, b0, B, target, done: show };
+}
+function tickRoulette(r, dt, reduced) {
+  const s = r.spin;
+  let b, rad = REST_R, y = 0.917;
+  if (!s) {
+    if (!reduced) r.alpha += dt * 0.35;
+    b = (ROULETTE_WHEEL.indexOf(r.number) + 0.5) * POCKET - r.alpha;
+  } else {
+    s.t += dt;
+    const k = Math.min(1, s.t / s.T), kb = Math.min(1, s.t / s.Tb);
+    r.alpha = s.a0 + s.A * easeOut(k);
+    if (kb < 1) {
+      b = s.b0 + s.B * easeOut(kb);
+      rad = TRACK_R; y = 0.922;
+      if (kb > 0.72) {
+        const u = (kb - 0.72) / 0.28;
+        rad = TRACK_R + (REST_R - TRACK_R) * u * u * (3 - 2 * u);
+        y = 0.917 + Math.abs(Math.sin(u * Math.PI * 3)) * (1 - u) * 0.035;
+      }
+    } else b = s.target - r.alpha;
+    if (k >= 1) { r.spin = null; s.done(); }
+  }
+  r.rotor.rotation.y = r.alpha;
+  r.ball.position.set(Math.cos(b) * rad, y, Math.sin(b) * rad);
+}
+
+// Blackjack : les cartes déjà posées restent (une carte tirée s'ajoute, la carte cachée de la banque se retourne) ;
+// une nouvelle main efface la table. Chaque carte part du sabot.
+function showBlackjack(c, hand, animate) {
+  const b = c.blackjack;
+  const player = (Array.isArray(hand.player) ? hand.player : []).slice(0, 6).map(String);
+  const dealer = (Array.isArray(hand.dealer) ? hand.dealer : []).slice(0, 6).map(String);
+  const follows = (shown, next) => shown.length <= next.length && shown.every((card, i) => card === next[i] || card === "??");
+  if (b.final || !follows(b.player, player) || !follows(b.dealer, dealer)) {
+    for (const m of b.cards) m.visible = false;
+    b.player = []; b.dealer = [];
+  }
+  b.final = hand.status !== "playing";
+  const anim = [];
+  let delay = 0;
+  const lay = (shown, next, base, z) => next.forEach((label, i) => {
+    if (shown[i] === label) return;
+    const mesh = b.cards[base + i], tex = cardTexture(label), to = [-0.17 + i * 0.075, 0.816 + i * 0.002, z];
+    if (shown[i] === "??") { anim.push({ mesh, tex, to, flip: true, t: -delay }); delay += 0.25; return; }
+    if (!animate) { mesh.material.map = tex; mesh.position.set(...to); mesh.rotation.y = 0; mesh.scale.x = 1; mesh.visible = true; return; }
+    mesh.material.map = tex; mesh.visible = false;
+    anim.push({ mesh, tex, to, flip: false, t: -delay }); delay += 0.3;
+  });
+  lay(b.player, player, 0, 0.63);
+  lay(b.dealer, dealer, 6, 0.25);
+  b.player = player; b.dealer = dealer;
+  if (!animate) for (const a of anim) { a.mesh.material.map = a.tex; a.mesh.scale.x = 1; }
+  b.anim = animate ? anim : [];
+  drawBlackjackBoard(b, hand);
+}
+function tickCards(b, dt) {
+  for (const a of b.anim) {
+    if (a.done) continue;
+    a.t += dt;
+    const k = Math.min(1, a.t / 0.35), m = a.mesh;
+    if (k <= 0) continue;
+    if (a.flip) {
+      m.scale.x = Math.max(0.001, Math.abs(Math.cos(k * Math.PI)));
+      if (k >= 0.5) m.material.map = a.tex;
+    } else {
+      const e = easeOut(k);
+      m.visible = true;
+      m.position.set(BJ_SHOE.x + (a.to[0] - BJ_SHOE.x) * e, a.to[1] + Math.sin(k * Math.PI) * 0.1, BJ_SHOE.z + (a.to[2] - BJ_SHOE.z) * e);
+      m.rotation.y = (1 - e) * 1.2;
+    }
+    if (k >= 1) { a.done = true; m.scale.x = 1; }
+  }
+}
+
+function tickCasino(c, dt, t, reduced) {
+  // Une machine dont la place est occupée par un agent installé tourne de temps en temps (places 0 à 11 = machines).
+  for (const m of c.machines) m.busy = false;
+  if (!reduced) for (const a of agents.values()) {
+    const u = a.userData;
+    if (u.floor === "casino" && u.place === "casino" && !u.path.length && u.index < c.machines.length) c.machines[u.index].busy = true;
+  }
+  for (const m of c.machines) {
+    if (m.busy && !m.active && (m.wait -= dt) <= 0) { spinMachine(m, null, true); m.wait = 3 + Math.random() * 4; }
+    if (m.active) tickMachine(m, dt);
+    if (m.leverT > 0) { m.leverT = Math.max(0, m.leverT - dt); if (m.lever) m.lever.rotation.x = Math.sin((1 - m.leverT / 0.6) * Math.PI) * 0.9; }
+    if (m.flash > 0) { m.flash = Math.max(0, m.flash - dt); m.topper.emissiveIntensity = m.flash > 0 && Math.sin(t * 24) > 0 ? 2.4 : 0.8; }
+  }
+  tickRoulette(c.roulette, dt, reduced);
+  tickCards(c.blackjack, dt);
+  const party = c.party > 0;
+  if (party) { c.party = Math.max(0, c.party - dt); c.partyTime += dt; }
+  if (reduced) return;
+  // Néons, ampoules du jackpot et lustre : lents d'ordinaire, emballés pendant la fête.
+  c.hue = mod1(c.hue + dt * (party ? 0.9 : 0.05));
+  for (let k = 0; k < c.neons.length; k++) c.neons[k].color.setHSL(mod1(c.hue + k * 0.045), 0.95, party && Math.sin(t * 16 + k) > 0 ? 0.78 : 0.55);
+  const step = Math.floor(t * (party ? 16 : 4));
+  if (step !== c.bulbStep) {
+    c.bulbStep = step;
+    for (let i = 0; i < c.bulbs.count; i++) c.bulbs.setColorAt(i, (i + step) % 3 ? BULB_DIM : BULB_ON);
+    c.bulbs.instanceColor.needsUpdate = true;
+  }
+  c.lustre.rotation.y += dt * (party ? 1.4 : 0.06);
+  if (c.beacon) c.beacon.color.set(party && Math.sin(t * 20) > 0 ? "#fff3b0" : "#ff8a00");
+  // Pièces : lancées en gerbe, retombent et restent au sol jusqu'à la fin de la fête.
+  c.coins.visible = party;
+  if (party) {
+    const o = c.machines[CASINO_FEATURED].group.position, d = c.dummy, v = c.coinFlight;
+    for (let i = 0; i < c.coins.count; i++) {
+      const vx = v[i * 4], vy = v[i * 4 + 1], vz = v[i * 4 + 2], tt = c.partyTime - v[i * 4 + 3];
+      const land = (vy + Math.sqrt(vy * vy + 2 * 9.8 * 2.15)) / 9.8, te = Math.min(Math.max(tt, 0), land);
+      d.position.set(o.x + vx * te, Math.max(0.08, 2.2 + vy * te - 4.9 * te * te), o.z + 0.2 + vz * te);
+      d.rotation.set(te * 9 + i, te * 5, 0);
+      d.scale.setScalar(tt < 0 ? 0.001 : 1);
+      d.updateMatrix();
+      c.coins.setMatrixAt(i, d.matrix);
+    }
+    c.coins.instanceMatrix.needsUpdate = true;
+  } else c.partyTime = 0;
+}
+
+// ---------- Tennis ----------
+// Court en terre battue devant (filet en x = 500), chaise d'arbitre côté allée, tribunes à trois rangs au fond,
+// tableau de score sur la vitre. Deux joueurs du club échangent sans fin ; un set joué au dialogue est rejoué jeu par jeu.
+function buildTennis(f, g, { at, tag, staff, back }) {
+  const C = TENNIS_COURT, mid = (C.y0 + C.y1) / 2;
+  const slab = (x0, y0, x1, y1, m, top) => { const a = P(x0, y0), b = P(x1, y1); return box(g, b.x - a.x, 0.02, b.z - a.z, m, (a.x + b.x) / 2, top - 0.01, (a.z + b.z) / 2); };
+  // Terre battue : un grain dessiné une fois ; l'aire de jeu est un ton plus clair que les dégagements.
+  const clay = canvasTexture(128, 128, x => {
+    x.fillStyle = "#ffffff"; x.fillRect(0, 0, 128, 128);
+    for (let k = 0; k < 1400; k++) { const v = 200 + Math.random() * 55; x.fillStyle = `rgb(${v},${v * 0.9 | 0},${v * 0.84 | 0})`; x.fillRect(Math.random() * 128, Math.random() * 128, 2, 2); }
+  });
+  clay.wrapS = clay.wrapT = THREE.RepeatWrapping;
+  clay.repeat.set(8, 3);
+  slab(20, 285, 980, 338, mat("#34443b"), 0.066);
+  slab(125, 345, 875, 608, new THREE.MeshStandardMaterial({ map: clay, color: "#b4552e", roughness: 0.95 }), 0.07);
+  slab(C.x0, C.y0, C.x1, C.y1, new THREE.MeshStandardMaterial({ map: clay, color: "#d26d3e", roughness: 0.95 }), 0.074);
+  const white = mat("#f4efe6", { roughness: 0.6 }), lw = 2.5;
+  const line = (x0, y0, x1, y1) => slab(x0 - (x0 === x1) * lw / 2, y0 - (y0 === y1) * lw / 2, x1 + (x0 === x1) * lw / 2, y1 + (y0 === y1) * lw / 2, white, 0.08);
+  const s0 = C.y0 + 26, s1 = C.y1 - 26;
+  for (const y of [C.y0, C.y1, s0, s1]) line(C.x0, y, C.x1, y);
+  for (const x of [C.x0, C.x1]) line(x, C.y0, x, C.y1);
+  for (const x of [340, 660]) line(x, s0, x, s1);
+  line(340, mid, 660, mid);
+  line(C.x0, mid, C.x0 + 8, mid);
+  line(C.x1 - 8, mid, C.x1, mid);
+  // Filet : maille transparente, bande blanche, sangle centrale et poteaux.
+  const n = at(500, mid), netLen = (C.y1 - C.y0 + 24) * S;
+  const net = new THREE.Mesh(new THREE.PlaneGeometry(netLen, 0.82), new THREE.MeshBasicMaterial({ map: netTexture(netLen / 0.6, 1.4), color: "#dfe5e1", transparent: true, depthWrite: false, side: THREE.DoubleSide }));
+  net.position.set(n.x, 0.5, n.z);
+  net.rotation.y = Math.PI / 2;
+  g.add(net);
+  box(g, 0.035, 0.06, netLen, white, n.x, 0.92, n.z);
+  box(g, 0.03, 0.82, 0.05, white, n.x, 0.5, n.z);
+  for (const y of [C.y0 - 12, C.y1 + 12]) cyl(g, 0.045, 1.0, mat("#1d3b2a", { metalness: 0.5, roughness: 0.4 }), at(500, y).x, 0.5, at(500, y).z, 10);
+  // Chaise d'arbitre au filet, côté allée (l'échelle au dos) ; l'arbitre y est assis.
+  const u = at(500, 340), green = mat("#1f4d36", { roughness: 0.6 }), steel = mat("#dfe5e1", { metalness: 0.5, roughness: 0.35 });
+  for (const dx of [-0.28, 0.28]) for (const dz of [-0.24, 0.24]) cyl(g, 0.03, 1.5, steel, u.x + dx, 0.75, u.z + dz, 8);
+  box(g, 0.7, 0.06, 0.6, green, u.x, 1.5, u.z);
+  box(g, 0.52, 0.08, 0.46, green, u.x, 1.58, u.z);
+  box(g, 0.52, 0.55, 0.06, green, u.x, 1.9, u.z - 0.24);
+  for (const dx of [-0.27, 0.27]) box(g, 0.05, 0.22, 0.46, green, u.x + dx, 1.73, u.z);
+  box(g, 0.6, 0.04, 0.1, steel, u.x, 1.05, u.z + 0.32);
+  for (let k = 0; k < 5; k++) box(g, 0.5, 0.03, 0.03, steel, u.x, 0.25 + k * 0.28, u.z - 0.27);
+  staff("#f4efe6", 500, 350, 0, "Sitting", 1.38);
+  // Tribunes : deux marches (les rangs 2 et 3), un banc par section et par rang, sièges violet et vert, nez de marche lumineux.
+  const stepMat = mat("#2c5a46", { roughness: 0.7 }), nose = glow("#7ee0b0", 0.6), benchMat = mat("#273038", { roughness: 0.5 });
+  const seatMats = [mat("#5b2a86", { roughness: 0.5 }), mat("#1f6b3a", { roughness: 0.5 }), mat("#5b2a86", { roughness: 0.5 })];
+  TENNIS_ROWS.forEach(({ bench: by, floor }, k) => {
+    if (floor) {
+      const a = at(500, by - 15), b = at(500, by + 35);
+      box(g, 14.2, floor, b.z - a.z, stepMat, 0, floor / 2, (a.z + b.z) / 2);
+      box(g, 14.2, 0.025, 0.03, nose, 0, floor - 0.005, b.z + 0.005);
+    }
+    for (const [x0, x1] of [[185, 465], [535, 815]]) box(g, (x1 - x0) * S, 0.42, 0.44, benchMat, at((x0 + x1) / 2, by).x, floor + 0.21, at(0, by).z);
+    for (const sx of TENNIS_SEATS) {
+      const s = at(sx, by);
+      box(g, 0.56, 0.05, 0.42, seatMats[k], s.x, floor + 0.445, s.z);
+      box(g, 0.56, 0.42, 0.05, seatMats[k], s.x, floor + 0.68, s.z - 0.21);
+    }
+  });
+  box(g, 14.2, 1.8, 0.1, mat("#173328"), 0, 0.9, at(0, 117).z);
+  for (const x of [325, 675]) {
+    sign(g, "PENTHOUSE OPEN", 3.2, 0.3, { color: "#f1e3b8", font: "800 70px Sora, sans-serif", blur: 6, w: 1024, h: 96 }, at(x, 0).x, 0.18, at(0, 225).z + 0.01);
+    sign(g, "COURT CENTRAL", 3.2, 0.3, { color: "#7ee0b0", font: "800 70px Sora, sans-serif", blur: 6, w: 1024, h: 96 }, at(x, 0).x, 0.53, at(0, 175).z + 0.01);
+  }
+  // Tableau de score sur la vitre, au-dessus des tribunes.
+  box(g, 5.5, 1.75, 0.1, mat("#0d1a14", { metalness: 0.4 }), 0, 3.0, back + 0.02);
+  const board = canvasPanel(g, 5.2, 1.5, 1024, 296, 0, 3.0, back + 0.08);
+  // Projecteurs sur mâts, tournés vers le court, et une lumière blanche au-dessus du jeu.
+  const poleMat = mat("#3a4a42", { metalness: 0.6, roughness: 0.35 }), headMat = mat("#1e2622");
+  for (const [x, y] of [[115, 612], [885, 612], [150, 100], [850, 100]]) {
+    const p = at(x, y), head = new THREE.Group();
+    cyl(g, 0.07, 4.2, poleMat, p.x, 2.1, p.z, 8);
+    head.position.set(p.x, 4.25, p.z);
+    head.rotation.y = Math.atan2(-p.x, at(0, mid).z - p.z);
+    g.add(head);
+    box(head, 0.9, 0.42, 0.16, headMat, 0, 0, 0);
+    box(head, 0.82, 0.34, 0.02, glow("#f3f6ff", 2.2), 0, 0, 0.09);
+  }
+  const lamp = new THREE.PointLight("#fff4e0", 9, 20, 1.4);
+  lamp.position.set(0, 4.2, at(0, mid).z);
+  g.add(lamp);
+  // Une rangée de plantes de chaque côté du court, deux au fond.
+  for (const y of [380, 450, 520, 590]) put(g, "pottedPlant", at(45, y).x, at(45, y).z, 0, 2.4);
+  for (const y of [360, 430, 500, 570]) put(g, "pottedPlant", at(955, y).x, at(955, y).z, 0, 2.4);
+  for (const x of [60, 940]) put(g, "pottedPlant", at(x, 60).x, at(x, 60).z, 0, 2.6);
+  f.roomTags = [tag("Court central", 125, 345), tag("Tribunes", 150, 125)];
+  // Les deux joueurs du club, la balle et son ombre.
+  const players = TENNIS_NPCS.map(([x, y], k) => {
+    const p = staff(k ? "#2fb898" : "#e0814f", x, y, k ? -Math.PI / 2 : Math.PI / 2);
+    p.userData.court = { X: x, Y: y, goal: y, swing: 0, cheer: "Idle", cheerT: 0 };
+    return p;
+  });
+  const ball = new THREE.Mesh(ballGeometry, glow("#d8f53a", 0.9));
+  ball.scale.setScalar(0.05);
+  g.add(ball);
+  const shadow = new THREE.Mesh(discGeometry, new THREE.MeshBasicMaterial({ color: "#000000", transparent: true, opacity: 0.3, depthWrite: false }));
+  shadow.scale.set(0.06, 1, 0.06);
+  shadow.position.y = 0.083;
+  g.add(shadow);
+  playTarget(f, g, 15, 0.4, 5.3, 0, 0.2, at(0, 476).z, "sport");
+  f.tennis = { players, ball, shadow, board, shot: { t: 0, T: 1, hitter: 0, winner: false, swung: false }, pause: 0.8, serve: 0, left: -1, match: null, last: null };
+  drawTennisBoard(f.tennis);
+  f.tick = (dt, t, reduced) => tickTennis(f.tennis, dt, reduced);
+}
+
+// Un coup : du frappeur au rebond chez l'adversaire, puis jusqu'à la raquette de celui-ci (ou au fond du court pour un coup gagnant).
+function tennisShot(tn, hitter, winner) {
+  const s = tn.shot, dir = hitter ? -1 : 1, hp = tn.players[hitter].userData.court, rp = tn.players[1 - hitter].userData.court;
+  s.hitter = hitter; s.winner = winner; s.t = 0; s.T = tn.match ? 0.95 : 1.3; s.swung = false;
+  s.ax = hp.X + dir * 18; s.ay = hp.Y + 6;
+  s.bx = 500 + dir * (winner ? 200 + Math.random() * 60 : 70 + Math.random() * 190);
+  s.by = winner ? (rp.Y > 485 ? 410 + Math.random() * 40 : 520 + Math.random() * 40) : 405 + Math.random() * 160;
+  s.cy = Math.min(575, Math.max(395, s.by + (Math.random() - 0.5) * 40));
+  s.cx = winner ? 500 + dir * 370 : rp.X - dir * 18;
+  s.ch = winner ? 0.1 : 0.85;
+  rp.goal = winner ? rp.Y + (s.cy - rp.Y) * 0.35 : s.cy - 6;
+  hp.goal = 485 + (Math.random() - 0.5) * 50;
+}
+// Un point : pendant un set rejoué, le gagnant du jeu sert et finit par le coup gagnant (1 ou 3 coups) ; sinon échange libre.
+function tennisPoint(tn) {
+  const m = tn.match;
+  let server;
+  if (m && m.k < m.games.length) { server = m.games[m.k] === "toi" ? 0 : 1; tn.left = Math.random() < 0.35 ? 1 : 3; }
+  else { server = tn.serve = 1 - tn.serve; tn.left = -1; }
+  tennisShot(tn, server, tn.left === 1);
+  tn.shot.t = -0.35; // le service part au milieu du geste
+  tn.players[server].userData.court.swing = 0.83;
+}
+function tennisPointOver(tn) {
+  const m = tn.match;
+  tn.pause = 1.2;
+  for (const p of tn.players) p.userData.court.goal = 485;
+  if (!m || m.done || m.k >= m.games.length) return;
+  if (m.games[m.k] === "toi") m.toi++; else m.pro++;
+  m.k++;
+  if (m.k >= m.games.length) {
+    m.done = true;
+    tn.pause = 4.5;
+    tn.players.forEach((p, i) => Object.assign(p.userData.court, { cheer: (i === 0) === m.won ? "Yes" : "No", cheerT: 2.6 }));
+  }
+  drawTennisBoard(tn);
+}
+function startTennisMatch(tn, r, animate) {
+  const games = (Array.isArray(r.games) ? r.games : []).filter(x => x === "toi" || x === "pro").slice(0, 13);
+  const score = Array.isArray(r.score) ? [Number(r.score[0]) || 0, Number(r.score[1]) || 0]
+    : [games.filter(x => x === "toi").length, games.filter(x => x === "pro").length];
+  const won = typeof r.won === "boolean" ? r.won : score[0] > score[1];
+  if (!animate || !games.length) { tn.match = null; tn.last = { score, won, games }; drawTennisBoard(tn); return; }
+  tn.match = { games, k: 0, toi: 0, pro: 0, score, won, done: false };
+  tn.pause = 0.6;
+  for (const p of tn.players) Object.assign(p.userData.court, { goal: 485, cheerT: 0 });
+  drawTennisBoard(tn);
+}
+function tickTennis(tn, dt, reduced) {
+  tn.ball.visible = tn.shadow.visible = !reduced;
+  if (reduced) { for (const p of tn.players) play(p, "Idle"); return; }
+  const s = tn.shot;
+  if (tn.pause > 0) {
+    tn.pause -= dt;
+    if (tn.pause <= 0) {
+      if (tn.match?.done) { tn.last = { score: tn.match.score, won: tn.match.won, games: tn.match.games }; tn.match = null; drawTennisBoard(tn); }
+      tennisPoint(tn);
+    }
+  } else {
+    s.t += dt;
+    const k = Math.max(0, s.t) / s.T, kb = 0.62;
+    let X, Y, H;
+    if (k < kb) {
+      const v = k / kb;
+      X = s.ax + (s.bx - s.ax) * v; Y = s.ay + (s.by - s.ay) * v; H = 0.85 * (1 - v) + 0.09 * v + 4.2 * v * (1 - v);
+    } else {
+      const v = Math.min(1, (k - kb) / (1 - kb));
+      X = s.bx + (s.cx - s.bx) * v; Y = s.by + (s.cy - s.by) * v; H = 0.09 * (1 - v) + s.ch * v + (s.winner ? 1.2 : 2.2) * v * (1 - v);
+    }
+    tn.ball.position.set(X * S - 10, Math.max(0.09, H), Y * S - 6.2);
+    tn.shadow.position.set(X * S - 10, 0.083, Y * S - 6.2);
+    if (!s.winner && !s.swung && s.T - s.t < 0.4) { s.swung = true; tn.players[1 - s.hitter].userData.court.swing = 0.83; }
+    if (s.t >= s.T) {
+      if (s.winner) tennisPointOver(tn);
+      else {
+        if (tn.left > 0) tn.left--;
+        tennisShot(tn, 1 - s.hitter, tn.left === 1 || (tn.left < 0 && Math.random() < 0.12));
+      }
+    }
+  }
+  // Les joueurs suivent la balle le long de leur ligne de fond : coup au contact, course, joie ou dépit à la fin du set.
+  for (const p of tn.players) {
+    const d = p.userData.court, gap = d.goal - d.Y;
+    d.Y += Math.sign(gap) * Math.min(Math.abs(gap), dt * 160);
+    p.position.z = d.Y * S - 6.2;
+    if (d.swing > 0) d.swing -= dt;
+    if (d.cheerT > 0) d.cheerT -= dt;
+    play(p, d.cheerT > 0 ? d.cheer : d.swing > 0 ? "Punch" : Math.abs(gap) > 8 ? "Running" : "Idle");
+  }
+}
+function drawTennisBoard(tn) {
+  const p = tn.board, m = tn.match, last = tn.last;
+  const toi = m ? m.toi : last ? last.score[0] : 0, pro = m ? m.pro : last ? last.score[1] : 0;
+  const games = m ? m.games.slice(0, m.k) : last?.games ?? [];
+  const status = m ? (m.done ? (m.won ? "VICTOIRE !" : "DÉFAITE") : `SET EN COURS · JEU ${Math.min(m.k + 1, m.games.length)}`)
+    : last ? `DERNIER SET · ${last.won ? "VICTOIRE" : "DÉFAITE"}` : "ENTRAÎNEMENT";
+  const key = `${toi}|${pro}|${status}|${games.join("")}`;
+  if (key === p.key) return;
+  p.key = key;
+  const x = p.ctx, W = p.w, H = p.h;
+  x.fillStyle = "#0b241a"; x.fillRect(0, 0, W, H);
+  x.fillStyle = "#13392a"; x.fillRect(0, 0, W, 70);
+  x.textBaseline = "middle";
+  x.font = "700 38px Sora, sans-serif"; x.textAlign = "left"; x.fillStyle = "#cfe8d6"; x.fillText("COURT CENTRAL", 34, 36);
+  x.textAlign = "right"; x.fillStyle = m?.done && !m.won ? "#ff9a9a" : "#ffd84a"; x.fillText(status, W - 34, 36, 600);
+  [["TOI", toi, "#e0814f", "toi"], ["PRO", pro, "#2fb898", "pro"]].forEach(([name, value, color, id], i) => {
+    const y = 125 + i * 100;
+    x.fillStyle = color; x.fillRect(34, y - 32, 14, 64);
+    x.textAlign = "left"; x.fillStyle = "#f4f7f5"; x.font = "800 62px Sora, sans-serif"; x.fillText(name, 68, y + 2);
+    games.forEach((w, j) => { x.fillStyle = w === id ? color : "#1c3a2c"; x.fillRect(250 + j * 46, y - 17, 36, 34); });
+    x.textAlign = "right"; x.fillStyle = "#ffd84a"; x.font = "900 86px Sora, sans-serif"; x.fillText(String(value), W - 40, y + 4);
+  });
+  x.fillStyle = "#1f4d36"; x.fillRect(34, 173, W - 68, 3);
+  p.tex.needsUpdate = true;
+}
+
+// ---------- Golf ----------
+// Putting green devant (trois trous), practice et son filet au fond à gauche, étang au centre, club-house au fond à droite,
+// bunker, voiturette et bancs. Le golfeur du club putte en boucle sur le trou 2 ; un putt joué au dialogue y est rejoué.
+const PUTT_DIST = { court: 50, moyen: 125, long: 250 };
+const PUTT_NAMES = { court: "Putt de 1 m", moyen: "Putt de 4 m", long: "Putt de 12 m" };
+const PUTT_MISS = { "trop court": [-18, 0], "trop long": [30, 0], "à gauche": [16, -15], "à droite": [16, 15] };
+function buildGolf(f, g, { at, tag, staff, back }) {
+  const slab = (x0, y0, x1, y1, m, top) => { const a = P(x0, y0), b = P(x1, y1); return box(g, b.x - a.x, 0.02, b.z - a.z, m, (a.x + b.x) / 2, top - 0.01, (a.z + b.z) / 2); };
+  const ellipse = (cx, cy, rx, ry, m, top) => {
+    const e = new THREE.Mesh(discGeometry, m);
+    e.position.copy(at(cx, cy)); e.position.y = top; e.scale.set(rx * S, 1, ry * S); g.add(e); return e;
+  };
+  // Gazon tondu en bandes (une texture par tonte, dessinée une fois).
+  const grass = (base, stripe, rx, ry) => {
+    const t = canvasTexture(256, 256, x => {
+      for (let k = 0; k < 8; k++) { x.fillStyle = k % 2 ? base : stripe; x.fillRect(k * 32, 0, 32, 256); }
+      for (let k = 0; k < 1200; k++) { x.fillStyle = `rgba(10,40,15,${(0.05 + Math.random() * 0.1).toFixed(2)})`; x.fillRect(Math.random() * 256, Math.random() * 256, 2, 2); }
+    });
+    t.wrapS = t.wrapT = THREE.RepeatWrapping;
+    t.repeat.set(rx, ry);
+    return new THREE.MeshStandardMaterial({ map: t, roughness: 0.95 });
+  };
+  const G = GOLF_GREEN, B = GOLF_BUNKER, W = GOLF_POND;
+  slab(20, 20, 980, 600, grass("#2f6136", "#356a3c", 3, 2), 0.062);
+  slab(20, 288, 980, 332, mat("#b9ad8f", { roughness: 1 }), 0.066);
+  ellipse(G.cx, G.cy, G.rx + 14, G.ry + 11, mat("#3f8a49", { roughness: 0.9 }), 0.07);
+  ellipse(G.cx, G.cy, G.rx, G.ry, grass("#5aac63", "#4f9f58", 2, 2), 0.074);
+  // Légers reliefs dans le rough, hors des chemins.
+  for (const [x, y, r] of [[55, 170, 45], [690, 598, 24], [292, 604, 16]]) {
+    const mound = new THREE.Mesh(ballGeometry, mat("#3a7341", { roughness: 0.95 }));
+    mound.position.copy(at(x, y)); mound.position.y = 0.04; mound.scale.set(r * S, 0.16, r * S * 0.8); g.add(mound);
+  }
+  // Trous : coupe, bordure blanche, mât et drapeau numéroté qui flotte (une géométrie partagée, ondulée à chaque image).
+  const flagGeo = new THREE.PlaneGeometry(0.44, 0.28, 10, 1).translate(0.22, 0, 0);
+  const stick = mat("#f4f1e8", { roughness: 0.4 });
+  GOLF_HOLES.forEach(([hx, hy], k) => {
+    const p = at(hx, hy);
+    ellipse(hx, hy, 3.6, 3.6, mat("#0a0c0a"), 0.077);
+    const lipRing = new THREE.Mesh(new THREE.RingGeometry(0.072, 0.086, 24).rotateX(-Math.PI / 2), mat("#e9ecef"));
+    lipRing.position.set(p.x, 0.0775, p.z); g.add(lipRing);
+    const flagMat = new THREE.MeshBasicMaterial({ side: THREE.DoubleSide, map: canvasTexture(128, 82, (x, w, h) => {
+      x.fillStyle = ["#e63946", "#ffd23f", "#4cc9f0"][k]; x.fillRect(0, 0, w, h);
+      x.fillStyle = "#14213d"; x.font = "900 60px Sora, sans-serif"; x.textAlign = "center"; x.textBaseline = "middle"; x.fillText(String(k + 1), w / 2, h / 2 + 3);
+    }) });
+    if (k === 1) {
+      // Trou des putts joués : le drapeau est couché à côté, comme quand on putte.
+      cyl(g, 0.012, 1.7, stick, p.x + 0.2, 0.09, p.z + 0.45, 6).rotation.z = Math.PI / 2;
+      const laid = new THREE.Mesh(new THREE.PlaneGeometry(0.44, 0.28).rotateX(-Math.PI / 2), flagMat);
+      laid.position.set(p.x + 1.27, 0.082, p.z + 0.31); g.add(laid);
+      return;
+    }
+    cyl(g, 0.012, 1.7, stick, p.x, 0.92, p.z, 6);
+    const flag = new THREE.Mesh(flagGeo, flagMat);
+    flag.position.set(p.x, 1.62, p.z); flag.rotation.y = -0.5; g.add(flag);
+  });
+  // Bunker : sable ratissé, lèvre d'herbe et râteau.
+  const sand = canvasTexture(128, 128, x => {
+    x.fillStyle = "#e6d3a0"; x.fillRect(0, 0, 128, 128);
+    for (let k = 0; k < 900; k++) { x.fillStyle = Math.random() < 0.5 ? "#d4bf86" : "#f2e3b8"; x.fillRect(Math.random() * 128, Math.random() * 128, 2, 2); }
+    x.strokeStyle = "rgba(150,120,70,0.35)"; x.lineWidth = 2;
+    for (let k = 8; k < 128; k += 10) { x.beginPath(); x.moveTo(0, k); x.bezierCurveTo(40, k - 6, 80, k + 6, 128, k); x.stroke(); }
+  });
+  ellipse(B.cx, B.cy, B.rx + 8, B.ry + 7, mat("#3a7341"), 0.07);
+  ellipse(B.cx, B.cy, B.rx, B.ry, new THREE.MeshStandardMaterial({ map: sand, roughness: 1 }), 0.073);
+  const rake = at(B.cx + 55, B.cy + 22), wood = mat("#8a6a45", { roughness: 0.7 });
+  cyl(g, 0.014, 1.3, wood, rake.x, 0.1, rake.z, 6).rotation.z = Math.PI / 2;
+  box(g, 0.06, 0.04, 0.42, mat("#2b2f33"), rake.x + 0.65, 0.1, rake.z);
+  // Étang : margelle de pierre, eau qui miroite, nénuphars, roseaux, ronds dans l'eau et un canard.
+  ellipse(W.cx, W.cy, W.rx + 12, W.ry + 10, mat("#6f726b", { roughness: 0.9 }), 0.068);
+  const water = new THREE.MeshStandardMaterial({ color: "#1f6a8f", roughness: 0.12, metalness: 0.3, emissive: "#0b3a55", emissiveIntensity: 0.6 });
+  ellipse(W.cx, W.cy, W.rx, W.ry, water, 0.072);
+  for (let k = 0; k < 12; k++) {
+    const a = k / 12 * Math.PI * 2, stone = new THREE.Mesh(ballGeometry, mat(k % 2 ? "#8a8d86" : "#a3a69e", { roughness: 0.9 }));
+    stone.position.copy(at(W.cx + Math.cos(a) * (W.rx + 9), W.cy + Math.sin(a) * (W.ry + 8))); stone.position.y = 0.07;
+    stone.scale.set(0.16, 0.08, 0.13); g.add(stone);
+  }
+  for (const [dx, dy] of [[-40, -15], [-55, 12], [30, 20], [50, -18]]) {
+    ellipse(W.cx + dx, W.cy + dy, 7, 6, mat("#3f8a49"), 0.076);
+    if (dx < 0) { const bloom = new THREE.Mesh(ballGeometry, glow("#ff9ec4", 0.4)); bloom.scale.setScalar(0.04); bloom.position.copy(at(W.cx + dx + 2, W.cy + dy)); bloom.position.y = 0.1; g.add(bloom); }
+  }
+  for (let k = 0; k < 9; k++) {
+    const a = Math.PI * (1.1 + k * 0.1), r = at(W.cx + Math.cos(a) * (W.rx - 6), W.cy + Math.sin(a) * (W.ry - 5));
+    cyl(g, 0.012, 0.5 + (k % 3) * 0.15, mat("#4c7a3a"), r.x, 0.3, r.z, 5);
+  }
+  const rippleGeo = new THREE.RingGeometry(0.92, 1, 40).rotateX(-Math.PI / 2);
+  const ripples = [[560, 190, 0], [625, 215, 0.5]].map(([x, y, phase]) => {
+    const ring = new THREE.Mesh(rippleGeo, new THREE.MeshBasicMaterial({ color: "#cfe9f5", transparent: true, opacity: 0, depthWrite: false }));
+    ring.position.copy(at(x, y)); ring.position.y = 0.077; ring.userData.phase = phase; g.add(ring); return ring;
+  });
+  const duck = new THREE.Group(), duckYellow = mat("#ffd23f", { roughness: 0.6 });
+  const duckPart = (sx, sy, sz, m, x, y, z) => { const o = new THREE.Mesh(ballGeometry, m); o.scale.set(sx, sy, sz); o.position.set(x, y, z); duck.add(o); };
+  duckPart(0.12, 0.08, 0.17, duckYellow, 0, 0.05, 0);
+  duckPart(0.07, 0.07, 0.07, duckYellow, 0, 0.15, 0.1);
+  box(duck, 0.05, 0.02, 0.07, mat("#ff8a00"), 0, 0.14, 0.18);
+  g.add(duck);
+  // Practice : cinq tapis face à un grand filet, seaux de balles ; le pro du club frappe au dernier tapis.
+  const postMat = mat("#3d4a42", { metalness: 0.5, roughness: 0.4 });
+  for (const x of [90, 290, 490]) cyl(g, 0.05, 3.0, postMat, at(x, 30).x, 1.5, at(x, 30).z, 8);
+  const pn = at(290, 30);
+  const practiceNet = new THREE.Mesh(new THREE.PlaneGeometry(8, 2.9), new THREE.MeshBasicMaterial({ map: netTexture(14, 5), color: "#d9e2dc", transparent: true, depthWrite: false, side: THREE.DoubleSide }));
+  practiceNet.position.set(pn.x, 1.5, pn.z + 0.02);
+  g.add(practiceNet);
+  box(g, 8.0, 0.04, 0.04, postMat, pn.x, 2.98, pn.z);
+  const target = new THREE.Mesh(new THREE.RingGeometry(0.28, 0.36, 32), glow("#ffd23f", 0.8));
+  target.position.set(pn.x + 1.6, 1.6, pn.z + 0.05); g.add(target);
+  sign(g, "PRACTICE", 2.2, 0.45, { color: "#f1e3b8", font: "800 80px Sora, sans-serif", blur: 8 }, pn.x - 2.2, 2.6, pn.z + 0.06);
+  for (const x of GOLF_MATS) {
+    const m = at(x, 92);
+    box(g, 1.14, 0.025, 1.44, mat("#1b2a20"), m.x, 0.07, m.z);
+    box(g, 1.1, 0.03, 1.4, mat("#43c260", { roughness: 1 }), m.x, 0.08, m.z);
+    cyl(g, 0.012, 0.05, stick, m.x, 0.11, at(0, 86).z, 6);
+    cyl(g, 0.12, 0.26, mat("#c8452c", { roughness: 0.5 }), m.x + 0.42, 0.22, m.z + 0.5, 12);
+    for (let b = 0; b < 3; b++) { const ball = new THREE.Mesh(ballGeometry, stick); ball.scale.setScalar(0.035); ball.position.set(m.x + 0.38 + b * 0.04, 0.37, m.z + 0.5 + (b % 2) * 0.03); g.add(ball); }
+  }
+  const pro = staff("#c9a86a", GOLF_MATS[4], 105, Math.PI);
+  const rangeBall = new THREE.Mesh(ballGeometry, glow("#ffffff", 0.4));
+  rangeBall.scale.setScalar(0.035);
+  g.add(rangeBall);
+  // Club-house : comptoir, auvent rayé, bouteilles, barman ; deux tables à parasol ; enseigne sur la vitre.
+  const cb = at(845, 80), shelfZ = at(0, 22).z;
+  box(g, 4.6, 1.05, 0.6, mat("#5a3b26", { roughness: 0.5 }), cb.x, 0.525, cb.z);
+  box(g, 4.8, 0.07, 0.75, mat("#e8e0cf", { roughness: 0.3 }), cb.x, 1.08, cb.z);
+  box(g, 4.7, 0.02, 0.02, glow("#ffd89b", 1.2), cb.x, 1.02, cb.z + 0.37);
+  staff("#e8c27a", 845, 42, 0);
+  for (const y of [1.5, 2.0]) {
+    box(g, 4.4, 0.04, 0.3, mat("#3a2a1e"), cb.x, y, shelfZ + 0.1);
+    for (let k = 0; k < 12; k++) cyl(g, 0.04, 0.26, glow(["#ffb347", "#9bff6b", "#ff6b6b", "#5ce1ff"][(k + y * 2) % 4], 0.5), cb.x - 2 + k * 0.36, y + 0.15, shelfZ + 0.1, 8);
+  }
+  const awning = new THREE.Mesh(new THREE.PlaneGeometry(4.9, 1.1), new THREE.MeshStandardMaterial({ side: THREE.DoubleSide, roughness: 0.8,
+    map: canvasTexture(256, 32, (x, w, h) => { for (let k = 0; k < 16; k++) { x.fillStyle = k % 2 ? "#f4ecd8" : "#2f6b45"; x.fillRect(k * 16, 0, 16, h); } }) }));
+  awning.position.set(cb.x, 2.75, cb.z - 0.15);
+  awning.rotation.x = -Math.PI / 2 + 0.35;
+  g.add(awning);
+  sign(g, "CLUB-HOUSE", 3.2, 0.6, { color: "#f1e3b8", font: "700 90px Sora, sans-serif", w: 900, h: 160 }, cb.x, 3.35, shelfZ + 0.02);
+  const parasol = mat("#f4ecd8", { side: THREE.DoubleSide, roughness: 0.8 });
+  for (const [tx, ty] of GOLF_TABLES) {
+    const t = at(tx, ty);
+    put(g, "tableRound", t.x, t.z, 0, 2);
+    put(g, "chairCushion", at(tx - 45, ty).x, t.z, Math.PI / 2, 2);
+    put(g, "chairCushion", at(tx + 45, ty).x, t.z, -Math.PI / 2, 2);
+    cyl(g, 0.02, 2.3, mat("#c9ccd6", { metalness: 0.6 }), t.x, 1.15, t.z, 6);
+    const canopy = new THREE.Mesh(new THREE.ConeGeometry(1.1, 0.35, 8, 1, true), parasol);
+    canopy.position.set(t.x, 2.3, t.z); g.add(canopy);
+    cyl(g, 0.05, 0.15, glow("#9fd67b", 0.4), t.x + 0.12, 0.82, t.z + 0.05, 10);
+  }
+  // Bancs au bord du green (assise à 0,45 m), côté club-house.
+  for (const by of [400, 480]) {
+    const b = at(930, by);
+    box(g, 0.44, 0.06, 1.3, wood, b.x, 0.42, b.z);
+    box(g, 0.06, 0.42, 1.3, wood, b.x + 0.22, 0.72, b.z);
+    for (const dz of [-0.55, 0.55]) box(g, 0.4, 0.4, 0.06, postMat, b.x, 0.2, b.z + dz);
+  }
+  // Voiturette garée devant à droite.
+  const cart = new THREE.Group(), cartWhite = mat("#f2f0ea", { roughness: 0.4 }), tire = mat("#1d2226", { roughness: 0.8 });
+  cart.position.copy(at(870, 570)); cart.rotation.y = 0.15; g.add(cart);
+  box(cart, 2.0, 0.28, 1.0, cartWhite, 0, 0.42, 0);
+  box(cart, 0.55, 0.42, 0.95, cartWhite, 0.72, 0.68, 0);
+  box(cart, 0.7, 0.12, 0.9, mat("#2b5d3a"), -0.1, 0.66, 0);
+  box(cart, 0.12, 0.45, 0.9, mat("#2b5d3a"), -0.48, 0.92, 0);
+  for (const [x, z] of [[0.55, 0.45], [0.55, -0.45], [-0.55, 0.45], [-0.55, -0.45]]) box(cart, 0.04, 1.2, 0.04, steelOf(), x, 1.2, z);
+  box(cart, 1.5, 0.06, 1.1, cartWhite, 0, 1.82, 0);
+  for (const [x, z] of [[0.65, 0.5], [0.65, -0.5], [-0.65, 0.5], [-0.65, -0.5]]) cyl(cart, 0.2, 0.14, tire, x, 0.2, z, 16).rotation.x = Math.PI / 2;
+  const wheel = new THREE.Mesh(new THREE.TorusGeometry(0.13, 0.015, 6, 20), tire);
+  wheel.position.set(0.38, 1.0, 0.2); wheel.rotation.set(0, Math.PI / 2, 0.5); cart.add(wheel);
+  const bag = cyl(cart, 0.14, 0.8, mat("#8a1c2b", { roughness: 0.5 }), -0.9, 0.9, 0.2, 12);
+  bag.rotation.z = 0.25;
+  for (let k = 0; k < 3; k++) cyl(cart, 0.012, 0.3, steelOf(), -1.0 + k * 0.04, 1.4, 0.15 + k * 0.05, 5);
+  // Plantes le long de la vitre gauche et près des bancs.
+  for (const y of [370, 440, 600]) put(g, "pottedPlant", at(28, y).x, at(28, y).z, 0, 2.4);
+  for (const y of [345, 535]) put(g, "pottedPlant", at(972, y).x, at(972, y).z, 0, 2.4);
+  // Panneau du dernier putt, sur la vitre du fond.
+  box(g, 4.25, 1.2, 0.08, mat("#0f2416", { metalness: 0.4 }), at(590, 0).x, 2.7, back + 0.02);
+  const board = canvasPanel(g, 4.0, 1.0, 1024, 256, at(590, 0).x, 2.7, back + 0.07);
+  const sun = new THREE.PointLight("#fff8e8", 6, 18, 1.4);
+  sun.position.set(at(G.cx, 0).x, 4, at(0, G.cy).z);
+  g.add(sun);
+  f.roomTags = [tag("Practice", 90, 35), tag("Putting green", 255, 345), tag("Club-house", 725, 35)];
+  playTarget(f, g, (G.rx * 2 + 28) * S, 0.4, (G.ry * 2 + 22) * S, at(G.cx, G.cy).x, 0.2, at(G.cx, G.cy).z, "sport");
+  playTarget(f, g, 8.4, 2.6, 2.4, pn.x, 1.2, at(0, 75).z, "sport");
+  // Golfeur du club et sa balle, sur la ligne du trou 2.
+  const [hx, hy] = GOLF_HOLES[1];
+  const putter = staff("#d9dde8", hx - PUTT_DIST.moyen - 22, hy, Math.PI / 2);
+  const ball = new THREE.Mesh(ballGeometry, glow("#ffffff", 0.45));
+  ball.scale.setScalar(0.035);
+  g.add(ball);
+  f.golf = { flagGeo, flagBase: Float32Array.from(flagGeo.attributes.position.array), water, ripples, duck, pro, putter, ball, board, last: null,
+    range: { ball: rangeBall, t: 1, tx: 450, th: 1.5 }, putt: { phase: "rest", t: 0, event: false } };
+  planPutt(f.golf, "moyen", true, null, false);
+  f.golf.putt.phase = "aim";
+  drawGolfBoard(f.golf);
+  f.tick = (dt, t, reduced) => tickGolf(f.golf, dt, t, reduced);
+}
+function steelOf() { return mat("#c9ccd6", { metalness: 0.7, roughness: 0.3 }); }
+
+function planPutt(gf, shot, holed, miss, event) {
+  const p = gf.putt, [hx, hy] = GOLF_HOLES[1], off = holed ? [0, 0] : PUTT_MISS[miss] ?? PUTT_MISS["trop court"];
+  p.shot = shot; p.holed = holed; p.event = event;
+  p.startX = hx - (PUTT_DIST[shot] ?? PUTT_DIST.moyen);
+  p.endX = hx + off[0]; p.endY = hy + off[1];
+  p.fromX = gf.putter.position.x;
+  p.phase = "walk"; p.t = 0;
+  gf.ball.visible = true;
+  gf.ball.position.set(p.startX * S - 10, 0.11, hy * S - 6.2);
+}
+// Résultat du serveur : le golfeur se place à la bonne distance et rejoue le putt (ou, sans animation, la balle est posée où elle s'arrête).
+function puttResult(gf, r, animate) {
+  const shot = PUTT_DIST[r.shot] ? r.shot : "moyen", holed = r.holed === true;
+  const miss = holed ? null : PUTT_MISS[r.miss] ? r.miss : "trop court";
+  planPutt(gf, shot, holed, miss, true);
+  gf.last = { shot, holed, miss };
+  if (animate) return; // le panneau s'affiche quand la balle s'arrête
+  const p = gf.putt;
+  gf.putter.position.x = (p.startX - 22) * S - 10;
+  play(gf.putter, "Idle");
+  gf.ball.position.set(p.endX * S - 10, 0.11, p.endY * S - 6.2);
+  gf.ball.visible = !holed;
+  p.phase = "rest"; p.t = 0;
+  drawGolfBoard(gf);
+}
+function tickPutt(gf, dt) {
+  const p = gf.putt, golfer = gf.putter, ball = gf.ball, hy = GOLF_HOLES[1][1];
+  p.t += dt;
+  if (p.phase === "walk") {
+    const goal = (p.startX - 22) * S - 10, k = Math.min(1, p.t / 0.9);
+    golfer.position.x = p.fromX + (goal - p.fromX) * k;
+    const walking = k < 1 && Math.abs(goal - p.fromX) > 0.05;
+    play(golfer, walking ? "Walking" : "Idle");
+    golfer.rotation.y = walking && goal < p.fromX ? -Math.PI / 2 : Math.PI / 2; // il marche vers sa balle, puis se tourne vers le trou
+    if (k >= 1) { p.phase = "aim"; p.t = 0; }
+  } else if (p.phase === "aim") {
+    if (p.t > 0.7) { p.phase = "swing"; p.t = 0; play(golfer, "Punch"); }
+  } else if (p.phase === "swing") {
+    if (p.t > 0.4) { p.phase = "roll"; p.t = 0; }
+  } else if (p.phase === "roll") {
+    if (p.t > 0.45 && golfer.userData.anim === "Punch") play(golfer, "Idle");
+    const k = Math.min(1, p.t / (0.9 + (p.endX - p.startX) / 140)), e = 1 - (1 - k) ** 2;
+    ball.position.set((p.startX + (p.endX - p.startX) * e) * S - 10, 0.11, (hy + (p.endY - hy) * e * e) * S - 6.2);
+    if (k >= 1) {
+      p.phase = p.holed ? "drop" : "rest"; p.t = 0;
+      play(golfer, p.holed ? "Yes" : "No");
+      if (p.event) drawGolfBoard(gf);
+    }
+  } else if (p.phase === "drop") {
+    const k = Math.min(1, p.t / 0.25);
+    ball.position.y = 0.11 - 0.14 * k;
+    if (k >= 1) { ball.visible = false; p.phase = "rest"; p.t = 0; }
+  } else if (p.phase === "rest") {
+    if (p.t > 1.7) play(golfer, "Idle");
+    if (p.t > (p.event ? 4.5 : 2.2)) {
+      const misses = Object.keys(PUTT_MISS);
+      planPutt(gf, "moyen", Math.random() < 0.7, misses[Math.floor(Math.random() * misses.length)], false);
+    }
+  }
+}
+function tickRange(gf, dt) {
+  const r = gf.range, tee = 86, x0 = GOLF_MATS[4];
+  r.t += dt;
+  if (r.t >= 3.4) { r.t = 0; r.tx = x0 + (Math.random() - 0.5) * 120; r.th = 1.1 + Math.random() * 1.4; play(gf.pro, "Punch"); }
+  else if (r.t > 0.83) play(gf.pro, "Idle");
+  const k = r.t - 0.38;
+  let X = x0, Y = tee, H = 0.11;
+  if (k > 0 && k < 0.55) { const u = k / 0.55; X = x0 + (r.tx - x0) * u; Y = tee + (34 - tee) * u; H = 0.11 + (r.th - 0.11) * u + 3.2 * u * (1 - u); }
+  else if (k >= 0.55) { const u = Math.min(1, (k - 0.55) / 0.5); X = r.tx; Y = 36 + u * 4; H = r.th + (0.11 - r.th) * u; }
+  r.ball.position.set(X * S - 10, H, Y * S - 6.2);
+}
+function tickGolf(gf, dt, t, reduced) {
+  if (reduced) return;
+  const pos = gf.flagGeo.attributes.position, base = gf.flagBase;
+  for (let i = 0; i < pos.count; i++) { const x = base[i * 3]; pos.array[i * 3 + 2] = Math.sin(x * 9 - t * 6) * 0.05 * (x / 0.44); }
+  pos.needsUpdate = true;
+  gf.water.emissiveIntensity = 0.55 + Math.sin(t * 1.3) * 0.12;
+  for (const ring of gf.ripples) {
+    const k = mod1(t / 2.6 + ring.userData.phase);
+    ring.scale.set(0.05 + k * 0.5, 1, 0.05 + k * 0.5);
+    ring.material.opacity = 0.45 * (1 - k);
+  }
+  const a = t * 0.12, W = GOLF_POND;
+  gf.duck.position.set((W.cx + Math.cos(a) * W.rx * 0.5) * S - 10, 0.075, (W.cy + Math.sin(a) * W.ry * 0.45) * S - 6.2);
+  gf.duck.rotation.y = Math.atan2(-Math.sin(a) * W.rx, Math.cos(a) * W.ry);
+  tickPutt(gf, dt);
+  tickRange(gf, dt);
+}
+function drawGolfBoard(gf) {
+  const p = gf.board, l = gf.last;
+  const title = l ? (l.holed ? "DANS LE TROU !" : "RATÉ DE PEU") : "PUTTING GREEN";
+  const line = l ? `${PUTT_NAMES[l.shot]}${l.holed ? "" : " · " + l.miss}` : "Putts de 1 m, 4 m ou 12 m";
+  const key = `${title}|${line}`;
+  if (key === p.key) return;
+  p.key = key;
+  const x = p.ctx, W = p.w, H = p.h;
+  x.fillStyle = "#0c2414"; x.fillRect(0, 0, W, H);
+  x.strokeStyle = "#e9c46a"; x.lineWidth = 6; x.strokeRect(6, 6, W - 12, H - 12);
+  x.textAlign = "center"; x.textBaseline = "middle";
+  x.fillStyle = l && !l.holed ? "#ffb4a8" : "#ffd76a"; x.font = "800 82px Sora, sans-serif"; x.fillText(title, W / 2, 92, W - 60);
+  x.fillStyle = "#e3f2e6"; x.font = "600 46px Sora, sans-serif"; x.fillText(line, W / 2, 184, W - 60);
+  p.tex.needsUpdate = true;
 }
 
 // ---------- les personnages : le robot animé de Quaternius (CC0), recoloré selon l'outil ----------
@@ -2145,6 +3197,8 @@ function animate(frameTime = performance.now()) {
       f.owner.userData.mixer.update(dt);
     }
     f.staff?.forEach(r => r.userData.mixer.update(dt));
+    // Casino, tennis et golf : leurs animations (et les parties rejouées) n'avancent que sur l'étage affiché.
+    f.tick?.(dt, t, reducedMotion.matches);
     f.dancers?.forEach((r, k) => {
       play(r, clubAnimation(t, k * 0.37));
       r.rotation.y = k * 1.1 + Math.sin(t * 1.2 + k * 1.7) * 0.5;
@@ -2251,101 +3305,6 @@ function animate(frameTime = performance.now()) {
     });
     u.ring.position.y = 0.03 + (u.stepY ?? 0) - g.position.y; // le repère reste au sol (ou sur la marche) quand le robot est assis
     u.ring.visible = u.state !== "autorisation" || Math.sin(t * 10) > -0.3;
-  }
-
-  // Animation des machines à sous du casino (seulement quand un agent est dessus)
-  const casinoFloor = floors.get("casino");
-  if (casinoFloor && casinoFloor.slotMachines) {
-    for (const machine of casinoFloor.slotMachines) {
-      // Vérifier si un agent est assis sur cette machine (proximité < 0.6)
-      let agentPlaying = false;
-      for (const g of agents.values()) {
-        const u = g.userData;
-        if (u.floor === "casino" && u.place === "casino" && u.slot) {
-          const dx = u.slot.x - machine.pos.x;
-          const dz = u.slot.z - machine.pos.z;
-          if (Math.abs(dx) < 0.3 && dz > 0 && dz < 1.2 && u.state === "fini" && !u.path.length) {
-            agentPlaying = true;
-            break;
-          }
-        }
-      }
-
-      if (agentPlaying && !machine.isPlaying) {
-        // Démarrer l'animation
-        machine.isPlaying = true;
-        machine.playTimer = 3 + Math.random() * 2; // 3-5 secondes
-        machine.spinSpeed = 15 + Math.random() * 10;
-      }
-
-      if (machine.isPlaying) {
-        machine.playTimer -= dt;
-
-        // Faire tourner les rouleaux - adaptatif selon le nombre de symboles visibles
-        for (const reel of machine.reels) {
-          const symbolSpacing = reel.height / reel.symbols.length;
-          const resetThreshold = reel.y - reel.height / 2 - symbolSpacing;
-          const resetOffset = symbolSpacing * reel.symbols.length;
-
-          for (const symMesh of reel.symbols) {
-            symMesh.position.y -= machine.spinSpeed * dt;
-            // Reboucler le symbole quand il sort de l'écran
-            if (symMesh.position.y < resetThreshold) {
-              symMesh.position.y += resetOffset;
-              // Changer le symbole aléatoirement
-              const symbols = ["🍒", "🔔", "7️⃣", "⭐", "💎", "🍋", "🍊", "💰", "A♠", "K♥", "Q♦", "J♣"];
-              const newSym = symbols[Math.floor(Math.random() * symbols.length)];
-              const newColor = ["#ffd700", "#ff4444", "#44ff44", "#4444ff", "#ff8800", "#ff44ff"][Math.floor(Math.random() * 6)];
-              if (symMesh.element) {
-                symMesh.element.textContent = newSym;
-                symMesh.element.style.color = newColor;
-              }
-            }
-          }
-        }
-
-        // Animer le levier (seulement pour machines classic)
-        if (machine.lever && machine.handle) {
-          const swing = Math.sin(t * machine.spinSpeed * 0.5) * 0.15;
-          machine.lever.rotation.z = swing;
-          machine.handle.rotation.z = swing;
-        }
-
-        // Effet lumineux sur l'écran
-        if (machine.screen && machine.screen.material) {
-          const pulse = Math.sin(t * 20) * 0.3 + 0.7;
-          machine.screen.material.emissiveIntensity = pulse * 0.5;
-        }
-
-        // Arrêter après le timer
-        if (machine.playTimer <= 0) {
-          machine.isPlaying = false;
-          machine.spinSpeed = 0;
-          if (machine.lever) machine.lever.rotation.z = 0;
-          if (machine.handle) machine.handle.rotation.z = 0;
-          if (machine.screen && machine.screen.material) {
-            machine.screen.material.emissiveIntensity = 0;
-          }
-          // Résultat final - aligner les symboles (jackpot occasionnel)
-          const jackpot = Math.random() < 0.15;
-          const jackpotSym = machine.type === "video" ? "A♠" : "7️⃣";
-          const normalSymbols = machine.type === "video"
-            ? ["A♠", "K♥", "Q♦", "J♣", "10♠", "9♥", "8♦"]
-            : ["🍒", "🔔", "⭐", "💎", "🍋", "🍊", "💰"];
-          for (let s = 0; s < machine.reels.length; s++) {
-            const reel = machine.reels[s];
-            const finalSym = jackpot ? jackpotSym : normalSymbols[Math.floor(Math.random() * normalSymbols.length)];
-            const finalColor = jackpot ? "#ffd700" : ["#ffd700", "#ff4444", "#44ff44", "#4444ff", "#ff8800", "#ff44ff"][Math.floor(Math.random() * 6)];
-            for (let v = 0; v < reel.symbols.length; v++) {
-              if (reel.symbols[v] && reel.symbols[v].element) {
-                reel.symbols[v].element.textContent = finalSym;
-                reel.symbols[v].element.style.color = finalColor;
-              }
-            }
-          }
-        }
-      }
-    }
   }
 
   // La caméra suit l'étage choisi ; le toit coiffe le penthouse.
@@ -2458,6 +3417,12 @@ addEventListener("keydown", e => {
 // Clic sur un agent : sa fiche.
 const onFocus = () => [...agents.values()].filter(g => g.userData.floor === order[focus] && g.visible);
 const onTv = () => order[focus] === "lounge" && tvFrame && ray.intersectObject(tvFrame).length > 0;
+// Machines, tables, court et green : un clic ouvre le dialogue Entreprise sur le bon onglet (résidents seulement).
+const onPlayTarget = () => {
+  if (data?.viewer?.role === "spectator" || !myApt()?.economy) return null;
+  const targets = floors.get(order[focus])?.playTargets;
+  return targets ? ray.intersectObjects(targets, false)[0]?.object.userData.tab ?? null : null;
+};
 // Le pincement du pavé tactile ne zoome jamais la page entière (seulement la caméra, sur la 3D).
 addEventListener("wheel", e => { if (e.ctrlKey) e.preventDefault(); }, { passive: false });
 addEventListener("gesturestart", e => e.preventDefault());
@@ -2470,13 +3435,15 @@ renderer.domElement.addEventListener("pointerup", e => {
   let o = ray.intersectObjects(onFocus(), true)[0]?.object;
   while (o && !o.userData.key) o = o.parent;
   if (o) return showAgent(o.userData.apt, o.userData.s);
-  if (onTv()) open(tvPageUrl(), "_blank", "noopener");
+  if (onTv()) return void open(tvPageUrl(), "_blank", "noopener");
+  const tab = onPlayTarget();
+  if (tab) economyUi.open(tab);
 });
 renderer.domElement.addEventListener("pointermove", e => {
   if (e.buttons) return;
   mouse.set((e.clientX / innerWidth) * 2 - 1, -(e.clientY / innerHeight) * 2 + 1);
   ray.setFromCamera(mouse, camera);
-  renderer.domElement.style.cursor = ray.intersectObjects(onFocus(), true).length || onTv() ? "pointer" : "";
+  renderer.domElement.style.cursor = ray.intersectObjects(onFocus(), true).length || onTv() || onPlayTarget() ? "pointer" : "";
 });
 
 // ---------- interface ----------
@@ -2547,6 +3514,7 @@ function render() {
   const list = [...data.apartments].sort((x, y) => x.created - y.created);
   const first = !order.length;
   syncFloors(list);
+  updateCasinoState(data);
   if (first) focus = me && order.includes(`${me}:work`) ? order.indexOf(`${me}:work`) : Math.min(1, order.length - 1);
   update(now);
   order.forEach((key, i) => {
@@ -2610,10 +3578,15 @@ function render() {
     const myAgentsHere = here.filter(g => g.userData.apt.slug === me).length;
     const spacePlay = me && myGame?.game && !spectator ? spaceActionsHtml(myGame.game, f.key, myAgentsHere, esc) : "";
     // Casino : les vrais jeux (en P$) s'ouvrent dans le dialogue Entreprise.
+    const jackpot = Number(data.casino?.jackpot);
     const casinoPlay = f.key === "casino" && !spectator && myGame?.economy
-      ? `<div class="space-actions"><h4>Tables de jeu</h4><button type="button" class="space-act eco-casino-btn" data-eco-open="casino"><strong>🎰 Jouer</strong><span>Machine à sous, roulette, course de robots · solde ${esc(money(economyUi.shownWallet(myGame.economy)))}</span></button></div>` : "";
+      ? `<div class="space-actions"><h4>Tables de jeu</h4><button type="button" class="space-act eco-casino-btn" data-eco-open="casino"><strong>🎰 Jouer</strong><span>Machine à sous, roulette, blackjack, course de robots · solde ${esc(money(economyUi.shownWallet(myGame.economy)))}${Number.isFinite(jackpot) ? ` · jackpot ${esc(money(jackpot))}` : ""}</span></button></div>` : "";
+    // Tennis et golf : le set contre le pro et les putts se jouent dans l'onglet Sport du dialogue Entreprise.
+    const sport = { tennis: ["Match contre le pro", "🎾 Jouer un set", "Attaque, jeu équilibré ou défense"], golf: ["Putting green", "⛳ Tenter un putt", "Putt de 1 m, 4 m ou 12 m"] }[f.key];
+    const sportPlay = sport && !spectator && myGame?.economy
+      ? `<div class="space-actions"><h4>${sport[0]}</h4><button type="button" class="space-act eco-casino-btn" data-eco-open="sport"><strong>${sport[1]}</strong><span>${sport[2]} · solde ${esc(money(economyUi.shownWallet(myGame.economy)))}</span></button></div>` : "";
     setPanel(`<p class="kicker">${esc(f.def.kicker)}</p><h2>${f.def.icon} ${esc(f.name)}</h2>
-      ${f.key === "lounge" ? remote() : ""}${casinoPlay}
+      ${f.key === "lounge" ? remote() : ""}${casinoPlay}${sportPlay}
       <div class="apt-c"><span><b>${here.length}</b> agent(s) ici, de <b>${byRes.size}</b> résident(s)</span></div>
       ${spacePlay}
       ${[...byRes].map(([n, ss]) => `<div class="who-row"><b>${esc(n)}</b><span>${ss.map(u => `${esc(TOOLS[u.s.src]?.name ?? u.s.src)} · ${f.key === "lounge" ? esc(PLACE_FR[u.place]) : esc(u.s.project ?? "")}`).join("<br>")}</span></div>`).join("")
@@ -2859,6 +3832,43 @@ document.addEventListener("click", e => {
   const b = e.target.closest("[data-eco-open]");
   if (b && data?.viewer?.role !== "spectator") economyUi.open(b.dataset.ecoOpen);
 });
+
+// Parties jouées dans le dialogue Entreprise (economy-ui.js émet « penthouse:play » après chaque réponse du serveur) :
+// la 3D rejoue le résultat, purement pour le décor. Hors de l'étage regardé, ou avec moins d'animations, le résultat
+// s'affiche directement ; un détail inattendu est ignoré sans rien casser.
+const animatesOn = key => order[focus] === key && !reducedMotion.matches && !document.hidden;
+function replayPlay(game, r) {
+  const c = floors.get("casino")?.casino;
+  if (game === "slots" && c && Array.isArray(r.reels)) {
+    const m = c.machines[CASINO_FEATURED], live = animatesOn("casino");
+    const jackpot = Number(r.progressive) > 0 || (r.reels.length === 3 && r.reels.every(x => x === "7️⃣"));
+    spinMachine(m, r.reels, live);
+    m.onDone = live ? () => { if (jackpot) c.party = 6.5; else if (Number(r.win) > 0) m.flash = 2.5; } : null;
+  } else if (game === "roulette" && c && Number.isInteger(r.number) && r.number >= 0 && r.number <= 36) {
+    spinRoulette(c.roulette, r.number, animatesOn("casino"));
+  } else if (game === "blackjack" && c && r.hand && typeof r.hand === "object") {
+    showBlackjack(c, r.hand, animatesOn("casino"));
+  } else if (game === "tennis") {
+    const tn = floors.get("tennis")?.tennis;
+    if (tn) startTennisMatch(tn, r, animatesOn("tennis"));
+  } else if (game === "golf") {
+    const gf = floors.get("golf")?.golf;
+    if (gf) puttResult(gf, r, animatesOn("golf"));
+  }
+}
+addEventListener("penthouse:play", e => {
+  const { game, result } = e.detail ?? {};
+  if (!result || typeof result !== "object") return;
+  try { replayPlay(game, result); } catch (error) { console.warn("3D : partie non rejouée", error); }
+});
+function updateCasinoState(state) {
+  const c = floors.get("casino")?.casino;
+  if (!c) return;
+  drawJackpot(c, state.casino, state.now);
+  const winAt = state.casino?.lastWinner?.at ?? null;
+  if (c.lastWinAt !== undefined && winAt && winAt !== c.lastWinAt && animatesOn("casino")) c.party = 6.5;
+  c.lastWinAt = winAt;
+}
 
 // Menu « ⋯ » de l'en-tête : les actions moins fréquentes, pour un en-tête sur une ligne.
 function setMoreMenu(open) {
