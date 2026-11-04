@@ -312,11 +312,13 @@ function tennisGame(ui) {
     let tx = Math.random() < 0.25 + 0.55 * (lvl - 0.75) ? -sign(p.x || rand(-1, 1)) * rand(2.2, 3.1 + 0.5 * lvl) : rand(-3.3, 3.3);
     if (attack) tx = sign(tx) * rand(2.7, 3.8);
     let ty = -rand(7.4, 10.9), margin = 0.2, drop = false;
-    let speed = (12 + rand(0, 4) + (attack ? 3.5 : 0)) * (0.8 + 0.27 * lvl) * (stretch ? 0.86 : 1);
+    // Un échange qui s'éternise met le robot sous pression : il frappe plus fort… et se trompe plus souvent.
+    const press = Math.min(12, rally) / 12;
+    let speed = (12 + rand(0, 4) + (attack ? 3.5 : 0)) * (0.8 + 0.27 * lvl) * (stretch ? 0.86 : 1) * (1 + 0.2 * press);
     if (!stretch && !attack && p.y < -8.5 && Math.random() < Math.max(0, (lvl - 0.8) * 0.3)) {
       drop = true; tx = rand(-3, 3); ty = -rand(2.2, 4.2); speed = rand(10, 11.5); margin = 0.25;
     }
-    const pErr = 0.1 / (lvl * lvl) + (stretch ? 0.1 : 0) + (attack ? 0.04 : 0) + (drop ? 0.05 : 0);
+    const pErr = 0.1 / (lvl * lvl) + (stretch ? 0.1 : 0) + (attack ? 0.04 : 0) + (drop ? 0.05 : 0) + 0.1 * press;
     if (Math.random() < pErr) {
       const k = Math.random();
       if (k < 0.4) tx = sign(tx) * rand(SW + 0.3, SW + 1.4);

@@ -773,3 +773,9 @@ body.kiosk-mode #moreWrap { display: none !important; }
   .sport-go, .sport-alt { min-height: 40px; padding: 8px 14px; }
   .sport-card-table.compact th, .sport-card-table.compact td { padding: 3px 4px; }
 }
+
+/* Performances : un flou d'arrière-plan posé au-dessus de la tour 3D animée est recalculé à chaque image, ce qui coûte
+   très cher sur un grand écran Retina (liste des étages : un flou par bouton). Les panneaux sont déjà opaques à 90 % :
+   on le retire partout, sans changement visible. */
+*, *::before, *::after, dialog::backdrop { -webkit-backdrop-filter: none !important; backdrop-filter: none !important; }
+dialog::backdrop { background: #000000b8; }
