@@ -24,6 +24,7 @@ import { CSS3DObject, CSS3DRenderer } from "three/addons/renderers/CSS3DRenderer
 import { RoundedBoxGeometry } from "three/addons/geometries/RoundedBoxGeometry.js";
 import { GLTFLoader } from "three/addons/loaders/GLTFLoader.js";
 import { clone as cloneSkinned } from "three/addons/utils/SkeletonUtils.js";
+import { mergeGeometries } from "three/addons/utils/BufferGeometryUtils.js";
 
 const $ = s => document.querySelector(s);
 const esc = s => String(s ?? "").replace(/[&<>"]/g, c => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;" }[c]));
@@ -245,6 +246,9 @@ labels.domElement.className = "labels";
 stage.appendChild(labels.domElement);
 
 const scene = new THREE.Scene();
+// Les matrices du monde sont recalculées une seule fois par image (voir animate), pas une fois par moteur de rendu
+// (WebGL, étiquettes, écrans) : trois passes sur toute la scène à chaque image coûtaient plus que le dessin lui-même.
+scene.matrixWorldAutoUpdate = false;
 scene.background = new THREE.Color("#060812");
 scene.fog = new THREE.Fog("#060812", 90, 330);
 const camera = new THREE.PerspectiveCamera(40, 1, 0.1, 900);
@@ -294,7 +298,12 @@ function cyl(parent, r, h, m, x, y, z, seg = 20) {
   parent.add(mesh);
   return mesh;
 }
+const textTextures = new Map();
 function textTexture(text, { font = "700 72px Sora, sans-serif", color = "#ff6fd8", w = 512, h = 128, blur = 28 } = {}) {
+  // Une enseigne identique (mêmes texte et style) partage sa texture : les étages reconstruits et les panneaux répétés
+  // (« DIRECTION », les étiquettes du frigo…) n'envoient plus chacun la leur à la carte graphique.
+  const key = JSON.stringify([text, font, color, w, h, blur]);
+  if (textTextures.has(key)) return textTextures.get(key);
   // Dessiné en double résolution, avec filtrage anisotrope : les enseignes restent nettes de près et de biais.
   const c = document.createElement("canvas");
   c.width = w * 2; c.height = h * 2;
@@ -310,6 +319,7 @@ function textTexture(text, { font = "700 72px Sora, sans-serif", color = "#ff6fd
   const t = new THREE.CanvasTexture(c);
   t.colorSpace = THREE.SRGBColorSpace;
   t.anisotropy = renderer.capabilities.getMaxAnisotropy();
+  textTextures.set(key, t);
   return t;
 }
 function sign(parent, text, w, h, opts, x, y, z, ry = 0) {
@@ -328,6 +338,148 @@ function label(parent, html, cls, x, y, z) {
   o.position.set(x, y, z);
   parent.add(o);
   return o;
+}
+
+// ---------- performances : lumières fixes, maillages fusionnés, étages hors scène ----------
+// Lumière d'un étage : un simple repère (position, couleur, intensité) que l'étage anime comme avant. Les vraies lampes
+// sont quatre PointLight toujours présentes dans la scène, prêtées chaque image aux repères de l'étage regardé (puis
+// de celui qui s'envole) : leur nombre ne change jamais, donc changer d'étage ne recompile aucun shader, et un étage
+// ne paie plus pour les lampes des autres.
+class LightSpot extends THREE.Object3D {
+  constructor(color, intensity, distance, decay, priority = 2) {
+    super();
+    this.isLightSpot = true;
+    this.color = new THREE.Color(color);
+    Object.assign(this, { intensity, distance, decay, priority });
+  }
+}
+const LIGHT_RIG = Array.from({ length: 4 }, () => { const l = new THREE.PointLight("#ffffff", 0, 1, 2); scene.add(l); return l; });
+function lendLights(...list) {
+  let k = 0;
+  for (const f of list) {
+    if (!f?.lights) continue;
+    f.group.updateMatrix();
+    for (const s of f.lights) {
+      if (k >= LIGHT_RIG.length) break;
+      if (!(s.intensity > 0)) continue;
+      const l = LIGHT_RIG[k++];
+      l.color.copy(s.color); l.intensity = s.intensity; l.distance = s.distance; l.decay = s.decay;
+      l.position.copy(s.position).applyMatrix4(f.group.matrix); // repères posés directement sur l'étage
+    }
+  }
+  for (; k < LIGHT_RIG.length; k++) LIGHT_RIG[k].intensity = 0;
+}
+
+// Objets animés, cliqués ou dont on remplace le matériau : marqués « live », ils ne sont jamais fusionnés (et servent
+// d'ancre à leurs pièces immobiles, qui bougent avec eux). Les champs d'un étage (f.screens, f.casino…) sont parcourus :
+// tout objet 3D qui y est rangé est supposé vivant ; un conteneur immobile peut s'en exclure par userData.fixed.
+const live = (...objects) => { for (const o of objects) if (o?.isObject3D) o.userData.live = true; return objects[0]; };
+function markLive(value, depth = 0) {
+  if (!value || typeof value !== "object" || depth > 4) return;
+  if (value.isObject3D) { if (!value.userData.fixed) value.userData.live = true; return; }
+  if (Array.isArray(value)) { for (const v of value) markLive(v, depth + 1); return; }
+  if (Object.getPrototypeOf(value) === Object.prototype) for (const k in value) markLive(value[k], depth + 1);
+}
+// Attributs entrelacés (certains modèles glTF) : recopiés à plat pour pouvoir fusionner.
+function flatAttributes(geometry) {
+  for (const [name, a] of Object.entries(geometry.attributes)) {
+    if (!a.isInterleavedBufferAttribute) continue;
+    const out = new a.array.constructor(a.count * a.itemSize), src = a.data.array, stride = a.data.stride;
+    for (let i = 0; i < a.count; i++) for (let c = 0; c < a.itemSize; c++) out[i * a.itemSize + c] = src[i * stride + a.offset + c];
+    geometry.setAttribute(name, new THREE.BufferAttribute(out, a.itemSize, a.normalized));
+  }
+  return geometry;
+}
+const geometrySignature = g => (g.index ? "i" : "n") + Object.entries(g.attributes).map(([k, a]) =>
+  `${k}:${a.itemSize}:${a.normalized}:${(a.isInterleavedBufferAttribute ? a.data.array : a.array).constructor.name}`).sort().join(",");
+// Fusionne les maillages immobiles d'un sous-arbre, par matériau, en un maillage par ancre (la racine ou le premier
+// parent « live ») : des centaines d'appels de dessin et d'objets à parcourir deviennent quelques dizaines.
+// Restent tels quels : maillages instanciés ou animés par squelette, transparents, invisibles (zones de clic),
+// multi-matériaux, retournés (échelle négative) et tout ce qui est live ou porté par un robot.
+const bakeMatrix = new THREE.Matrix4();
+function bakeStatic(root) {
+  root.updateMatrixWorld(true);
+  const batches = new Map(), inverse = new Map();
+  root.traverse(o => {
+    if (!o.isMesh || o === root || o.isInstancedMesh || o.isSkinnedMesh || o.userData.live || !o.visible || o.renderOrder) return;
+    const m = o.material;
+    if (Array.isArray(m) || !m.visible || m.transparent || o.geometry.morphAttributes.position) return;
+    if (o.geometry.attributes.position?.array.constructor !== Float32Array && !o.geometry.attributes.position?.isInterleavedBufferAttribute) return;
+    let anchor = root;
+    for (let p = o.parent; p && p !== root; p = p.parent) {
+      if (p.userData.mixer || p.isBone || p.isSkinnedMesh || !p.visible) return;
+      if (p.userData.live) { anchor = p; break; }
+    }
+    if (!inverse.has(anchor)) inverse.set(anchor, anchor.matrixWorld.clone().invert());
+    const rel = new THREE.Matrix4().multiplyMatrices(inverse.get(anchor), o.matrixWorld);
+    if (rel.determinant() <= 0) return;
+    const key = `${anchor.uuid}|${m.uuid}|${geometrySignature(o.geometry)}`;
+    if (!batches.has(key)) batches.set(key, { anchor, material: m, items: [] });
+    batches.get(key).items.push([o, rel]);
+  });
+  for (const { anchor, material, items } of batches.values()) {
+    if (items.length < 2) continue;
+    const parts = items.map(([o, rel]) => flatAttributes(o.geometry.clone()).applyMatrix4(rel));
+    const merged = mergeGeometries(parts, false);
+    for (const p of parts) p.dispose();
+    if (!merged) continue;
+    merged.userData.baked = true;
+    const mesh = new THREE.Mesh(merged, material);
+    mesh.matrixAutoUpdate = false;
+    anchor.add(mesh);
+    for (const [o] of items) o.removeFromParent();
+  }
+  // Groupes vidés par la fusion : retirés, il reste moins d'objets à parcourir à chaque image.
+  const prune = o => {
+    for (let i = o.children.length - 1; i >= 0; i--) prune(o.children[i]);
+    if (o !== root && !o.children.length && !o.userData.live && (o.type === "Group" || o.type === "Object3D") && !o.isLightSpot) o.removeFromParent();
+  };
+  prune(root);
+}
+// Fin de construction d'un étage : ses repères de lumière (par priorité), ses objets vivants, puis la fusion.
+function finishFloor(f) {
+  f.lights = [];
+  f.group.traverse(o => { if (o.isLightSpot) f.lights.push(o); });
+  f.lights.sort((a, b) => a.priority - b.priority);
+  const { group, ...fields } = f;
+  markLive(fields);
+  bakeStatic(group);
+  f.hasCss3d = false;
+  group.traverse(o => { if (o.isCSS3DObject) f.hasCss3d = true; });
+  return f;
+}
+// Seuls l'étage regardé (et celui qui s'envole) sont dans la scène : les autres n'y sont plus du tout, ni parcourus
+// pour les matrices, ni par les moteurs d'étiquettes et d'écrans. En sortant, leurs éléments HTML sont masqués et une
+// télé géante coupe sa vidéo.
+function stageFloor(f, shown) {
+  if (shown === (f.group.parent === scene)) return;
+  if (shown) { scene.add(f.group); return; }
+  scene.remove(f.group);
+  f.group.traverse(o => { if (o.isCSS2DObject || o.isCSS3DObject) o.element.style.display = "none"; });
+  if (f.tv && f.tv.shown !== "about:blank") { f.tv.shown = "about:blank"; f.tv.iframe.src = "about:blank"; }
+}
+// Petits groupes animés (voitures, avions, oiseaux) : leurs pièces sont dessinées en instances, une série par matériau.
+// Les groupes eux-mêmes restent hors de la scène et gardent leur animation ; sync() recopie leurs matrices.
+function instancedCrowd(groups, parent) {
+  const byMaterial = new Map();
+  for (const gr of groups) for (const part of gr.children) {
+    if (!byMaterial.has(part.material)) byMaterial.set(part.material, []);
+    byMaterial.get(part.material).push([gr, part]);
+  }
+  const sets = [...byMaterial].map(([material, list]) => {
+    const mesh = new THREE.InstancedMesh(list[0][1].geometry, material, list.length);
+    mesh.frustumCulled = false; // les instances se déplacent : la boîte englobante calculée une fois serait fausse
+    parent.add(mesh);
+    return { mesh, list };
+  });
+  const m = new THREE.Matrix4();
+  return () => {
+    for (const gr of groups) gr.updateMatrix();
+    for (const { mesh, list } of sets) {
+      for (let k = 0; k < list.length; k++) { const [gr, part] = list[k]; part.updateMatrix(); mesh.setMatrixAt(k, m.multiplyMatrices(gr.matrix, part.matrix)); }
+      mesh.instanceMatrix.needsUpdate = true;
+    }
+  };
 }
 
 // ---------- la ville autour ----------
@@ -358,6 +510,7 @@ function cityMaterial(cellW, cellH, lit) {
 const GROUND = -150, CELL = 18;
 const AD_SITE = { x: -2 * CELL, z: -3 * CELL }, USAGE_SITE = { x: 18, z: -54 };
 const beacons = new THREE.MeshBasicMaterial({ color: "#ff3030", fog: false });
+const BEACON_ON = new THREE.Color("#ff3030"), BEACON_OFF = new THREE.Color("#3a0808");
 (function city() {
   let r = 42;
   const rnd = () => (r = (r * 1103515245 + 12345) & 0x7fffffff) / 0x7fffffff;
@@ -415,29 +568,32 @@ const beacons = new THREE.MeshBasicMaterial({ color: "#ff3030", fog: false });
 
 // Les îlots dégagés autour de la tour deviennent des jardins, plutôt que des cases noires.
 (function parksAndStreetlights() {
+  // Bancs, allées, fontaines et terrains : quelques centaines de petits blocs, fusionnés par matériau à la fin.
+  const park = new THREE.Group();
+  scene.add(park);
   const gardens = [], trees = [], lamps = [];
   for (let i = -3; i <= 3; i++) for (let j = -3; j <= 3; j++) {
     if ((!i && !j) || [AD_SITE, USAGE_SITE].some(site => site.x === i * CELL && site.z === j * CELL) || Math.hypot(i * CELL, j * CELL) >= 72) continue;
     const x = i * CELL, z = j * CELL, kind = (i * i + j * j + i + 12) % 4;
     if (kind) {
-      box(scene, 12, 0.2, 12, mat(kind === 1 ? "#77756b" : kind === 2 ? "#263f50" : "#30343c"), x, GROUND + 0.16, z);
+      box(park, 12, 0.2, 12, mat(kind === 1 ? "#77756b" : kind === 2 ? "#263f50" : "#30343c"), x, GROUND + 0.16, z);
       if (kind === 1) {
-        cyl(scene, 2.8, 0.6, mat("#9b9d9b"), x, GROUND + 0.5, z);
-        cyl(scene, 2.4, 0.08, glow("#4b9db0", 0.5), x, GROUND + 0.84, z);
-        cyl(scene, 0.25, 1.5, mat("#b6b9b4"), x, GROUND + 1.3, z);
-        for (const dx of [-4, 4]) box(scene, 0.8, 0.5, 3, mat("#96724c"), x + dx, GROUND + 0.6, z);
+        cyl(park, 2.8, 0.6, mat("#9b9d9b"), x, GROUND + 0.5, z);
+        cyl(park, 2.4, 0.08, glow("#4b9db0", 0.5), x, GROUND + 0.84, z);
+        cyl(park, 0.25, 1.5, mat("#b6b9b4"), x, GROUND + 1.3, z);
+        for (const dx of [-4, 4]) box(park, 0.8, 0.5, 3, mat("#96724c"), x + dx, GROUND + 0.6, z);
       } else if (kind === 2) {
-        for (const dx of [-5, 0, 5]) box(scene, 0.12, 0.04, 10, glow("#c5d8cb", 0.4), x + dx, GROUND + 0.3, z);
+        for (const dx of [-5, 0, 5]) box(park, 0.12, 0.04, 10, glow("#c5d8cb", 0.4), x + dx, GROUND + 0.3, z);
         for (const dz of [-5, 5]) {
-          box(scene, 10, 0.04, 0.12, glow("#c5d8cb", 0.4), x, GROUND + 0.3, z + dz);
-          box(scene, 0.12, 3, 0.12, mat("#a5abb2"), x, GROUND + 1.7, z + dz);
-          box(scene, 1.8, 1, 0.1, mat("#dbdcd2"), x, GROUND + 3, z + dz);
+          box(park, 10, 0.04, 0.12, glow("#c5d8cb", 0.4), x, GROUND + 0.3, z + dz);
+          box(park, 0.12, 3, 0.12, mat("#a5abb2"), x, GROUND + 1.7, z + dz);
+          box(park, 1.8, 1, 0.1, mat("#dbdcd2"), x, GROUND + 3, z + dz);
         }
       } else {
         for (const dx of [-4, 0, 4]) {
-          box(scene, 0.1, 0.04, 10, mat("#b2b1a1"), x + dx, GROUND + 0.3, z);
-          box(scene, 1.5, 0.8, 3, mat(dx ? "#687d91" : "#974b45"), x + dx + 1, GROUND + 0.7, z + 2);
-          box(scene, 1.2, 0.4, 1.5, mat("#152537"), x + dx + 1, GROUND + 1.25, z + 2);
+          box(park, 0.1, 0.04, 10, mat("#b2b1a1"), x + dx, GROUND + 0.3, z);
+          box(park, 1.5, 0.8, 3, mat(dx ? "#687d91" : "#974b45"), x + dx + 1, GROUND + 0.7, z + 2);
+          box(park, 1.2, 0.4, 1.5, mat("#152537"), x + dx + 1, GROUND + 1.25, z + 2);
         }
       }
       continue;
@@ -451,11 +607,11 @@ const beacons = new THREE.MeshBasicMaterial({ color: "#ff3030", fog: false });
   const crowns = new THREE.InstancedMesh(new THREE.IcosahedronGeometry(1.8, 1), glow("#356b47", 0.25), trees.length);
   gardens.forEach(([x, z], k) => {
     grass.setMatrixAt(k, m.makeTranslation(x, GROUND + 0.16, z));
-    box(scene, 1.1, 0.05, 12, mat("#958a70"), x, GROUND + 0.3, z);
-    box(scene, 12, 0.05, 1.1, mat("#958a70"), x, GROUND + 0.31, z);
+    box(park, 1.1, 0.05, 12, mat("#958a70"), x, GROUND + 0.3, z);
+    box(park, 12, 0.05, 1.1, mat("#958a70"), x, GROUND + 0.31, z);
     for (const dx of [-2, 2]) {
-      box(scene, 0.7, 0.5, 2, mat("#96724c"), x + dx, GROUND + 0.6, z + 2);
-      box(scene, 0.15, 0.9, 2, mat("#96724c"), x + dx + Math.sign(dx) * 0.3, GROUND + 0.8, z + 2);
+      box(park, 0.7, 0.5, 2, mat("#96724c"), x + dx, GROUND + 0.6, z + 2);
+      box(park, 0.15, 0.9, 2, mat("#96724c"), x + dx + Math.sign(dx) * 0.3, GROUND + 0.8, z + 2);
     }
   });
   trees.forEach(([x, z], k) => {
@@ -479,6 +635,7 @@ const beacons = new THREE.MeshBasicMaterial({ color: "#ff3030", fog: false });
     transform.position.set(x + 2, GROUND + 0.22, z); transform.updateMatrix(); pools.setMatrixAt(k, transform.matrix);
   });
   scene.add(grass, trunks, crowns, poles, bulbs, pools);
+  bakeStatic(park);
 })();
 
 // Immeuble voisin : une vraie enseigne sur le toit, avec le classement issu du direct.
@@ -596,7 +753,6 @@ for (let i = 0; i < 24; i++) {
   car.rotation.y = axis === "x" ? direction * Math.PI / 2 : direction < 0 ? Math.PI : 0;
   car.position.y = GROUND + 0.18;
   car.position[axis === "x" ? "z" : "x"] = lane + direction * 1.1;
-  outside.add(car);
   traffic.push({ car, axis, direction, start: i * 14, speed: 5 + i % 5 });
 }
 const planes = [];
@@ -608,16 +764,18 @@ for (let i = 0; i < 2; i++) {
   box(plane, 0.2, 0.2, 0.2, glow("#74d9ad"), 2.5, 0, 0);
   plane.rotation.y = Math.PI / 2;
   plane.position.set(0, 75 + i * 24, -160 - i * 65);
-  outside.add(plane);
   planes.push(plane);
 }
 const birds = [];
 for (let i = 0; i < 6; i++) {
   const bird = new THREE.Group();
   const wings = [-1, 1].map(side => box(bird, 0.45, 0.04, 0.15, mat("#a8b1c6"), side * 0.22, 0, 0));
-  outside.add(bird);
   birds.push({ bird, wings });
 }
+// Voitures, avions et oiseaux restent des groupes animés hors scène ; on en dessine les pièces en instances
+// (une dizaine d'appels de dessin au lieu de près de 170).
+const outsideCrowds = [instancedCrowd(traffic.map(c => c.car), outside), instancedCrowd(planes, outside), instancedCrowd(birds.map(b => b.bird), outside)];
+const syncOutside = () => { for (const sync of outsideCrowds) sync(); };
 function animateOutside(t) {
   // Le temps est figé si le visiteur demande moins de mouvement.
   const time = reducedOutsideMotion.matches ? 0 : t;
@@ -638,6 +796,11 @@ scene.add(tower);
 let towerTop = -0.5;
 
 // ---------- un étage : la coque commune (dalle, vitres, ascenseur) ----------
+// Vitres, porte d'ascenseur et alarme : matériaux et géométries communs à tous les étages, créés une fois.
+const GLASS = new THREE.MeshPhysicalMaterial({ color: "#8fb6ff", transparent: true, opacity: 0.07, roughness: 0.05, metalness: 0.1, depthWrite: false, side: THREE.DoubleSide });
+const GLASS_BACK = new THREE.PlaneGeometry(20.8, FLOOR_H - 0.5), GLASS_SIDE = new THREE.PlaneGeometry(13, FLOOR_H - 0.5);
+const ELEV_OFF = mat("#2a3042", { metalness: 0.6, roughness: 0.25 }), ELEV_ON = glow("#f1cd85", 0.9);
+const ALARM_OFF = mat("#3a3f52"), ALARM_ON = glow("#ff3b3b", 3);
 function shell(floorColor, { glass = true } = {}) {
   const g = new THREE.Group();
   const f = { group: g, baseY: 0, links: [] };
@@ -645,9 +808,8 @@ function shell(floorColor, { glass = true } = {}) {
   box(g, 20.8, 0.12, 0.12, mat("#c9a86a", { metalness: 0.6, roughness: 0.35 }), 0, -0.44, 6.5); // liseré doré du nez de dalle
   box(g, 20.4, 0.04, 12.4, mat(floorColor), 0, 0.02, 0);
   if (glass) {
-    const glassM = new THREE.MeshPhysicalMaterial({ color: "#8fb6ff", transparent: true, opacity: 0.07, roughness: 0.05, metalness: 0.1, depthWrite: false, side: THREE.DoubleSide });
     for (const [w, x, z, ry] of [[20.8, 0, -6.5, 0], [13, -10.4, 0, Math.PI / 2], [13, 10.4, 0, Math.PI / 2]]) {
-      const p = new THREE.Mesh(new THREE.PlaneGeometry(w, FLOOR_H - 0.5), glassM);
+      const p = new THREE.Mesh(w > 20 ? GLASS_BACK : GLASS_SIDE, GLASS);
       p.position.set(x, (FLOOR_H - 0.5) / 2, z);
       p.rotation.y = ry;
       g.add(p);
@@ -656,9 +818,9 @@ function shell(floorColor, { glass = true } = {}) {
   }
   // Ascenseur : cadre doré et portes lumineuses sur la façade ouest
   box(g, 0.2, 2.6, 1.7, mat("#c9a86a", { metalness: 0.7, roughness: 0.3 }), -10.2, 1.3, 0);
-  f.elevDoor = box(g, 0.06, 2.3, 1.4, mat("#2a3042", { metalness: 0.6, roughness: 0.25 }), -10.08, 1.2, 0);
+  f.elevDoor = box(g, 0.06, 2.3, 1.4, ELEV_OFF, -10.08, 1.2, 0);
   box(g, 0.05, 0.12, 0.5, glow("#f1cd85", 1.2), -10.08, 2.48, 0);
-  const warm = new THREE.PointLight("#ffd9a0", 14, 24, 1.4);
+  const warm = new LightSpot("#ffd9a0", 14, 24, 1.4, 0);
   warm.position.set(0, 3.6, 0);
   g.add(warm);
   f.tag = label(g, "", "floor-tag", -10.4, 0.2, 6.6);
@@ -700,6 +862,49 @@ function removeFloor(k) {
   f.group.traverse(o => (o.isCSS2DObject || o.isCSS3DObject) && o.element.remove());
   scene.remove(f.group);
   floors.delete(k);
+}
+
+// Écrans du poste de direction (classique) : marchés, graphique et carnet d'ordres, décoratifs.
+const MONITOR_MATERIALS = [], MONITOR_GEOMETRY = new THREE.PlaneGeometry(0.94, 0.54), DESK_SCREEN_GEOMETRY = new THREE.PlaneGeometry(0.66, 0.42);
+function drawMarketScreen(ctx, k) {
+  ctx.fillStyle = "#0c1520"; ctx.fillRect(0, 0, 1024, 640);
+  ctx.fillStyle = "#d3e1eb"; ctx.font = "bold 34px sans-serif";
+  ctx.fillText(["MARCHÉS", "XAUUSD · M5", "CARNET D’ORDRES"][k], 32, 52);
+  ctx.fillStyle = "#8298aa"; ctx.font = "22px monospace"; ctx.fillText("DÉMO · DONNÉES FICTIVES", 32, 92);
+  if (k === 0) {
+    ctx.fillStyle = "#8298aa"; ctx.fillText("SYMBOLE       PRIX       VAR.", 36, 152);
+    ["XAUUSD", "EURUSD", "GBPUSD", "BTCUSD", "ETHUSD", "NASDAQ"].forEach((name, r) => {
+      const y = 210 + r * 64;
+      ctx.fillStyle = r % 2 ? "#152433" : "#101e2c"; ctx.fillRect(24, y - 35, 976, 56);
+      ctx.fillStyle = "#d3e1eb"; ctx.font = "bold 28px monospace"; ctx.fillText(name, 42, y);
+      ctx.fillText(["2 450,50", "1,0852", "1,2714", "68 250", "3 420", "19 850"][r], 310, y);
+      ctx.fillStyle = r % 3 ? "#57c9ab" : "#ec7d87";
+      ctx.fillText(r % 3 ? "+0,84 %" : "−0,32 %", 660, y);
+    });
+  } else if (k === 1) {
+    ctx.strokeStyle = "#233342"; ctx.lineWidth = 2;
+    for (let r = 0; r < 6; r++) { ctx.beginPath(); ctx.moveTo(30, 145 + r * 65); ctx.lineTo(990, 145 + r * 65); ctx.stroke(); }
+    for (let i = 0; i < 36; i++) {
+      const x = 44 + i * 26, mid = 360 - i * 3 + Math.sin(i * 0.7) * 55;
+      const up = Math.sin(i * 1.7) > -0.2;
+      ctx.fillStyle = ctx.strokeStyle = up ? "#57c9ab" : "#ec7d87";
+      ctx.beginPath(); ctx.moveTo(x, mid - 30); ctx.lineTo(x, mid + 42); ctx.stroke();
+      ctx.fillRect(x - 7, mid - (up ? 15 : 2), 14, 22 + i % 4 * 4);
+      ctx.globalAlpha = 0.5; ctx.fillRect(x - 7, 570 - (i * 17 % 65), 14, 20 + i * 17 % 65); ctx.globalAlpha = 1;
+    }
+    ctx.strokeStyle = "#e3bf78"; ctx.lineWidth = 3; ctx.beginPath();
+    for (let i = 0; i < 36; i++) { const x = 44 + i * 26, y = 385 - i * 3 + Math.sin(i * 0.23) * 18; i ? ctx.lineTo(x, y) : ctx.moveTo(x, y); }
+    ctx.stroke();
+  } else {
+    ctx.font = "25px monospace"; ctx.fillStyle = "#8298aa"; ctx.fillText("VOLUME       PRIX       VOLUME", 34, 145);
+    for (let r = 0; r < 10; r++) {
+      const y = 195 + r * 37;
+      ctx.globalAlpha = 0.22; ctx.fillStyle = r < 5 ? "#ec7d87" : "#57c9ab";
+      ctx.fillRect(40, y - 25, 200 + (r * 67 % 580), 31); ctx.globalAlpha = 1;
+      ctx.fillStyle = r < 5 ? "#ec7d87" : "#57c9ab";
+      ctx.fillText(`${(r + 1) * 12}          ${(2451 - r * 0.1).toFixed(2)}          ${(10 - r) * 8}`, 50, y);
+    }
+  }
 }
 
 function buildResident(apt, wing, officeTier) {
@@ -759,7 +964,7 @@ function buildResident(apt, wing, officeTier) {
     if (officeTier.dualScreen && wingId === "work") put(g, "computerScreen", dc.x + 0.22, dc.z - 0.05, Math.PI, 1.85, 0.76);
     put(g, "computerKeyboard", dc.x - 0.15, dc.z - 0.35, Math.PI, 2, 0.76);
     put(g, "chairDesk", ch.x, ch.z, 0, cs);
-    const screen = new THREE.Mesh(new THREE.PlaneGeometry(0.66, 0.42), mat("#1d2433"));
+    const screen = new THREE.Mesh(DESK_SCREEN_GEOMETRY, mat("#1d2433"));
     screen.position.set(dc.x - 0.15, 1.06, dc.z - 0.17);
     screen.rotation.y = Math.PI;
     g.add(screen);
@@ -795,51 +1000,18 @@ function buildResident(apt, wing, officeTier) {
     box(monitor, 0.32, 0.03, 0.25, mat("#171c24"), 0, 0.015, 0);
     cyl(monitor, 0.025, 0.22, metal, 0, 0.13, 0, 8);
     box(monitor, 1.02, 0.62, 0.055, mat("#111822"), 0, 0.49, 0);
-    const c = document.createElement("canvas"); c.width = 1024; c.height = 640;
-    const ctx = c.getContext("2d"); ctx.fillStyle = "#0c1520"; ctx.fillRect(0, 0, 1024, 640);
-    ctx.fillStyle = "#d3e1eb"; ctx.font = "bold 34px sans-serif";
-    ctx.fillText(["MARCHÉS", "XAUUSD · M5", "CARNET D’ORDRES"][k], 32, 52);
-    ctx.fillStyle = "#8298aa"; ctx.font = "22px monospace"; ctx.fillText("DÉMO · DONNÉES FICTIVES", 32, 92);
-    if (k === 0) {
-      ctx.fillStyle = "#8298aa"; ctx.fillText("SYMBOLE       PRIX       VAR.", 36, 152);
-      ["XAUUSD", "EURUSD", "GBPUSD", "BTCUSD", "ETHUSD", "NASDAQ"].forEach((name, r) => {
-        const y = 210 + r * 64;
-        ctx.fillStyle = r % 2 ? "#152433" : "#101e2c"; ctx.fillRect(24, y - 35, 976, 56);
-        ctx.fillStyle = "#d3e1eb"; ctx.font = "bold 28px monospace"; ctx.fillText(name, 42, y);
-        ctx.fillText(["2 450,50", "1,0852", "1,2714", "68 250", "3 420", "19 850"][r], 310, y);
-        ctx.fillStyle = r % 3 ? "#57c9ab" : "#ec7d87";
-        ctx.fillText(r % 3 ? "+0,84 %" : "−0,32 %", 660, y);
-      });
-    } else if (k === 1) {
-      ctx.strokeStyle = "#233342"; ctx.lineWidth = 2;
-      for (let r = 0; r < 6; r++) { ctx.beginPath(); ctx.moveTo(30, 145 + r * 65); ctx.lineTo(990, 145 + r * 65); ctx.stroke(); }
-      for (let i = 0; i < 36; i++) {
-        const x = 44 + i * 26, mid = 360 - i * 3 + Math.sin(i * 0.7) * 55;
-        const up = Math.sin(i * 1.7) > -0.2;
-        ctx.fillStyle = ctx.strokeStyle = up ? "#57c9ab" : "#ec7d87";
-        ctx.beginPath(); ctx.moveTo(x, mid - 30); ctx.lineTo(x, mid + 42); ctx.stroke();
-        ctx.fillRect(x - 7, mid - (up ? 15 : 2), 14, 22 + i % 4 * 4);
-        ctx.globalAlpha = 0.5; ctx.fillRect(x - 7, 570 - (i * 17 % 65), 14, 20 + i * 17 % 65); ctx.globalAlpha = 1;
-      }
-      ctx.strokeStyle = "#e3bf78"; ctx.lineWidth = 3; ctx.beginPath();
-      for (let i = 0; i < 36; i++) { const x = 44 + i * 26, y = 385 - i * 3 + Math.sin(i * 0.23) * 18; i ? ctx.lineTo(x, y) : ctx.moveTo(x, y); }
-      ctx.stroke();
-    } else {
-      ctx.font = "25px monospace"; ctx.fillStyle = "#8298aa"; ctx.fillText("VOLUME       PRIX       VOLUME", 34, 145);
-      for (let r = 0; r < 10; r++) {
-        const y = 195 + r * 37;
-        ctx.globalAlpha = 0.22; ctx.fillStyle = r < 5 ? "#ec7d87" : "#57c9ab";
-        ctx.fillRect(40, y - 25, 200 + (r * 67 % 580), 31); ctx.globalAlpha = 1;
-        ctx.fillStyle = r < 5 ? "#ec7d87" : "#57c9ab";
-        ctx.fillText(`${(r + 1) * 12}          ${(2451 - r * 0.1).toFixed(2)}          ${(10 - r) * 8}`, 50, y);
-      }
+    // Tableaux de marché : identiques d'un étage à l'autre, dessinés une fois et partagés ; l'ambiance cyberpunk a les siens.
+    let screenMaterial = cyber ? null : MONITOR_MATERIALS[k];
+    if (!screenMaterial) {
+      const c = document.createElement("canvas"); c.width = 1024; c.height = 640;
+      if (cyber) neonScreen(c, screenTexts(apt)[k], k); else drawMarketScreen(c.getContext("2d"), k);
+      const texture = new THREE.CanvasTexture(c); texture.colorSpace = THREE.SRGBColorSpace;
+      texture.anisotropy = renderer.capabilities.getMaxAnisotropy();
+      screenMaterial = new THREE.MeshBasicMaterial({ map: texture });
+      if (cyber) (f.bossScreens ??= []).push({ c, texture, k }); else MONITOR_MATERIALS[k] = screenMaterial;
     }
-    if (cyber) neonScreen(c, screenTexts(apt)[k], k);
-    const texture = new THREE.CanvasTexture(c); texture.colorSpace = THREE.SRGBColorSpace;
-    texture.anisotropy = renderer.capabilities.getMaxAnisotropy();
-    const screen = new THREE.Mesh(new THREE.PlaneGeometry(0.94, 0.54), new THREE.MeshBasicMaterial({ map: texture }));
+    const screen = new THREE.Mesh(MONITOR_GEOMETRY, screenMaterial);
     screen.position.set(0, 0.49, 0.03); monitor.add(screen);
-    if (cyber) (f.bossScreens ??= []).push({ c, texture, k });
   }
   put(g, "computerKeyboard", bd.x - 0.15, bd.z - 0.38, Math.PI, 2, 0.98);
   box(g, 0.09, 0.04, 0.14, mat("#303b42"), bd.x + 0.65, 1.0, bd.z - 0.4);
@@ -1035,7 +1207,7 @@ function buildResident(apt, wing, officeTier) {
   cyl(g, 0.025, 1.85, gold, lamp.x, 1.08, lamp.z, 12);
   cyl(g, 0.28, 0.46, mat("#c8b58d", { emissive: "#e6bf7e", emissiveIntensity: 0.3, roughness: 0.9 }), lamp.x, 1.9, lamp.z, 32);
   cyl(g, 0.29, 0.025, gold, lamp.x, 1.67, lamp.z, 32);
-  const salonLight = new THREE.PointLight("#ffd5a1", 5, 7, 2);
+  const salonLight = new LightSpot("#ffd5a1", 5, 7, 2, 3);
   salonLight.position.set(salon.x, 2.3, salon.z); g.add(salonLight);
   const side = P(960, 455);
   cyl(g, 0.045, 0.58, gold, side.x, 0.43, side.z, 12);
@@ -1044,13 +1216,13 @@ function buildResident(apt, wing, officeTier) {
   put(g, "lampSquareFloor", P(960, 120).x, P(960, 120).z, 0, 2.2);
   put(g, "pottedPlant", P(970, 585).x, P(970, 585).z, 0, 2.3);
   f.alarm = box(g, 0.3, 0.3, 0.3, mat("#3a3f52"), P(965, 40).x, 2.2, P(965, 40).z);
-  f.alarmLight = new THREE.PointLight("#ff3b3b", 0, 10, 1.6);
+  f.alarmLight = new LightSpot("#ff3b3b", 0, 10, 1.6, 1);
   f.alarmLight.position.set(bd.x, 2.4, bd.z);
   g.add(f.alarmLight);
   if (wingId === "work") placeDecor(g, f, apt);
   if (wingId === "work" && apt.profile?.tv) giantTv(f, apt.profile.tv);
   if (cyber) cyberpunk(f, apt);
-  return f;
+  return finishFloor(f);
 }
 
 // Décor acheté à la boutique (economy.decor), posé dans les coins libres du bureau du résident :
@@ -1333,7 +1505,9 @@ function drawSnake(screen, s) {
 function drawBossScreen(screen, a, now, fx, texts) {
   const { c, k } = screen, ctx = c.getContext("2d"), { width: w, height: h } = c;
   if (k === 1) {
-    neonScreen(c, texts[0], 1);
+    // Le fond néon (texte, halo, barres) est dessiné une fois puis recopié : seuls l'heure et le compteur changent.
+    if (!screen.base) { screen.base = document.createElement("canvas"); screen.base.width = w; screen.base.height = h; neonScreen(screen.base, texts[0], 1); }
+    ctx.drawImage(screen.base, 0, 0);
     ctx.fillStyle = "#08061a"; ctx.fillRect(40, 30, w - 80, 70);
     ctx.fillStyle = "#cfd8ff"; ctx.font = "600 44px monospace"; ctx.textAlign = "center";
     ctx.fillText(new Date().toLocaleTimeString("fr-FR"), w / 2, 82);
@@ -1349,6 +1523,10 @@ function drawBossScreen(screen, a, now, fx, texts) {
       : [["au travail", "travaille", STATE_COLOR.travaille], ["attend ton accord", "autorisation", STATE_COLOR.autorisation],
         ["attend la suite", "attend", STATE_COLOR.attend], ["en pause", "fini", STATE_COLOR.fini]]
         .map(([name, st, color]) => { const n = (a?.sessions ?? []).filter(s => stateOf(s, now) === st).length; return [name, Math.min(100, n * 25), String(n), color]; });
+    // Agents et quotas : redessinés (et renvoyés à la carte graphique) seulement quand un chiffre change.
+    const key = JSON.stringify(rows);
+    if (key === screen.key) return;
+    screen.key = key;
     rows.forEach(([name, pct, value, color], r) => {
       const y = 150 + r * 110;
       ctx.fillStyle = "#8f9bd0"; ctx.font = "500 32px Sora, sans-serif"; ctx.fillText(name, 48, y);
@@ -1524,12 +1702,14 @@ function cyberpunk(f, apt) {
 
   // Lumières d'ambiance : magenta sur l'open space, cyan sur le bureau ; arc-en-ciel en overdrive.
   const lights = [[330, 310, pink], [820, 310, cyan]].map(([x, y, tint]) => {
-    const light = new THREE.PointLight(tint, 9, 14, 1.6);
+    const light = new LightSpot(tint, 9, 14, 1.6);
     light.position.copy(P(x, y, 3.4)); g.add(light);
     return light;
   });
   const boss = f.bossScreens ?? [];
   const target = new THREE.Vector3(), toDrone = new THREE.Vector3(), yAxis = new THREE.Vector3(0, 1, 0);
+  live(head, tail, scanBar, core, ring, tip, ...eyes, ...rotors); // animés par tick ci-dessous : jamais fusionnés
+  const scanOn = glow(pink, 3), scanOff = glow(cyan, 2);
 
   f.cyber = {
     hit: drone,
@@ -1623,7 +1803,7 @@ function cyberpunk(f, apt) {
         scanning ||= Math.abs(x - scanX) < 0.2;
       });
       parcels.instanceMatrix.needsUpdate = true;
-      scanBar.material = scanning ? glow(pink, 3) : glow(cyan, 2);
+      scanBar.material = scanning ? scanOn : scanOff;
 
       // Hologramme, particules en orbite et confettis.
       core.rotation.y = still ? 0 : now * (od ? 4 : 0.9); core.rotation.x = still ? 0 : now * 0.35;
@@ -1972,7 +2152,7 @@ function buildShared(def) {
       flame.position.set(fire.x + Math.cos(k * 2.4) * 0.27, 0.64, fire.z + Math.sin(k * 2.4) * 0.27);
       g.add(flame); f.flames.push(flame);
     }
-    f.fireGlow = new THREE.PointLight("#ff9c4a", 3, 5, 2);
+    f.fireGlow = new LightSpot("#ff9c4a", 3, 5, 2);
     f.fireGlow.position.set(fire.x, 1, fire.z); g.add(f.fireGlow);
     f.haze = [ambientSmoke(g, P(145, 485, 0.9), "#aab6c7", 24, 0.7, 2.4)];
     // Distributeur, canettes et poubelle contre le fond : aucun nouveau meuble dans les trajets.
@@ -2046,7 +2226,7 @@ function buildShared(def) {
       f.windSock.add(part);
     }
     g.add(f.windSock);
-    const night = new THREE.PointLight("#ffd38a", 10, 16, 1.5);
+    const night = new LightSpot("#ffd38a", 10, 16, 1.5, 1);
     night.position.set(d.x, 3, d.z);
     g.add(night);
   }
@@ -2114,7 +2294,7 @@ function buildShared(def) {
     }
     // Grand écran mural : le direct d'OTPLOL sur Twitch, muet
     const tv = at(570, 24);
-    tvFrame = box(g, 4.8, 2.7, 0.08, mat("#0b0d14", { metalness: 0.6, roughness: 0.3 }), tv.x, 1.85, tv.z);
+    tvFrame = live(box(g, 4.8, 2.7, 0.08, mat("#0b0d14", { metalness: 0.6, roughness: 0.3 }), tv.x, 1.85, tv.z)); // cliquable
     const view = new CSS3DObject(stream);
     view.position.set(tv.x, 1.85, tv.z + 0.05);
     view.scale.setScalar(4.5 / 1280);
@@ -2308,7 +2488,7 @@ function buildShared(def) {
   if (def.id === "casino") buildCasino(f, g, helpers);
   if (def.id === "tennis") buildTennis(f, g, helpers);
   if (def.id === "golf") buildGolf(f, g, helpers);
-  return f;
+  return finishFloor(f);
 }
 
 // ---------- Casino ----------
@@ -2504,6 +2684,7 @@ function buildCasino(f, g, { at, zone, tag, staff, back }) {
   const strip = slotStripTexture();
   CASINO_MACHINES.forEach(([mx, my], k) => {
     const [name, theme] = MACHINE_THEMES[k], mg = new THREE.Group();
+    mg.userData.fixed = true; // rangée dans c.machines mais immobile : ses pièces fixes fusionnent avec l'étage
     mg.position.copy(at(mx, my));
     g.add(mg);
     box(mg, 0.72, 1.18, 0.56, cabinet, 0, 0.59, 0);
@@ -2990,7 +3171,7 @@ function buildTennis(f, g, { at, tag, staff, back }) {
     box(head, 0.9, 0.42, 0.16, headMat, 0, 0, 0);
     box(head, 0.82, 0.34, 0.02, glow("#f3f6ff", 2.2), 0, 0, 0.09);
   }
-  const lamp = new THREE.PointLight("#fff4e0", 9, 20, 1.4);
+  const lamp = new LightSpot("#fff4e0", 9, 20, 1.4, 1);
   lamp.position.set(0, 4.2, at(0, mid).z);
   g.add(lamp);
   // Une rangée de plantes de chaque côté du court, deux au fond.
@@ -3191,7 +3372,7 @@ function buildGolf(f, g, { at, tag, staff, back }) {
       return;
     }
     cyl(g, 0.012, 1.7, stick, p.x, 0.92, p.z, 6);
-    const flag = new THREE.Mesh(flagGeo, flagMat);
+    const flag = live(new THREE.Mesh(flagGeo, flagMat)); // géométrie ondulée à chaque image
     flag.position.set(p.x, 1.62, p.z); flag.rotation.y = -0.5; g.add(flag);
   });
   // Bunker : sable ratissé, lèvre d'herbe et râteau.
@@ -3315,7 +3496,7 @@ function buildGolf(f, g, { at, tag, staff, back }) {
   // Panneau du dernier putt, sur la vitre du fond.
   box(g, 4.25, 1.2, 0.08, mat("#0f2416", { metalness: 0.4 }), at(590, 0).x, 2.7, back + 0.02);
   const board = canvasPanel(g, 4.0, 1.0, 1024, 256, at(590, 0).x, 2.7, back + 0.07);
-  const sun = new THREE.PointLight("#fff8e8", 6, 18, 1.4);
+  const sun = new LightSpot("#fff8e8", 6, 18, 1.4, 1);
   sun.position.set(at(G.cx, 0).x, 4, at(0, G.cy).z);
   g.add(sun);
   f.roomTags = [tag("Practice", 90, 35), tag("Putting green", 255, 345), tag("Club-house", 725, 35)];
@@ -3819,89 +4000,121 @@ function animate(frameTime = performance.now()) {
   if (frameTime - lastFrameAt < 1000 / 60) return;
   lastFrameAt = frameTime - (frameTime - lastFrameAt) % (1000 / 60);
   const dt = Math.min(clock.getDelta(), 0.05), t = clock.elapsedTime;
+  adaptResolution(frameTime);
   animateOutside(t);
+  syncOutside();
   const focusKey = order[focus];
-  order.forEach((key, i) => {
-    const f = floors.get(key), y = f.baseY + (i < focus ? LIFT : 0);
+  let leaving = null, css3d = false;
+  for (let i = 0; i < order.length; i++) {
+    const key = order[i], f = floors.get(key), y = f.baseY + (i < focus ? LIFT : 0);
     f.group.position.y += (y - f.group.position.y) * Math.min(1, dt * 4);
     // Seul l'étage regardé est ouvert : ceux du dessus s'envolent puis disparaissent, ceux du dessous sont la tour.
     const near = i === focus;
     f.group.visible = near || (i < focus && Math.abs(y - f.group.position.y) > 0.5);
-    if (!f.group.visible) return;
-    // Les étiquettes HTML ignorent les murs : seules celles de l'étage regardé s'affichent.
-    f.tag.visible = near;
-    f.roomTags?.forEach(l => { l.visible = near; });
-    if (f.kind === "resident") {
-      f.ownerTag.visible = near;
-      f.alarmLight.intensity = f.alert ? 6 + Math.sin(t * 9) * 5 : 0;
-      f.alarm.material = f.alert && Math.sin(t * 9) > 0 ? glow("#ff3b3b", 3) : mat("#3a3f52");
-      play(f.owner, "Sitting");
-      f.owner.userData.mixer.update(dt);
-    }
-    f.staff?.forEach(r => { r.userData.mixer.update(dt); steadyProp(r, dt); });
-    // Casino, tennis et golf : leurs animations (et les parties rejouées) n'avancent que sur l'étage affiché.
-    f.tick?.(dt, t, reducedMotion.matches);
-    f.dancers?.forEach((r, k) => {
-      play(r, clubAnimation(t, k * 0.37));
-      r.rotation.y = k * 1.1 + Math.sin(t * 1.2 + k * 1.7) * 0.5;
-    });
-    const decorTime = reducedMotion.matches ? 0 : t;
-    f.records?.forEach(d => { d.rotation.y = decorTime * 1.8; });
-    f.cyber?.tick(dt, near);
-    if (f.tv) { f.tv.view.visible = near; const want = near ? f.tv.url : "about:blank"; if (f.tv.shown !== want) { f.tv.shown = want; f.tv.iframe.src = want; } }
-    f.flames?.forEach((flame, k) => {
-      flame.scale.set(1, 0.8 + Math.sin(decorTime * 5 + k * 2) * 0.3, 1);
-    });
-    if (f.fireGlow) f.fireGlow.intensity = 2.8 + Math.sin(decorTime * 4) * 0.3;
-    if (f.windSock) { f.windSock.rotation.y = 0.25 + Math.sin(decorTime * 0.6) * 0.25; f.windSock.rotation.z = Math.sin(decorTime * 2) * 0.07; }
-    f.haze?.forEach(cloud => {
-      const { spread, rise, count } = cloud.userData, pos = cloud.geometry.attributes.position;
-      for (let k = 0; k < count; k++) {
-        const phase = (decorTime * 0.12 + k / count) % 1;
-        pos.setXYZ(k, phase * spread * 1.4 + Math.sin(k * 2.4) * spread * 0.25,
-          phase * rise, Math.cos(k * 2.4) * spread * 0.4 + Math.sin(decorTime * 0.4 + k) * phase * 0.2);
-      }
-      pos.needsUpdate = true;
-    });
-    f.discos?.forEach(d => { d.rotation.y += dt * 1.2; });
-    // Décor acheté : poissons de l'aquarium et écran de la borne d'arcade (immobiles si les animations sont réduites).
-    f.fish?.forEach(p => {
-      const k = decorTime * p.speed + p.phase;
-      p.fish.position.set(p.x + Math.sin(k * 1.3) * 0.04, p.y + Math.sin(k * 2.1) * 0.03, Math.sin(k) * 0.55);
-      p.fish.rotation.y = Math.cos(k) >= 0 ? 0 : Math.PI;
-    });
-    if (f.arcade && Math.floor(decorTime * 2) !== f.arcade.frame) { f.arcade.frame = Math.floor(decorTime * 2); drawArcade(f.arcade, f.arcade.frame); }
-    f.steam?.forEach(p => {
-      const k = (t * 0.35 + p.userData.phase) % 1;
-      p.position.set(p.userData.x + Math.sin(k * 6) * 0.03, 0.86 + k * 0.45, p.userData.z);
-      p.scale.setScalar(0.6 + k * 1.4);
-      p.material.opacity = 0.35 * Math.sin(k * Math.PI);
-    });
-    f.spots?.forEach((c, k) => { c.rotation.z = Math.sin(t * 1.3 + k * 2) * 0.4; c.rotation.x = Math.cos(t * 0.9 + k) * 0.25; });
-    f.lasers?.forEach((l, k) => { l.rotation.y = Math.sin(t * (0.7 + k * 0.13) + k) * 0.9; l.rotation.x = 0.12 + Math.sin(t * 1.1 + k * 2) * 0.1; });
-    f.tiles?.forEach(tile => { tile.material.emissive.copy(palette[(tile.userData.k + Math.floor(t * 2)) % palette.length]); tile.material.emissiveIntensity = 0.35 + 0.35 * Math.abs(Math.sin(t * 3 + tile.userData.k)); });
-    if (f.eq) {
-      // Mur de LED : un égaliseur qui suit un rythme à 124 BPM
-      const { ctx, tex } = f.eq, beat = Math.pow(1 - ((t * 124 / 60) % 1), 3);
-      ctx.fillStyle = "#07040c"; ctx.fillRect(0, 0, 128, 48);
-      for (let b = 0; b < 32; b++) {
-        const h = 6 + (0.5 + 0.5 * Math.sin(t * (3 + (b % 5)) + b * 1.7)) * 26 * (0.55 + 0.45 * beat);
-        ctx.fillStyle = `hsl(${(b * 9 + t * 40) % 360} 90% 60%)`;
-        ctx.fillRect(b * 4, 48 - h, 3, h);
-      }
-      tex.needsUpdate = true;
-    }
-    // La porte de l'ascenseur s'illumine quand quelqu'un l'emprunte
-    f.elevDoor.material = [...agents.values()].some(g => g.userData.floor === key && g.position.distanceTo(ELEV) < 1.2) ? glow("#f1cd85", 0.9) : mat("#2a3042", { metalness: 0.6, roughness: 0.25 });
-  });
-  beacons.color.set(Math.sin(t * 2.5) > 0.6 ? "#ff3030" : "#3a0808");
+    stageFloor(f, f.group.visible);
+    if (!f.group.visible) continue;
+    if (!near) leaving = f;
+    css3d ||= f.hasCss3d;
+    animateFloor(f, key, near, dt, t);
+  }
+  // Les quatre lampes vont d'abord à l'étage regardé, le reste à celui qui s'envole.
+  lendLights(floors.get(focusKey), leaving);
+  beacons.color.copy(Math.sin(t * 2.5) > 0.6 ? BEACON_ON : BEACON_OFF);
   // Le haut de la tour suit l'étage regardé.
   if (order.length) {
     towerTop += (floors.get(order[focus]).baseY - 0.5 - towerTop) * Math.min(1, dt * 4);
     tower.position.y = towerTop;
     tower.scale.y = towerTop - GROUND;
   }
+  animateAgents(dt, t, focusKey);
+  animateCamera(dt, t);
+  // Le direct ne se charge que quand on regarde le Salon.
+  const url = focusKey === "lounge" ? tvUrl() : "about:blank";
+  if (url !== shownUrl) { shownUrl = url; stream.src = url; }
+  scene.updateMatrixWorld();
+  renderer.render(scene, camera);
+  // Écrans HTML (télé du Salon, télé géante) : seulement si un étage affiché en porte un ; les autres sont déjà masqués.
+  if (css3d) screens.render(scene, camera);
+  labels.render(scene, camera);
+}
 
+// Travail en 3D sur l'étage d'un résident regardé (célébrations, tableau de bord) : voir plus bas.
+function tickWorkFloor(f, dt, t) {}
+
+// Un étage affiché : ses décors animés, son robot de résident, ses ticks (casino, tennis, golf, cyberpunk…).
+function animateFloor(f, key, near, dt, t) {
+  // Les étiquettes HTML ignorent les murs : seules celles de l'étage regardé s'affichent.
+  f.tag.visible = near;
+  if (f.roomTags) for (const l of f.roomTags) l.visible = near;
+  if (f.kind === "resident") {
+    f.ownerTag.visible = near;
+    f.alarmLight.intensity = f.alert ? 6 + Math.sin(t * 9) * 5 : 0;
+    f.alarm.material = f.alert && Math.sin(t * 9) > 0 ? ALARM_ON : ALARM_OFF;
+    play(f.owner, "Sitting");
+    f.owner.userData.mixer.update(dt);
+    if (near) tickWorkFloor(f, dt, t);
+  }
+  if (f.staff) for (const r of f.staff) { r.userData.mixer.update(dt); steadyProp(r, dt); }
+  // Casino, tennis et golf : leurs animations (et les parties rejouées) n'avancent que sur l'étage affiché.
+  f.tick?.(dt, t, reducedMotion.matches);
+  f.dancers?.forEach((r, k) => {
+    play(r, clubAnimation(t, k * 0.37));
+    r.rotation.y = k * 1.1 + Math.sin(t * 1.2 + k * 1.7) * 0.5;
+  });
+  const decorTime = reducedMotion.matches ? 0 : t;
+  f.records?.forEach(d => { d.rotation.y = decorTime * 1.8; });
+  f.cyber?.tick(dt, near);
+  if (f.tv) { f.tv.view.visible = near; const want = near ? f.tv.url : "about:blank"; if (f.tv.shown !== want) { f.tv.shown = want; f.tv.iframe.src = want; } }
+  f.flames?.forEach((flame, k) => {
+    flame.scale.set(1, 0.8 + Math.sin(decorTime * 5 + k * 2) * 0.3, 1);
+  });
+  if (f.fireGlow) f.fireGlow.intensity = 2.8 + Math.sin(decorTime * 4) * 0.3;
+  if (f.windSock) { f.windSock.rotation.y = 0.25 + Math.sin(decorTime * 0.6) * 0.25; f.windSock.rotation.z = Math.sin(decorTime * 2) * 0.07; }
+  f.haze?.forEach(cloud => {
+    const { spread, rise, count } = cloud.userData, pos = cloud.geometry.attributes.position;
+    for (let k = 0; k < count; k++) {
+      const phase = (decorTime * 0.12 + k / count) % 1;
+      pos.setXYZ(k, phase * spread * 1.4 + Math.sin(k * 2.4) * spread * 0.25,
+        phase * rise, Math.cos(k * 2.4) * spread * 0.4 + Math.sin(decorTime * 0.4 + k) * phase * 0.2);
+    }
+    pos.needsUpdate = true;
+  });
+  f.discos?.forEach(d => { d.rotation.y += dt * 1.2; });
+  // Décor acheté : poissons de l'aquarium et écran de la borne d'arcade (immobiles si les animations sont réduites).
+  f.fish?.forEach(p => {
+    const k = decorTime * p.speed + p.phase;
+    p.fish.position.set(p.x + Math.sin(k * 1.3) * 0.04, p.y + Math.sin(k * 2.1) * 0.03, Math.sin(k) * 0.55);
+    p.fish.rotation.y = Math.cos(k) >= 0 ? 0 : Math.PI;
+  });
+  if (f.arcade && Math.floor(decorTime * 2) !== f.arcade.frame) { f.arcade.frame = Math.floor(decorTime * 2); drawArcade(f.arcade, f.arcade.frame); }
+  f.steam?.forEach(p => {
+    const k = (t * 0.35 + p.userData.phase) % 1;
+    p.position.set(p.userData.x + Math.sin(k * 6) * 0.03, 0.86 + k * 0.45, p.userData.z);
+    p.scale.setScalar(0.6 + k * 1.4);
+    p.material.opacity = 0.35 * Math.sin(k * Math.PI);
+  });
+  f.spots?.forEach((c, k) => { c.rotation.z = Math.sin(t * 1.3 + k * 2) * 0.4; c.rotation.x = Math.cos(t * 0.9 + k) * 0.25; });
+  f.lasers?.forEach((l, k) => { l.rotation.y = Math.sin(t * (0.7 + k * 0.13) + k) * 0.9; l.rotation.x = 0.12 + Math.sin(t * 1.1 + k * 2) * 0.1; });
+  f.tiles?.forEach(tile => { tile.material.emissive.copy(palette[(tile.userData.k + Math.floor(t * 2)) % palette.length]); tile.material.emissiveIntensity = 0.35 + 0.35 * Math.abs(Math.sin(t * 3 + tile.userData.k)); });
+  // Mur de LED : un égaliseur qui suit un rythme à 124 BPM (redessiné à 30 images/s : la texture repart moins souvent).
+  if (f.eq && Math.floor(t * 30) !== f.eq.frame) {
+    f.eq.frame = Math.floor(t * 30);
+    const { ctx, tex } = f.eq, beat = Math.pow(1 - ((t * 124 / 60) % 1), 3);
+    ctx.fillStyle = "#07040c"; ctx.fillRect(0, 0, 128, 48);
+    for (let b = 0; b < 32; b++) {
+      const h = 6 + (0.5 + 0.5 * Math.sin(t * (3 + (b % 5)) + b * 1.7)) * 26 * (0.55 + 0.45 * beat);
+      ctx.fillStyle = `hsl(${(b * 9 + t * 40) % 360} 90% 60%)`;
+      ctx.fillRect(b * 4, 48 - h, 3, h);
+    }
+    tex.needsUpdate = true;
+  }
+  // La porte de l'ascenseur s'illumine quand quelqu'un l'emprunte
+  let lift = false;
+  for (const g of agents.values()) if (g.userData.floor === key && g.position.distanceTo(ELEV) < 1.2) { lift = true; break; }
+  f.elevDoor.material = lift ? ELEV_ON : ELEV_OFF;
+}
+
+function animateAgents(dt, t, focusKey) {
   for (const g of agents.values()) {
     const u = g.userData;
     u.bubble.visible = u.floor === focusKey;
@@ -3912,7 +4125,10 @@ function animate(frameTime = performance.now()) {
       // (« toFloor » et non « floor » : les vecteurs de Three.js ont déjà une méthode floor())
       if (next.toFloor) {
         // Dans l'ascenseur : l'agent passe d'un étage à l'autre et ressort par la porte.
-        floors.get(next.toFloor).group.add(g);
+        const to = floors.get(next.toFloor).group;
+        to.add(g);
+        // Étage hors scène : personne ne mettrait sa bulle à jour, elle resterait figée à l'écran.
+        if (to.parent !== scene) u.bubble.element.style.display = "none";
         g.position.copy(ELEV);
         u.floor = next.toFloor;
         u.path.shift();
@@ -3935,25 +4151,32 @@ function animate(frameTime = performance.now()) {
     const facing = !settled ? (u.dir ?? 0) : u.slotAnim === "Dance" ? Math.PI + Math.sin(t * 3 + u.seed * 6) * 0.6 : (u.slotFacing ?? 0);
     const turn = ((facing - g.rotation.y + Math.PI * 3) % (Math.PI * 2)) - Math.PI;
     g.rotation.y += turn * Math.min(1, dt * 8);
+    // Célébration d'une tâche livrée (« Yes » ou « Jump ») : elle passe avant l'animation du lieu, le temps du geste.
+    const cheering = u.cheerUntil > t && settled;
     // Animation selon le lieu : marche, assis au poste / au salon / aux toilettes, danse au Club, signe chez le résident.
-    play(g, !settled ? "Walking" : SLOT_MOTION[u.slotAnim]?.(t, u.seed) ?? u.slotAnim ?? "Idle");
+    play(g, cheering ? u.cheer : !settled ? "Walking" : SLOT_MOTION[u.slotAnim]?.(t, u.seed) ?? u.slotAnim ?? "Idle");
     // Raquette à une place de joueur du court, putter au green, fer au practice ; rien en chemin ni ailleurs.
     holdProp(g, settled ? HELD_OF_SLOT[u.slotAnim] ?? null : null, u.seed);
-    if (g.parent?.visible) { u.mixer.update(dt); steadyProp(g, dt); } // les agents des étages fermés avancent sans être animés
+    if (!g.parent?.visible) continue; // les agents des étages fermés avancent sans être animés ni dessinés
+    u.mixer.update(dt); steadyProp(g, dt);
     u.orb.position.y = 1.78 + Math.sin(t * 2 + u.seed * 6) * 0.04;
     u.cup.visible = settled && u.place === "cafe";
-    u.puffs.forEach(p => {
+    const smoking = settled && (u.place === "smoke" || u.place === "tabac"); // au tabac, ils goûtent une puff
+    for (const p of u.puffs) {
+      p.visible = smoking;
+      if (!smoking) continue;
       const k = (t * 0.45 + p.userData.phase + u.seed) % 1;
-      p.visible = settled && (u.place === "smoke" || u.place === "tabac"); // au tabac, ils goûtent une puff
       p.position.set(0.18 + k * 0.25, 1.35 + k * 1.1, 0.25);
       p.scale.setScalar(0.6 + k * 1.8);
       p.material.opacity = 0.45 * Math.sin(k * Math.PI);
-    });
+    }
     u.ring.position.y = 0.03 + (u.stepY ?? 0) - g.position.y; // le repère reste au sol (ou sur la marche) quand le robot est assis
     u.ring.visible = u.state !== "autorisation" || Math.sin(t * 10) > -0.3;
   }
+}
 
-  // La caméra suit l'étage choisi ; le toit coiffe le penthouse.
+// La caméra suit l'étage choisi ; le toit coiffe le penthouse.
+function animateCamera(dt, t) {
   const visiting = data?.viewer?.role === "spectator" && !tourPaused;
   if (visiting) {
     const step = spectatorStep(t - tourStarted, order, data.apartments.length, innerWidth < 760 ? 1 : innerWidth < 1100 ? 2 : Math.max(1, Math.min(6, Math.floor((innerHeight - 350) / 132))));
@@ -3981,12 +4204,40 @@ function animate(frameTime = performance.now()) {
   controls.autoRotate = autoTour && data?.viewer?.role !== "spectator";
   controls.autoRotateSpeed = 0.4;
   controls.update();
-  // Le direct ne se charge que quand on regarde le Salon.
-  const url = focusKey === "lounge" ? tvUrl() : "about:blank";
-  if (url !== shownUrl) { shownUrl = url; stream.src = url; }
-  renderer.render(scene, camera);
-  screens.render(scene, camera);
-  labels.render(scene, camera);
+}
+
+// Résolution du dessin : la pleine densité Retina (×2, voire ×3 avec le zoom) quadruple les pixels à calculer pour un
+// gain à peine visible sur une scène animée. Elle est plafonnée à ×1,5, puis ajustée à la volée : si les images
+// mettent durablement plus de ~20 ms à venir, on descend d'un cran (jusqu'à ×1, voire ×0,75 sur un écran simple) ;
+// si tout est fluide depuis un moment, on remonte. Un cran qui a déjà ralenti n'est plus retenté avant une minute.
+const PIXEL_CAP = 1.5, PIXEL_STEP = 0.25;
+const pixelQuality = { scale: Infinity, avg: 16.7, last: 0, slowFor: 0, fastFor: 0, raisedAt: -1e9, ban: { level: Infinity, until: 0 } };
+const pixelCeiling = () => Math.max(1, Math.min(devicePixelRatio * (visualViewport?.scale ?? 1), PIXEL_CAP));
+const pixelFloor = () => Math.min(1, pixelCeiling()) * 0.75;
+function applyPixelRatio(ratio) {
+  const r = Math.max(pixelFloor(), Math.min(pixelCeiling(), ratio));
+  pixelQuality.scale = r;
+  if (Math.abs(renderer.getPixelRatio() - r) < 0.01) return;
+  renderer.setPixelRatio(r);
+  renderer.setSize(innerWidth, innerHeight);
+}
+function adaptResolution(now) {
+  const q = pixelQuality, gap = q.last ? now - q.last : 16.7;
+  q.last = now;
+  if (gap > 250) { q.slowFor = q.fastFor = 0; return; } // onglet repris, étage reconstruit : rien à en conclure
+  q.avg += (gap - q.avg) * 0.08;
+  if (q.avg > 20.5) { q.slowFor += gap; q.fastFor = 0; } else if (q.avg < 17.6) { q.fastFor += gap; q.slowFor = 0; } else q.slowFor = q.fastFor = 0;
+  const r = renderer.getPixelRatio();
+  if (q.slowFor > 1500 && r > pixelFloor() + 0.01) {
+    // Ralenti juste après une remontée : ce cran est trop lourd pour la machine, on ne le retente pas tout de suite.
+    if (now - q.raisedAt < 10000) q.ban = { level: r, until: now + 60000 };
+    applyPixelRatio(r - PIXEL_STEP);
+    q.slowFor = 0; q.avg = 16.7;
+  } else if (q.fastFor > 5000 && r < pixelCeiling() - 0.01) {
+    const up = Math.min(pixelCeiling(), r + PIXEL_STEP);
+    if (!(up >= q.ban.level - 0.01 && now < q.ban.until)) { applyPixelRatio(up); q.raisedAt = now; }
+    q.fastFor = 0;
+  }
 }
 
 let framed = false;
@@ -3994,8 +4245,10 @@ function resize() {
   const w = innerWidth, h = innerHeight;
   // Premier cadrage : plus de recul sur un écran en hauteur (téléphone) pour voir l'étage entier.
   if (!framed) { const k = w / h < 1 ? 1.9 : 1; camera.position.set(14 * k, 15 * k, 22 * k); framed = true; }
-  // Pleine résolution de l'écran (Retina), multipliée par le zoom de la page s'il y en a un : l'image est recalculée, pas étirée.
-  renderer.setPixelRatio(Math.min(devicePixelRatio * (visualViewport?.scale ?? 1), 3));
+  // Zoom de la page pris en compte (l'image est recalculée, pas étirée), dans la limite du plafond ci-dessus ; le
+  // cran choisi par l'ajustement automatique est gardé.
+  renderer.setPixelRatio(Math.max(pixelFloor(), Math.min(pixelCeiling(), pixelQuality.scale)));
+  pixelQuality.scale = renderer.getPixelRatio();
   renderer.setSize(w, h);
   screens.setSize(w, h);
   labels.setSize(w, h);
@@ -4141,6 +4394,15 @@ $("#showPermission").addEventListener("click", () => {
 // Panneau latéral : pas de redessin sous les doigts de quelqu'un qui saisit (lien perso de la télé).
 // Le HTML n'est réécrit que s'il a changé : un bouton n'est pas remplacé sous le pointeur toutes les deux secondes.
 let panelHtml = "";
+// Le rendu tourne à chaque état reçu (toutes les deux secondes) : un bloc n'est réécrit que si son HTML a changé,
+// sans recalcul de mise en page ni bouton remplacé sous le pointeur.
+const writtenHtml = new WeakMap();
+function setHtml(el, html) {
+  if (!el || writtenHtml.get(el) === html) return;
+  writtenHtml.set(el, html);
+  el.innerHTML = html;
+}
+const setText = (el, text) => { if (el && el.textContent !== text) el.textContent = text; };
 function setPanel(html) {
   const panel = $("#aptPanel"), typing = panel.contains(document.activeElement) && document.activeElement.matches("input, textarea");
   if (typing || html === panelHtml) return;
@@ -4179,7 +4441,7 @@ function render() {
   order.forEach((key, i) => {
     const f = floors.get(key), apt = list.find(x => x.slug === f.residentSlug);
     const lvl = apt?.game?.level && f.residentSlug === me && f.wingId === "work" ? `<span class="lvl-game">· ${apt.game.level}</span>` : "";
-    f.tag.element.innerHTML = `<span>${floorLabel(i)}${lvl}</span> ${esc(f.name)}`;
+    setHtml(f.tag.element, `<span>${floorLabel(i)}${lvl}</span> ${esc(f.name)}`);
   });
 
   let xpHost = $("#xpHost");
@@ -4189,18 +4451,18 @@ function render() {
     $(".brandline").appendChild(xpHost);
   }
   const mine = me ? list.find(x => x.slug === me) : null;
-  xpHost.innerHTML = mine?.game && !spectator ? xpBarHtml(mine.game, esc) : "";
+  setHtml(xpHost, mine?.game && !spectator ? xpBarHtml(mine.game, esc) : "");
   renderEconomyHeader(mine, spectator);
 
   const by = (ss, st) => ss.filter(s => stateOf(s, now) === st).length;
   const present = key => [...agents.values()].filter(g => g.userData.target === key);
-  $("#floorNav").innerHTML = order.map((key, i) => {
+  setHtml($("#floorNav"), order.map((key, i) => {
     const f = floors.get(key), a = f.residentSlug ? list.find(x => x.slug === f.residentSlug) : null, here = present(key);
     const busy = a ? by(a.sessions, "travaille") : here.length, alert = a && by(a.sessions, "autorisation");
     const isMe = f.residentSlug === me;
     return `<button type="button" data-floor="${i}" class="${i === focus ? "on" : ""}${isMe ? " me" : ""}${f.kind === "shared" ? " shared" : ""}${f.wingId && f.wingId !== "work" ? " wing-extra" : ""}" aria-current="${i === focus}">
       <span class="lvl">${floorLabel(i)}</span><span class="nm">${esc(f.name)}</span><span class="ct">${alert && f.wingId === "work" ? '<i class="d auth"></i>' : ""}${busy}</span></button>`;
-  }).join("");
+  }).join(""));
 
   const f = floors.get(order[focus]);
   if (f?.kind === "resident") {
@@ -4209,7 +4471,7 @@ function render() {
     const mine = a.slug === me;
     const alerts = mine ? quotaAlerts(u, now, quotaRemaining) : [];
     $("#quotaBanner").hidden = !alerts.length;
-    $("#quotaBanner").textContent = alerts.length ? "Quota bas · " + alerts.join(" · ") : "";
+    setText($("#quotaBanner"), alerts.length ? "Quota bas · " + alerts.join(" · ") : "");
     const tagline = a.profile?.tagline ? `<p class="tagline-line">${esc(a.profile.tagline)}</p>` : "";
     const machineBlock = mine && f.wingId === "work" ? `<div class="machine-block"><h4>Machines reliées</h4>${machineStatusRows(a, now, TOOLS, esc, hm)}</div>` : "";
     const todayLine = mine && todayBadges(a.today) ? `<p class="extras-muted">Aujourd’hui · ${esc(todayBadges(a.today))}</p>` : "";
@@ -4263,17 +4525,17 @@ function render() {
   const lb = $("#leaderboardDlg"), rich = fortuneLeaders(list);
   if ((board.length || rich.length) && !spectator) {
     lb.hidden = false;
-    lb.innerHTML = (board.length ? `<h4>Activité du jour</h4><ol>${board.map((r, i) => `<li><b>${esc(r.name)}</b> · ${r.actions} act. / ${r.sessions} sess.</li>`).join("")}</ol>` : "")
-      + (rich.length ? `<h4>Fortune</h4><ol>${rich.map(a => `<li><b>${esc(a.name)}</b> · ${esc(a.economy.title?.icon ?? "")} ${esc(money(a.slug === me ? economyUi.shownWallet(a.economy) : a.economy.wallet))}</li>`).join("")}</ol>` : "");
+    setHtml(lb, (board.length ? `<h4>Activité du jour</h4><ol>${board.map((r, i) => `<li><b>${esc(r.name)}</b> · ${r.actions} act. / ${r.sessions} sess.</li>`).join("")}</ol>` : "")
+      + (rich.length ? `<h4>Fortune</h4><ol>${rich.map(a => `<li><b>${esc(a.name)}</b> · ${esc(a.economy.title?.icon ?? "")} ${esc(money(a.slug === me ? economyUi.shownWallet(a.economy) : a.economy.wallet))}</li>`).join("")}</ol>` : ""));
   } else lb.hidden = true;
   // Libellés masquables : sur un écran moyen, l'en-tête ne garde que les pastilles et les nombres.
-  $("#totals").innerHTML = `<span title="Résidents"><span aria-hidden="true" class="ico">🏢</span><b>${list.length}</b><span class="lbl"> résident(s)</span></span><span title="Au travail"><i class="d" style="background:var(--work)"></i><b>${by(all, "travaille")}</b><span class="lbl"> au travail</span></span>`
-    + `<span title="Attendent un accord"><i class="d" style="background:var(--auth)"></i><b>${by(all, "autorisation")}</b><span class="lbl"> attendent un accord</span></span>`;
+  setHtml($("#totals"), `<span title="Résidents"><span aria-hidden="true" class="ico">🏢</span><b>${list.length}</b><span class="lbl"> résident(s)</span></span><span title="Au travail"><i class="d" style="background:var(--work)"></i><b>${by(all, "travaille")}</b><span class="lbl"> au travail</span></span>`
+    + `<span title="Attendent un accord"><i class="d" style="background:var(--auth)"></i><b>${by(all, "autorisation")}</b><span class="lbl"> attendent un accord</span></span>`);
   const feed = list.flatMap(x => x.feed.map(e => ({ ...e, who: x.name }))).sort((x, y) => y.t - x.t).slice(0, 14);
-  $("#ticker").innerHTML = feed.map(e => `<span>${hm(e.t)} <b>${esc(e.who)}</b> · ${esc(TOOLS[e.src]?.name ?? e.src)}${e.project ? " · " + esc(e.project) : ""} — ${esc(e.action)}</span>`).join("")
-    || "<span>En attente d'activité…</span>";
-  const waiting = by(all, "autorisation");
-  document.title = (waiting ? `(${waiting} !) ` : "") + "Penthouse";
+  setHtml($("#ticker"), feed.map(e => `<span>${hm(e.t)} <b>${esc(e.who)}</b> · ${esc(TOOLS[e.src]?.name ?? e.src)}${e.project ? " · " + esc(e.project) : ""} — ${esc(e.action)}</span>`).join("")
+    || "<span>En attente d'activité…</span>");
+  const waiting = by(all, "autorisation"), title = (waiting ? `(${waiting} !) ` : "") + "Penthouse";
+  if (document.title !== title) document.title = title;
   if (spectator && tourPaused && activeTourStep?.kind === "dashboard") updateSpectatorView(activeTourStep);
 }
 function remote() {
@@ -4380,7 +4642,7 @@ function refreshConnectionStatus() {
     const u = apt?.usage?.[provider];
     return `${provider === "claude" ? "Claude" : "ChatGPT"} : ${u?.ts && [u.five_hour?.pct, u.seven_day?.pct].some(Number.isFinite) ? "mesure reçue à " + hm(u.ts) : "aucune mesure reçue"}`;
   }).join(" · ");
-  target.innerHTML = `<h4>Réception des outils</h4>${tools}<div class="connect-machines">${machines || "Aucune machine reçue pour le moment."}</div><p><b>Quotas</b> · ${quotas}</p><p>Ces horaires indiquent la dernière réception, pas une connexion permanente. Les quotas sont séparés de l’activité des agents. Une session sans journal récent peut ne pas apparaître.</p>`;
+  setHtml(target, `<h4>Réception des outils</h4>${tools}<div class="connect-machines">${machines || "Aucune machine reçue pour le moment."}</div><p><b>Quotas</b> · ${quotas}</p><p>Ces horaires indiquent la dernière réception, pas une connexion permanente. Les quotas sont séparés de l’activité des agents. Une session sans journal récent peut ne pas apparaître.</p>`);
 }
 function grokSetupPrompt() {
   return `Connecte Grok Bot à mon penthouse (${location.origin}). Sur ton ordinateur cloud, crée /workspace/penthouse et télécharge ${location.origin}/grok-mcp.py et ${location.origin}/tour_http.py dans ce dossier. Python 3 et curl sont nécessaires.

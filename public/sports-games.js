@@ -727,7 +727,7 @@ function tennisGame(ui) {
   }
   function act(name, el) {
     if (name === "start") start();
-    else if (name === "levels") { phase = "setup"; ui.overlay(setupHtml()); }
+    else if (name === "levels") { phase = "setup"; ui.overlay(setupHtml()); ui.refresh(); }
     else if (name === "level") {
       ui.prefs.level = el.dataset.level; lv = levelOf(ui.prefs.level);
       el.closest(".sport-levels")?.querySelectorAll("[data-level]").forEach(x => x.setAttribute("aria-checked", String(x === el)));
@@ -1393,7 +1393,6 @@ export function createSportsGames({ dialog, body, esc, getToken, onResult, celeb
     if (paused) {
       ctx.fillStyle = "rgba(6, 8, 18, .55)"; ctx.fillRect(0, 0, W, H);
     }
-    renderSide();
   }
 
   function showOverlay(html) {
