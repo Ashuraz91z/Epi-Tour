@@ -9,7 +9,9 @@ export function openDb(path) {
     CREATE TABLE IF NOT EXISTS apartments (slug TEXT PRIMARY KEY, name TEXT NOT NULL, created REAL NOT NULL, token_hash TEXT NOT NULL, store TEXT NOT NULL);
     CREATE TABLE IF NOT EXISTS settings (key TEXT PRIMARY KEY, value TEXT NOT NULL);
     -- Clés supplémentaires d'un étage : celles des étages fusionnés dedans, pour que leurs machines restent reliées.
-    CREATE TABLE IF NOT EXISTS keys (token_hash TEXT PRIMARY KEY, slug TEXT NOT NULL)`);
+    CREATE TABLE IF NOT EXISTS keys (token_hash TEXT PRIMARY KEY, slug TEXT NOT NULL);
+    -- Anciens noms d'étages fusionnés ou renommés : rentrer avec l'ancien nom mène à l'étage gardé.
+    CREATE TABLE IF NOT EXISTS aliases (slug TEXT PRIMARY KEY, target TEXT NOT NULL)`);
   const row = r => r && { slug: r.slug, name: r.name, created: r.created, tokenHash: r.token_hash, store: { ...createStore(), ...JSON.parse(r.store) } };
   const one = db.prepare("SELECT * FROM apartments WHERE slug = ?");
   const tx = fn => {
@@ -59,6 +61,8 @@ export function openDb(path) {
       db.prepare("UPDATE apartments SET store = ?, created = ? WHERE slug = ?").run(JSON.stringify(store), Math.min(a.created, b.created), into);
       db.prepare("INSERT OR REPLACE INTO keys VALUES (?, ?)").run(a.tokenHash, into);
       db.prepare("UPDATE keys SET slug = ? WHERE slug = ?").run(into, from);
+      db.prepare("UPDATE aliases SET target = ? WHERE target = ?").run(into, from);
+      db.prepare("INSERT OR REPLACE INTO aliases VALUES (?, ?)").run(from, into);
       db.prepare("DELETE FROM apartments WHERE slug = ?").run(from);
       return { from: a.name, into: b.name };
     }),
@@ -66,8 +70,25 @@ export function openDb(path) {
       if (!one.get(slug) || (newSlug !== slug && one.get(newSlug))) return false;
       db.prepare("UPDATE apartments SET slug = ?, name = ? WHERE slug = ?").run(newSlug, name, slug);
       db.prepare("UPDATE keys SET slug = ? WHERE slug = ?").run(newSlug, slug);
+      if (newSlug !== slug) {
+        db.prepare("DELETE FROM aliases WHERE slug = ?").run(newSlug);
+        db.prepare("UPDATE aliases SET target = ? WHERE target = ?").run(newSlug, slug);
+        db.prepare("INSERT OR REPLACE INTO aliases VALUES (?, ?)").run(slug, newSlug);
+      }
       return true;
     }),
+    // Ancien nom ajouté à la main (migration) : seulement s'il ne désigne pas un étage existant.
+    addAlias: (slug, target) => !one.get(slug) && one.get(target) && slug !== target
+      ? (db.prepare("INSERT OR REPLACE INTO aliases VALUES (?, ?)").run(slug, target), true) : false,
+    // Étage réellement désigné par un nom : lui-même, ou celui dans lequel il a été fusionné ou renommé.
+    resolve: slug => {
+      for (let i = 0; i < 5 && !one.get(slug); i++) {
+        const alias = db.prepare("SELECT target FROM aliases WHERE slug = ?").get(slug);
+        if (!alias) break;
+        slug = alias.target;
+      }
+      return slug;
+    },
     change: (slug, fn) => tx(() => {
       const a = row(one.get(slug));
       if (!a) return;

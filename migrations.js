@@ -16,6 +16,15 @@ export const MIGRATIONS = [
       { merge: ["Linnix", "Arthur"] }, // Linnix et Arthur sont la même personne
     ],
   },
+  {
+    // Si la migration précédente a tourné avant l'existence des alias : les anciens noms mènent à l'étage gardé.
+    id: "2026-11-04-anciens-noms",
+    steps: [
+      { alias: ["Paul", "Paul-Adrien"] },
+      { alias: ["Paul-Arien", "Paul-Adrien"] },
+      { alias: ["Linnix", "Arthur"] },
+    ],
+  },
 ];
 
 export function runMigrations(db, log = console.log, migrations = MIGRATIONS) {
@@ -27,6 +36,9 @@ export function runMigrations(db, log = console.log, migrations = MIGRATIONS) {
         if (!db.get(from) || !db.get(into) || from === into) { log(`migration ${m.id} : fusion ${step.merge.join(" → ")} sautée (étage absent)`); continue; }
         const done = db.merge(from, into, mergeStores);
         log(`migration ${m.id} : ${done ? `« ${done.from} » fusionné dans « ${done.into} »` : "fusion impossible"}`);
+      } else if (step.alias) {
+        const [name, target] = step.alias;
+        log(`migration ${m.id} : ${db.addAlias(slugify(name), slugify(target)) ? `« ${name} » mène à « ${target} »` : `alias « ${name} » sauté`}`);
       } else if (step.rename) {
         const [name, newName] = step.rename, slug = slugify(name), newSlug = slugify(newName);
         if (!db.get(slug)) { log(`migration ${m.id} : renommage de « ${name} » sauté (étage absent)`); continue; }

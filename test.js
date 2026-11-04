@@ -1635,10 +1635,67 @@ test("migration des doublons : trois étages de Paul en un, Linnix dans Arthur, 
     const snapshot = JSON.stringify(db.all());
     runMigrations(db, l => lines.push(l));
     assert.equal(JSON.stringify(db.all()), snapshot);
-    assert.deepEqual(db.setting("migrations"), ["2026-11-04-doublons"]);
+    assert.deepEqual(db.setting("migrations"), ["2026-11-04-doublons", "2026-11-04-anciens-noms"]);
     // Base où ces étages n'existent pas : chaque étape est sautée sans erreur.
     const empty = openDb(":memory:");
     runMigrations(empty, () => {});
     assert.equal(empty.count(), 0);
   } finally { app.close(); }
+});
+
+test("accès : anciens noms vers l'étage gardé, entrée par clé, version, app Mac téléchargeable", async () => {
+  const { runMigrations } = await import("./migrations.js");
+  const { app, url, call, db } = await open();
+  try {
+    const keys = {};
+    for (const [i, name] of ["Paul-Adrien", "Paul-Arien", "Paul", "Linnix", "Arthur"].entries())
+      keys[name] = (await (await call("/api/join", { name, code: "porte" }, { "X-Forwarded-For": "10.7.0." + i })).json()).token;
+    runMigrations(db, () => {});
+    // Rentrer avec un ancien nom ne recrée pas d'étage vide : on arrive sur l'étage gardé.
+    for (const [name, slug] of [["Paul", "paul-adrien"], ["Paul-Arien", "paul-adrien"], ["Linnix", "arthur"]]) {
+      const j = await (await call("/api/join", { name, code: "porte" }, { "X-Forwarded-For": "10.7.1." + name.length })).json();
+      assert.equal(j.slug, slug, name);
+      assert.equal(j.token, undefined);
+    }
+    assert.equal(db.count(), 2);
+    // Entrer avec sa clé, sans code : cookie résident et identité de l'étage de la clé.
+    assert.equal((await call("/api/enter-key", { key: "faux" }, { "X-Forwarded-For": "10.7.2.1" })).status, 401);
+    const entered = await call("/api/enter-key", { key: keys["Paul-Arien"] }, { "X-Forwarded-For": "10.7.2.2" });
+    assert.deepEqual(await entered.json(), { slug: "paul-adrien", name: "Paul-Adrien" });
+    const state = await (await fetch(url + "/api/state", { headers: { Cookie: entered.headers.get("set-cookie").split(";")[0] } })).json();
+    assert.equal(state.viewer.role, "resident");
+    assert.match(state.version, /^\d{4}-\d{2}-\d{2}/);
+    assert.deepEqual((await (await fetch(url + "/api/version")).json()).migrations, ["2026-11-04-doublons", "2026-11-04-anciens-noms"]);
+    // L'app Mac en .zip : le script reste exécutable une fois décompressé.
+    const zip = await fetch(url + "/Penthouse.zip");
+    assert.equal(zip.headers.get("content-type"), "application/zip");
+    const dir = mkdtempSync(join(tmpdir(), "penthouse-zip-"));
+    try {
+      writeFileSync(join(dir, "p.zip"), Buffer.from(await zip.arrayBuffer()));
+      const { stdout } = await promisify(execFile)("python3", ["-c", `import zipfile,sys
+z=zipfile.ZipFile(sys.argv[1]); assert z.testzip() is None
+print(oct(z.getinfo("Penthouse.app/Contents/MacOS/Penthouse").external_attr>>16))`, join(dir, "p.zip")]);
+      assert.equal(stdout.trim(), "0o100755");
+    } finally { rmSync(dir, { recursive: true, force: true }); }
+  } finally { app.close(); }
+});
+
+test("installation Mac : la même commande relie la machine et installe l'app Penthouse", async () => {
+  const { app, url, call } = await open();
+  const home = mkdtempSync(join(tmpdir(), "penthouse-mac-install-"));
+  try {
+    const { token } = await (await call("/api/join", { name: "Ami", code: "porte" }, { "X-Forwarded-For": "10.8.0.1" })).json();
+    const bin = join(home, "bin"), log = join(home, "log"); mkdirSync(bin);
+    // macOS simulé : uname répond Darwin, ditto et open notent leurs arguments.
+    writeFileSync(join(bin, "uname"), "#!/bin/sh\necho Darwin\n", { mode: 0o755 });
+    for (const c of ["ditto", "open", "launchctl", "crontab"]) writeFileSync(join(bin, c), `#!/bin/sh\necho "${c} $*" >> "${log}"\n`, { mode: 0o755 });
+    const script = fileURLToPath(new URL("./public/install.sh", import.meta.url));
+    const env = { ...process.env, HOME: home, PENTHOUSE_URL: url, PATH: bin + ":" + process.env.PATH };
+    const { stdout } = await promisify(execFile)("sh", [script, token], { env });
+    assert.match(stdout, /App Penthouse installée/);
+    const calls = readFileSync(log, "utf8");
+    assert.match(calls, /^ditto -x -k .*Penthouse\.zip .*\/Applications$/m);
+    assert.match(calls, /^open .*\/Applications\/Penthouse\.app$/m);
+    assert.equal(readFileSync(join(home, ".config/tour/secret"), "utf8").trim(), token);
+  } finally { app.close(); rmSync(home, { recursive: true, force: true }); }
 });

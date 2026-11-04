@@ -32,6 +32,16 @@ const esc = s => String(s ?? "").replace(/[&<>"]/g, c => ({ "&": "&amp;", "<": "
 const hash = s => [...String(s)].reduce((h, c) => (h * 31 + c.charCodeAt(0)) | 0, 7) >>> 0;
 const hm = t => new Date(t * 1000).toLocaleTimeString("fr-FR", { hour: "2-digit", minute: "2-digit" });
 const ME = "penthouse.moi";
+// Clé de l'étage : dans l'onglet (sessionStorage) et, si le résident l'a demandé, retenue sur l'appareil (localStorage).
+const KEY = "penthouse.cle";
+try { if (!sessionStorage.getItem(KEY) && localStorage.getItem(KEY)) sessionStorage.setItem(KEY, localStorage.getItem(KEY)); } catch { /* stockage indisponible */ }
+function rememberKey(key, remember) {
+  try {
+    if (key) sessionStorage.setItem(KEY, key);
+    if (key && remember) localStorage.setItem(KEY, key);
+    else if (!remember) localStorage.removeItem(KEY);
+  } catch { /* navigation privée stricte : la clé reste dans l'onglet */ }
+}
 
 function myApt() {
   const me = JSON.parse(localStorage.getItem(ME) ?? "null");
@@ -5516,16 +5526,22 @@ function showAgent(a, s) {
   $("#agentDlg").showModal();
 }
 
+// « Relier mes agents » : une commande selon le système, qui relie la machine ET installe l'app (Mac, Windows).
 function installBlock(token) {
-  const cmd = `curl -fsSL ${location.origin}/install.sh | sh -s -- ${token}`;
-  return `<p class="connect-intro"><strong>Une commande, et c’est connecté.</strong></p>
-    <p>Colle cette commande dans le terminal de ton Mac ou de ta machine Linux. Les sessions Claude Code et Codex de la dernière heure arrivent sur ton étage, puis se mettent à jour automatiquement.</p>
-    <div class="code"><span>${esc(cmd)}</span><button type="button" data-copy="${esc(cmd)}">Copier</button></div>
-    <p>Pas de <code>/hooks</code>, pas d’outil à relancer. Le suivi lit les journaux locaux et les quotas disponibles, sans lancer de modèle. Il transmet le nom du projet, le modèle et l’état de la session, pas le contenu des conversations.</p>
-    <p>Répète la même commande sur une autre machine pour la relier au même étage.</p>
-    <details><summary>Diagnostic et clé</summary><p>Pour revérifier la connexion :</p><div class="code"><span>python3 "$HOME/.config/tour/tour-check"</span><button type="button" data-copy='python3 "$HOME/.config/tour/tour-check"'>Copier</button></div>
-    <p>La clé reste dans cet onglet et dans <code>~/.config/tour/secret</code> sur tes machines. Garde-la privée.</p>
-    <p>Mac : suivi toutes les 15 secondes. Linux : toutes les minutes via cron. Les hooks existants restent compatibles et donnent les autorisations plus précises.</p></details>`;
+  const unix = `curl -fsSL ${location.origin}/install.sh | sh -s -- ${token}`;
+  const win = `powershell -ExecutionPolicy Bypass -NoProfile -Command "& ([scriptblock]::Create((irm '${location.origin}/install.ps1'))) -Key '${token}'"`;
+  const isWindows = /Windows/i.test(navigator.userAgent);
+  const block = (title, cmd, where, open) => `<details class="os-install"${open ? " open" : ""}><summary>${title}</summary>
+    <p>${where}</p><div class="code"><span>${esc(cmd)}</span><button type="button" data-copy="${esc(cmd)}">Copier</button></div></details>`;
+  return `<p class="connect-intro"><strong>Une commande par machine, et c’est connecté.</strong> Ta clé est déjà dedans.</p>
+    ${block("🍎 Mac", unix, "Ouvre l’app Terminal, colle, Entrée. L’app Penthouse s’installe avec : coche les outils à lancer à chaque ouverture de session.", !isWindows)}
+    ${block("🪟 Windows", win, "Ouvre PowerShell (menu Démarrer › « PowerShell »), colle, Entrée. Python 3 est nécessaire : la commande t’explique comment l’installer s’il manque.", isWindows)}
+    ${block("🐧 Linux", unix, "Dans un terminal : suivi chaque minute via cron.", false)}
+    <p>Ensuite, donne une tâche à Claude Code ou Codex : ton robot s’assoit à ton bureau dans les 15 secondes. Même commande sur une autre machine pour la relier au même étage.</p>
+    <p class="extras-muted">Applis à télécharger à la main si tu préfères : <a href="/Penthouse.zip" download>Penthouse pour Mac</a> · <a href="/Penthouse-Windows.zip" download>Penthouse pour Windows</a>.</p>
+    <details><summary>Diagnostic et clé</summary><p>Pour revérifier la connexion (Mac/Linux) :</p><div class="code"><span>python3 "$HOME/.config/tour/tour-check"</span><button type="button" data-copy='python3 "$HOME/.config/tour/tour-check"'>Copier</button></div>
+    <p>La clé reste dans cet onglet (ou sur cet appareil si tu as coché « se souvenir de moi ») et dans <code>~/.config/tour/secret</code> sur tes machines. Garde-la privée : elle suffit pour entrer chez toi (« J’ai déjà ma clé d’étage » à l’accueil).</p>
+    <p>Le suivi lit les journaux locaux de Claude Code et Codex (nom du projet, modèle, état), jamais le contenu des conversations. Les hooks existants restent compatibles.</p></details>`;
 }
 function refreshConnectionStatus() {
   const target = $("#connectionStatus");
@@ -5798,8 +5814,12 @@ $("#join").addEventListener("submit", async e => {
     const j = await r.json();
     if (!r.ok) throw new Error(j.error ?? "Entrée impossible.");
     localStorage.setItem(ME, JSON.stringify({ slug: j.slug, name: j.name }));
-    if (j.token) sessionStorage.setItem("penthouse.cle", j.token);
-    else sessionStorage.removeItem("penthouse.cle");
+    const remember = !!form.remember?.checked;
+    // Étage existant : la clé de l'appareil reste valable si c'est bien la sienne (vérifiée juste après).
+    if (j.token) rememberKey(j.token, remember);
+    else if (localStorage.getItem(KEY)) sessionStorage.setItem(KEY, localStorage.getItem(KEY));
+    else sessionStorage.removeItem(KEY);
+    identityChecked = false;
     order = [];
     lastStreamAt = 0;
     await tick();
@@ -5809,10 +5829,63 @@ $("#join").addEventListener("submit", async e => {
   finally { button.disabled = false; }
 });
 
+// Entrer avec sa clé d'étage : pas besoin du code ni du nom, on arrive chez soi avec tout (robots, jeux, thème).
+async function enterWithKey(key, remember) {
+  const r = await fetch("/api/enter-key", { method: "POST", body: JSON.stringify({ key }) });
+  const j = await r.json();
+  if (!r.ok) throw new Error(j.error ?? "Clé refusée.");
+  localStorage.setItem(ME, JSON.stringify({ slug: j.slug, name: j.name }));
+  rememberKey(key, remember);
+  identityChecked = true;
+  order = [];
+  lastStreamAt = 0;
+  return j;
+}
+$("#enterKey").addEventListener("submit", async e => {
+  e.preventDefault();
+  const form = e.currentTarget, button = form.querySelector("button");
+  button.disabled = true; $("#keyErr").textContent = "";
+  try {
+    await enterWithKey(String(form.key.value).trim(), form.remember.checked);
+    await tick();
+    ensureStream(true);
+  } catch (error) { $("#keyErr").textContent = error.message || "Serveur injoignable. Réessaie."; }
+  finally { button.disabled = false; }
+});
+$("#forgetBtn").addEventListener("click", () => {
+  try { localStorage.removeItem(KEY); } catch { /* rien à oublier */ }
+  $("#forgetBtn").hidden = true;
+});
+// L'étage affiché comme « chez toi » est celui de la clé : un ancien nom, un étage fusionné ou renommé, ou une entrée
+// sous un autre nom ne doivent pas cacher tes robots.
+let identityChecked = false, autoEnterTried = false;
+async function checkIdentity() {
+  const key = sessionStorage.getItem(KEY);
+  if (identityChecked || !key) return;
+  identityChecked = true;
+  try {
+    const r = await fetch("/api/connection", { headers: { "X-Tour-Token": key } });
+    if (!r.ok) return;
+    const j = await r.json(), me = JSON.parse(localStorage.getItem(ME) ?? "null");
+    if (me?.slug !== j.slug) {
+      localStorage.setItem(ME, JSON.stringify({ slug: j.slug, name: j.name }));
+      order = [];
+      if (data) applyLoadedState();
+    }
+  } catch { /* nouvel essai au prochain chargement */ }
+}
+
 let tickPending = false, lastStreamAt = 0;
 function applyLoadedState() {
   if (!data) return;
   const spectator = data.viewer?.role === "spectator";
+  if (!spectator) checkIdentity();
+  // Version du site, pour vérifier qu'il a bien repris la dernière mise à jour ; bouton pour oublier la clé retenue.
+  const versionText = data.version ? `Version ${data.version}` : "";
+  if ($("#versionLine").textContent !== versionText) $("#versionLine").textContent = versionText;
+  let remembered = false;
+  try { remembered = !!localStorage.getItem(KEY); } catch { /* stockage indisponible */ }
+  $("#forgetBtn").hidden = spectator || !remembered;
   if (spectator && !document.body.dataset.spectating) {
     tourStarted = clock.elapsedTime; tourPaused = false;
     document.body.dataset.spectating = "true";
@@ -5845,6 +5918,10 @@ async function tick() {
   tickPending = true;
   try {
     const r = await fetch("/api/state", { cache: "no-store" });
+    if (r.status === 401 && !autoEnterTried && localStorage.getItem(KEY)) {
+      autoEnterTried = true;
+      try { await enterWithKey(localStorage.getItem(KEY), true); tickPending = false; return tick(); } catch { /* clé périmée : accueil normal */ }
+    }
     if (r.status === 401) {
       stateStream?.close(); stateStream = null; lastStreamAt = 0;
       $("#lobby").hidden = false; $("#app").hidden = true;

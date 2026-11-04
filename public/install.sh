@@ -36,5 +36,16 @@ chmod 600 "$DIR/secret"
 python3 "$DIR/tour-sync"
 python3 "$DIR/tour-check"
 python3 "$DIR/install-sync.py"
+# Sur Mac : l'app Penthouse (lance tes outils à chaque ouverture de session) s'installe avec, dans ~/Applications.
+# Facultative : PENTHOUSE_SANS_APP=1 pour s'en passer ; le suivi fonctionne sans elle.
+if [ "$(uname)" = "Darwin" ] && [ "${PENTHOUSE_SANS_APP:-}" != "1" ]; then
+  mkdir -p "$HOME/Applications"
+  if curl -fsSL "$SITE/Penthouse.zip" -o "$STAGE/Penthouse.zip" && ditto -x -k "$STAGE/Penthouse.zip" "$HOME/Applications"; then
+    echo "App Penthouse installée dans ~/Applications : elle s'ouvre pour choisir les outils à lancer à chaque ouverture de session."
+    open "$HOME/Applications/Penthouse.app" || true
+  else
+    echo "App Penthouse non installée (facultative) : le suivi de tes agents fonctionne quand même."
+  fi
+fi
 echo "C’est connecté. Les sessions locales récentes et les quotas disponibles sont envoyés au site automatiquement."
 echo 'Pour vérifier plus tard : python3 "$HOME/.config/tour/tour-check"'

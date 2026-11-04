@@ -1,17 +1,19 @@
 // Le penthouse : un site où chacun entre avec son nom, reçoit un appartement et y relie ses agents.
 // Les collecteurs envoient leurs événements sur POST /e avec la clé de l'appartement (même format que la v1).
 import { createHash, createHmac, randomBytes, timingSafeEqual } from "node:crypto";
-import { readFileSync } from "node:fs";
+import { readFileSync, readdirSync, statSync } from "node:fs";
 import { createServer } from "node:http";
 import { dirname, join } from "node:path";
 import { fileURLToPath } from "node:url";
-import { gzipSync } from "node:zlib";
+import { crc32, deflateRawSync, gzipSync } from "node:zlib";
 import { ingest, sanitizeProfile } from "./core.js";
 import { CASINO } from "./public/economy-data.js";
 import { DAILY_QUESTS, claimQuest, onIngestGame, performSpaceAction, pullToasts, publicGame, visitWing } from "./gamify.js";
 import { buyItem, onIngestEconomy, playCasino, playSport, questReward, setSubscription, spectatorEconomy, tip } from "./economy.js";
 
 const ROOT = dirname(fileURLToPath(import.meta.url));
+// Version affichée dans le menu « ⋯ » : permet de vérifier que le site a bien repris la dernière version.
+export const VERSION = "2026-11-04.5";
 const MAX_BODY = 256 * 1024;
 const MAX_APARTMENTS = 50;
 const acceptsGzip = req => /(?:^|,)\s*gzip\s*(?:,|$)/i.test(req.headers["accept-encoding"] ?? "");
@@ -40,7 +42,7 @@ const FILES = {
   "/install-sync.py": ["collecteurs/install-sync.py", "text/plain"],
   "/tour-check": ["collecteurs/tour-check", "text/plain"],
   "/cursor-notify.py": ["collecteurs/cursor-notify.py", "text/plain"],
-  "/install.sh": ["public/install.sh", "text/plain"], "/assets/CREDITS.txt": ["public/assets/CREDITS.txt", "text/plain"],
+  "/install.sh": ["public/install.sh", "text/plain"], "/install.ps1": ["public/install.ps1", "text/plain"], "/assets/CREDITS.txt": ["public/assets/CREDITS.txt", "text/plain"],
 };
 
 // Ressources immuables pendant la vie du processus ; le déploiement redémarre l'application.
@@ -112,6 +114,49 @@ export function parseTvLink(raw) {
 }
 export const publicTv = tv => ({ channel: tv?.channel ?? "auto", ...(tv?.custom ? { custom: tv.custom } : {}) });
 
+// L'app Mac (mac/Penthouse.app) en .zip, fabriquée une fois en mémoire : droits Unix conservés pour que l'Utilitaire
+// d'archive de macOS (ou ditto) garde le script exécutable.
+const zips = new Map();
+export const macAppZip = () => folderZip("mac", "Penthouse.app");
+export const windowsAppZip = () => folderZip("", "windows", "Penthouse");
+// Archive .zip d'un dossier du dépôt (droits Unix conservés), fabriquée une fois en mémoire.
+export function folderZip(parent, folder, rename = folder) {
+  const cacheKey = `${parent}/${folder}`;
+  if (zips.has(cacheKey)) return zips.get(cacheKey);
+  const base = join(ROOT, parent), entries = [];
+  const walk = rel => {
+    const full = join(base, rel), st = statSync(full);
+    if (st.isDirectory()) {
+      entries.push({ name: rename + rel.slice(folder.length) + "/", mode: 0o40755, data: Buffer.alloc(0) });
+      for (const child of readdirSync(full).sort()) walk(rel + "/" + child);
+    } else entries.push({ name: rename + rel.slice(folder.length), mode: st.mode & 0o111 ? 0o100755 : 0o100644, data: readFileSync(full) });
+  };
+  walk(folder);
+  const locals = [], centrals = [];
+  let offset = 0;
+  for (const e of entries) {
+    const name = Buffer.from(e.name), packed = e.data.length ? deflateRawSync(e.data) : e.data, method = e.data.length ? 8 : 0;
+    const crc = crc32(e.data) >>> 0;
+    const local = Buffer.alloc(30);
+    local.writeUInt32LE(0x04034b50, 0); local.writeUInt16LE(20, 4); local.writeUInt16LE(0x0800, 6); local.writeUInt16LE(method, 8);
+    local.writeUInt16LE(0, 10); local.writeUInt16LE(0x5b84, 12); local.writeUInt32LE(crc, 14);
+    local.writeUInt32LE(packed.length, 18); local.writeUInt32LE(e.data.length, 22); local.writeUInt16LE(name.length, 26); local.writeUInt16LE(0, 28);
+    const central = Buffer.alloc(46);
+    central.writeUInt32LE(0x02014b50, 0); central.writeUInt16LE((3 << 8) | 20, 4); central.writeUInt16LE(20, 6); central.writeUInt16LE(0x0800, 8);
+    central.writeUInt16LE(method, 10); central.writeUInt16LE(0, 12); central.writeUInt16LE(0x5b84, 14); central.writeUInt32LE(crc, 16);
+    central.writeUInt32LE(packed.length, 20); central.writeUInt32LE(e.data.length, 24); central.writeUInt16LE(name.length, 28);
+    central.writeUInt32LE((e.mode << 16) >>> 0, 38); central.writeUInt32LE(offset, 42);
+    locals.push(local, name, packed); centrals.push(central, name);
+    offset += local.length + name.length + packed.length;
+  }
+  const dir = Buffer.concat(centrals), end = Buffer.alloc(22);
+  end.writeUInt32LE(0x06054b50, 0); end.writeUInt16LE(entries.length, 8); end.writeUInt16LE(entries.length, 10);
+  end.writeUInt32LE(dir.length, 12); end.writeUInt32LE(offset, 16);
+  const zip = Buffer.concat([...locals, dir, end]);
+  zips.set(cacheKey, zip);
+  return zip;
+}
+
 // Vue publique : activité et quotas autorisés, sans conversations, machines ni détails de compte.
 export function spectatorSnapshot(a) {
   const usage = {};
@@ -155,8 +200,8 @@ export function createApp({ code, db }) {
     const casino = { jackpot: Math.floor(jackpot.pool), lastWinner: jackpot.lastWinner ?? null };
     let resident, spectator;
     return {
-      resident: () => resident ??= { now, viewer: { role: "resident", room }, tv, casino, apartments },
-      spectator: () => spectator ??= { now, viewer: { role: "spectator", room }, tv: publicTv(tv), casino, apartments: apartments.map(spectatorSnapshot) },
+      resident: () => resident ??= { now, version: VERSION, viewer: { role: "resident", room }, tv, casino, apartments },
+      spectator: () => spectator ??= { now, version: VERSION, viewer: { role: "spectator", room }, tv: publicTv(tv), casino, apartments: apartments.map(spectatorSnapshot) },
     };
   };
   // Flux SSE : un seul minuteur pour tous les onglets ouverts, l'état est calculé une fois toutes les 2 s.
@@ -211,6 +256,14 @@ export function createApp({ code, db }) {
     if (req.method === "GET" && FILES[url.pathname]) {
       const [file, type] = FILES[url.pathname];
       return serve(file, `${type}; charset=utf-8`);
+    }
+    if (req.method === "GET" && url.pathname === "/api/version") {
+      return json(200, { version: VERSION, migrations: db.setting("migrations") ?? [] });
+    }
+    if (req.method === "GET" && (url.pathname === "/Penthouse.zip" || url.pathname === "/Penthouse-Windows.zip")) {
+      let zip;
+      try { zip = url.pathname === "/Penthouse.zip" ? macAppZip() : windowsAppZip(); } catch { return send(404); }
+      return send(200, zip, "application/zip", { "Content-Disposition": `attachment; filename="${url.pathname.slice(1)}"`, "Cache-Control": "public, max-age=0, must-revalidate" });
     }
     if (req.method === "GET" && url.pathname === "/api/connection") {
       const apt = byToken(req.headers["x-tour-token"]);
@@ -427,10 +480,18 @@ export function createApp({ code, db }) {
       }
       // Entrer dans le penthouse (nom + code) ; un nouveau nom reçoit son appartement et sa clé.
       // /api/key exige la clé actuelle pour renouveler celle d’un appartement existant.
+      // Entrer avec la clé de son étage (celle de « Relier mes agents ») : elle prouve déjà l'entrée avec le code.
+      if (url.pathname === "/api/enter-key") {
+        if (tooMany(ip)) return json(429, { error: "Trop d'essais, réessaie dans quelques minutes." });
+        const apt = byToken(String(p.key ?? "").trim());
+        if (!apt) return json(401, { error: "Clé inconnue. Copie-la depuis « Relier mes agents » ou ~/.config/tour/secret sur un Mac relié." });
+        return json(200, { slug: apt.slug, name: apt.name }, { "Set-Cookie": cookieFor(pass) });
+      }
       if (url.pathname === "/api/join" || url.pathname === "/api/key") {
         if (tooMany(ip)) return json(429, { error: "Trop d'essais, réessaie dans quelques minutes." });
         if (!same(String(p.code ?? ""), code)) return json(403, { error: "Code du penthouse incorrect." });
-        const name = String(p.name ?? "").trim().slice(0, 32), slug = slugify(name);
+        // Un ancien nom (étage fusionné ou renommé) mène à l'étage gardé, au lieu de recréer un étage vide.
+        const name = String(p.name ?? "").trim().slice(0, 32), slug = db.resolve(slugify(name));
         if (!slug) return json(400, { error: "Choisis un nom." });
         if (["roof", "lounge", "club", "casino", "tennis", "golf"].includes(slug)) return json(400, { error: "Ce nom est réservé aux espaces communs. Choisis un autre nom." });
         let apt = db.get(slug), token;
