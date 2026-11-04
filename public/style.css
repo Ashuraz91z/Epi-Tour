@@ -441,7 +441,7 @@ body.kiosk-mode #moreWrap { display: none !important; }
 .dlg .eco-limits { grid-column: 1 / -1; margin: 0; font-size: 12px; }
 .eco-limits b { color: var(--fg); font-family: var(--mono); font-weight: 600; }
 .eco-betbar .eco-banner { grid-column: 1 / -1; margin: 0; }
-.eco-games { display: grid; gap: 12px; grid-template-columns: repeat(auto-fit, minmax(250px, 1fr)); }
+.eco-games { display: grid; gap: 12px; grid-template-columns: repeat(auto-fit, minmax(240px, 1fr)); }
 .eco-game { display: grid; align-content: start; gap: 10px; padding: 14px; border-radius: 12px; background: radial-gradient(circle at 50% 0, #3a1d10aa, #121826 70%); border: 1px solid #e8c27a33; }
 .eco-dlg .eco-game h4 { margin: 0; }
 .eco-reels { display: flex; justify-content: center; gap: 8px; padding: 6px 0; }
@@ -474,6 +474,172 @@ body.kiosk-mode #moreWrap { display: none !important; }
 .dlg .eco-outcome { margin: 0; font-size: 13px; text-align: center; color: var(--fg); }
 .dlg .eco-outcome.win { color: var(--work); }
 .dlg .eco-outcome.loss { color: #ff9a9a; }
+.eco-play.alt { color: var(--gold); background: #e8c27a14; border: 1px solid #e8c27a88; }
+.eco-play.alt:hover:not(:disabled) { background: #e8c27a29; }
+.eco-reels.jackpot .eco-reel { border-color: #fff3c4; box-shadow: 0 0 0 3px #e8c27a, 0 0 24px #ffd76a; }
+/* Jackpot commun : bandeau en tête du casino, montant qui compte jusqu'à sa nouvelle valeur. */
+.eco-jackpot { position: relative; overflow: hidden; display: grid; grid-template-columns: auto auto 1fr; align-items: center; gap: 6px 16px; margin-bottom: 12px;
+  padding: 12px 16px; border-radius: 14px; border: 1px solid #e8c27a99; background: linear-gradient(110deg, #26180699, #4a3110 45%, #261806);
+  box-shadow: inset 0 1px 0 #ffffff22, 0 0 24px #e8c27a1f; }
+.eco-jackpot::after { content: ""; position: absolute; inset: 0; pointer-events: none; background: linear-gradient(100deg, transparent 35%, #fff3d622 50%, transparent 65%);
+  transform: translateX(-100%); animation: eco-shine 5s ease-in-out infinite; }
+@keyframes eco-shine { 0%, 55% { transform: translateX(-100%); } 100% { transform: translateX(100%); } }
+.eco-jp-icon { font-size: 32px; line-height: 1; }
+.eco-dlg .eco-jackpot h4 { margin: 0 0 2px; }
+.eco-jp-amount { display: block; min-width: 9ch; font: 800 26px/1.1 var(--mono); color: #ffe7a8; text-shadow: 0 0 14px #e8c27a88; white-space: nowrap; }
+.dlg .eco-jp-info { margin: 0; font-size: 12px; color: #e9d6ad; }
+.eco-jp-last { display: block; margin-top: 4px; color: #c9b58c; }
+.eco-jp-last b { color: #fff3d6; }
+.eco-jackpot.up .eco-jp-amount { animation: eco-jp-up .7s ease-out; }
+@keyframes eco-jp-up { 30% { color: #fff; transform: scale(1.06); } }
+.eco-jackpot.won { border-color: #fff3c4; animation: eco-jp-won .5s ease-in-out 6 alternate; }
+@keyframes eco-jp-won { to { box-shadow: 0 0 0 3px #e8c27a, 0 0 40px #ffd76a; } }
+.eco-party { position: fixed; inset: 0; z-index: 60; display: grid; place-items: center; overflow: hidden; pointer-events: none; transition: opacity .5s; }
+.eco-party.out { opacity: 0; }
+.eco-party-title { padding: 18px 30px; border-radius: 18px; border: 2px solid var(--gold); background: #1a1206ee; box-shadow: 0 0 60px #e8c27a88; text-align: center;
+  font: 800 20px var(--mono); letter-spacing: .16em; text-transform: uppercase; color: var(--gold); animation: eco-party-pop .6s cubic-bezier(.2, 1.6, .4, 1) both; }
+.eco-party-title b { display: block; margin-top: 6px; font-size: 40px; letter-spacing: 0; color: #fff3c4; text-transform: none; }
+@keyframes eco-party-pop { from { transform: scale(.3); opacity: 0; } }
+.eco-coin { position: absolute; top: -48px; left: var(--x); font-size: var(--s); animation: eco-coin-fall var(--d) linear var(--delay) both; }
+@keyframes eco-coin-fall { to { transform: translateY(calc(100vh + 96px)) rotate(var(--r)); } }
+/* Grille du casino : le blackjack sur toute la largeur, puis les trois jeux rapides. */
+.eco-game { min-width: 0; }
+.eco-games .eco-bj { grid-column: 1 / -1; }
+.eco-bj-body { display: grid; grid-template-columns: minmax(0, 1fr) 230px; gap: 14px; align-items: stretch; }
+.eco-felt { position: relative; display: grid; grid-template-rows: auto 1fr auto; gap: 8px; min-height: 236px; padding: 12px 16px 16px;
+  border: 6px solid #5b3a18; border-radius: 16px 16px 120px 120px / 16px 16px 46px 46px;
+  background: radial-gradient(ellipse at 50% 0, #2a8556, #11492c 70%, #0b3620); box-shadow: inset 0 0 0 2px #d4af3766, inset 0 10px 30px #0006, 0 8px 20px #0007; }
+.eco-shoe { position: absolute; top: 10px; right: 14px; width: 32px; height: 44px; border-radius: 4px; border: 2px solid #f5efe0;
+  background: repeating-linear-gradient(45deg, #8a1f2e 0 4px, #6d1623 4px 8px); box-shadow: 2px 2px 0 #f5efe0, 4px 4px 0 #d9d1bf, 6px 6px 10px #0008; }
+.eco-felt.dealing .eco-shoe { animation: eco-shoe .4s ease-in-out infinite alternate; }
+@keyframes eco-shoe { to { transform: translate(-4px, 3px) rotate(-6deg); } }
+.eco-bj-row { display: grid; gap: 6px; min-width: 0; }
+.eco-bj-row.dealer { padding-right: 52px; }
+.eco-bj-label { font-size: 12px; color: #d4eedd; letter-spacing: .04em; }
+.eco-bj-label b { margin-left: 4px; padding: 1px 9px; border-radius: 999px; font: 700 13px var(--mono); color: #fff; background: #0009; }
+.eco-bj-hand { display: flex; align-items: center; min-height: 76px; }
+.eco-bj-hand .bj-card + .bj-card { margin-left: 6px; }
+.eco-felt-arc, .eco-bj-stamp { align-self: center; justify-self: center; text-align: center; }
+.eco-felt-arc { font: 600 10px var(--mono); letter-spacing: .14em; text-transform: uppercase; color: #e8c27a88; }
+.eco-bj-stamp { padding: 3px 14px; border: 3px solid currentColor; border-radius: 8px; transform: rotate(-6deg); background: #0009;
+  font: 800 17px var(--mono); letter-spacing: .12em; text-transform: uppercase; }
+.eco-bj-stamp.win { color: var(--work); }
+.eco-bj-stamp.bj { color: var(--gold); box-shadow: 0 0 18px #e8c27a88; }
+.eco-bj-stamp.push { color: #c9cede; }
+.eco-bj-stamp.loss { color: #ff9a9a; }
+.eco-bj-stamp.pop { animation: eco-stamp .45s cubic-bezier(.2, 1.5, .4, 1); }
+@keyframes eco-stamp { from { transform: rotate(-6deg) scale(1.8); opacity: 0; } }
+.bj-card { position: relative; flex: none; display: grid; place-items: center; width: 52px; height: 74px; border-radius: 6px; color: #15161c;
+  background: linear-gradient(160deg, #fff, #efe9dc); box-shadow: 0 3px 8px #0008, inset 0 0 0 1px #0002; }
+.bj-card.red { color: #c8283c; }
+.bj-card i { position: absolute; top: 4px; left: 5px; font: 700 12px/1 var(--mono); font-style: normal; text-align: center; }
+.bj-card i.br { top: auto; left: auto; bottom: 4px; right: 5px; transform: rotate(180deg); }
+.bj-card b { font-size: 26px; line-height: 1; }
+.bj-card.back { border: 3px solid #f5efe0; background: repeating-linear-gradient(45deg, #8a1f2e 0 5px, #6d1623 5px 10px); }
+.bj-card.deal { animation: bj-deal .36s cubic-bezier(.2, .8, .3, 1) both; }
+@keyframes bj-deal { from { transform: translate(var(--dx, 120px), var(--dy, -60px)) rotate(24deg) scale(.8); opacity: .4; } }
+.bj-card.flip-out { animation: bj-flip-out .17s ease-in forwards; }
+.bj-card.flip-in { animation: bj-flip-in .17s ease-out; }
+@keyframes bj-flip-out { to { transform: scaleX(0); } }
+@keyframes bj-flip-in { from { transform: scaleX(0); } }
+.eco-felt .sweep { transition: opacity .25s, transform .25s; opacity: 0; transform: translateY(-12px); }
+.eco-bj-side { display: grid; align-content: start; gap: 10px; }
+.dlg .eco-bj-side .eco-paytable { text-align: left; }
+.dlg .eco-bj-bet { margin: 0; font-size: 13px; color: var(--mute); }
+.eco-bj-bet b { font-family: var(--mono); color: var(--gold); }
+.eco-bj-actions { display: grid; grid-template-columns: 1fr 1fr; gap: 8px; }
+.eco-bj-actions .wide, .eco-bj-note { grid-column: 1 / -1; }
+.eco-bj-note { font-size: 12px; color: var(--mute); }
+.dlg .eco-bj-side .eco-outcome { text-align: left; }
+/* Sport : tennis et golf. */
+.dlg .eco-sport-hint { margin: 0 0 12px; border-color: #7cc4ff55; background: #7cc4ff12; color: #cfe8ff; }
+.eco-sport-hint b { color: #fff; }
+.eco-games.eco-sports { grid-template-columns: repeat(auto-fit, minmax(280px, 1fr)); }
+.eco-sport-game { background: radial-gradient(circle at 50% 0, #123a2baa, #121826 70%); border-color: #7cc4ff33; }
+.eco-options { display: grid; gap: 6px; margin: 0; padding: 0; border: 0; min-width: 0; }
+.eco-options legend { padding: 0; margin-bottom: 4px; font-size: 12px; color: var(--mute); }
+.eco-opt { position: relative; display: block; }
+.eco-dlg .eco-opt input { position: absolute; inset: 0; width: 100%; height: 100%; min-height: 0; margin: 0; padding: 0; opacity: 0; cursor: pointer; }
+.eco-opt-card { display: grid; grid-template-columns: 28px minmax(0, 1fr) auto; align-items: center; gap: 2px 8px; padding: 8px 10px; border-radius: 10px;
+  border: 1px solid var(--line); background: #0d1220; transition: border-color .15s, background .15s; }
+.eco-opt:hover .eco-opt-card { border-color: #e8c27a77; }
+.eco-opt input:checked + .eco-opt-card { border-color: var(--gold); background: #e8c27a14; box-shadow: inset 0 0 0 1px var(--gold); }
+.eco-opt input:focus-visible + .eco-opt-card { outline: 2px solid var(--gold); outline-offset: 2px; }
+.eco-opt-card .ico { grid-row: 1 / span 3; font-size: 20px; text-align: center; }
+.eco-opt-card b { font-size: 13px; color: var(--fg); font-weight: 600; }
+.eco-opt-card .pay { font: 700 14px var(--mono); color: var(--gold); text-align: right; }
+.eco-opt-card small { grid-column: 2 / -1; font-size: 11px; color: var(--mute); }
+.eco-opt-card small span { font-family: var(--mono); color: var(--fg); }
+.eco-opt-card .eco-bar { grid-column: 2 / -1; height: 4px; }
+/* Court de tennis vu de dessus : filet au milieu, toi à gauche, le pro à droite. */
+.eco-court { position: relative; height: 112px; border-radius: 10px; overflow: hidden; background: #2f7d4f; box-shadow: inset 0 0 0 1px #0004; }
+.eco-court-lines { position: absolute; inset: 12px 18px; border: 2px solid #eef2f7cc; background: #2d6aa6;
+  background-image: linear-gradient(#eef2f7cc, #eef2f7cc), linear-gradient(#eef2f7cc, #eef2f7cc);
+  background-size: 100% 2px; background-position: 0 14%, 0 86%; background-repeat: no-repeat; }
+.eco-court-lines::before { content: ""; position: absolute; left: 25%; right: 25%; top: 14%; bottom: 14%; border-left: 2px solid #eef2f7cc; border-right: 2px solid #eef2f7cc; }
+.eco-court-lines::after { content: ""; position: absolute; left: 25%; right: 25%; top: 50%; height: 2px; margin-top: -1px; background: #eef2f7cc; }
+.eco-net { position: absolute; top: 6px; bottom: 6px; left: 50%; width: 4px; margin-left: -2px; background: repeating-linear-gradient(#fff 0 3px, #8b97a8 3px 6px); box-shadow: 0 0 0 1px #0005; }
+.eco-tp { position: absolute; top: 50%; width: 16px; height: 16px; margin: -8px; border-radius: 50%; border: 2px solid #fff; box-shadow: 0 2px 4px #0007; }
+.eco-tp.me { left: 9%; background: var(--gold); }
+.eco-tp.pro { left: 91%; background: #7cc4ff; }
+.eco-tball { position: absolute; left: 15%; top: 64%; width: 9px; height: 9px; margin: -4.5px; border-radius: 50%; background: #e2f55a; box-shadow: 0 2px 3px #0008;
+  transition: left .2s ease-out, top .2s ease-out; z-index: 1; }
+.eco-court.rally .eco-tball { animation: eco-rally-x .8s ease-in-out infinite alternate, eco-rally-y .4s ease-in-out infinite alternate; }
+.eco-court.rally .eco-tp { animation: eco-tp-move .8s ease-in-out infinite alternate; }
+.eco-court.rally .eco-tp.pro { animation-delay: -.4s; }
+@keyframes eco-rally-x { from { left: 13%; } to { left: 87%; } }
+@keyframes eco-rally-y { from { top: 34%; } to { top: 66%; } }
+@keyframes eco-tp-move { from { transform: translateY(-14px); } to { transform: translateY(14px); } }
+.eco-score { display: grid; gap: 4px; padding: 8px 10px; border-radius: 8px; border: 1px solid #2c5a3f; background: #0b1a13; font: 600 12px var(--mono); }
+.eco-score-row { display: grid; grid-template-columns: 92px minmax(0, 1fr) 26px; align-items: center; gap: 8px; color: #b9d8c4; }
+.eco-score-name { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.eco-score-strip { display: flex; gap: 3px; min-height: 10px; }
+.eco-score-strip i { flex: none; width: 10px; height: 10px; border-radius: 2px; background: #ffffff12; }
+.eco-score-row.toi .eco-score-strip i.on { background: var(--gold); }
+.eco-score-row.pro .eco-score-strip i.on { background: #7cc4ff; }
+.eco-score-row b { font-size: 18px; color: #fff; text-align: right; }
+.eco-score-row.won .eco-score-name, .eco-score-row.won b { color: var(--gold); }
+.eco-score-row.hit b { animation: eco-score-hit .3s ease-out; }
+@keyframes eco-score-hit { 40% { transform: scale(1.35); color: var(--gold); } }
+/* Green vu de dessus : le trou et son drapeau à droite, repères de 1 m, 4 m et 12 m. */
+.eco-green-wrap { position: relative; height: 136px; border-radius: 12px; overflow: hidden; background: radial-gradient(ellipse at 50% 50%, #2a6b3c, #1a4a2a 80%); }
+.eco-green { position: absolute; inset: 8px 6px; border-radius: 50%; background: repeating-linear-gradient(90deg, #4fae5c 0 18px, #48a355 18px 36px);
+  box-shadow: inset 0 0 0 4px #3d8f4a, inset 0 0 26px #0004; }
+.eco-gmark { position: absolute; top: 50%; width: 6px; height: 6px; margin: -3px; border-radius: 50%; background: #ffffff66; }
+.eco-gmark span { position: absolute; top: 12px; left: 50%; transform: translateX(-50%); font: 600 10px var(--mono); color: #e9ffe9aa; white-space: nowrap; }
+.eco-gmark.on { background: #fff; }
+.eco-gmark.on span { color: #fff; }
+.eco-aim { position: absolute; top: 50%; height: 0; border-top: 2px dashed #ffffffaa; opacity: 0; }
+.eco-green-wrap.aiming .eco-aim { animation: eco-aim .6s ease-in-out infinite alternate; }
+@keyframes eco-aim { from { opacity: .15; } to { opacity: .9; } }
+.eco-hole { position: absolute; left: 84%; top: 50%; width: 15px; height: 15px; margin: -7.5px; border-radius: 50%; background: radial-gradient(#050a06 55%, #102b16); box-shadow: 0 0 0 2px #ffffff33; }
+.eco-flag { position: absolute; left: 84%; top: 50%; width: 2px; height: 48px; margin: -48px 0 0 -1px; background: #ececec; transform-origin: 50% 100%; box-shadow: 1px 0 2px #0006; }
+.eco-flag::after { content: ""; position: absolute; left: 2px; top: 0; border-left: 20px solid #e0414f; border-top: 7px solid transparent; border-bottom: 7px solid transparent; }
+.eco-green-wrap.holed .eco-hole { box-shadow: 0 0 0 2px var(--gold), 0 0 14px #ffd76a; }
+.eco-green-wrap.cheer .eco-flag { animation: eco-flag .3s ease-in-out 6 alternate; }
+@keyframes eco-flag { from { transform: rotate(-10deg); } to { transform: rotate(10deg); } }
+.eco-gball { position: absolute; z-index: 1; width: 11px; height: 11px; margin: -5.5px; border-radius: 50%; background: radial-gradient(circle at 35% 35%, #fff, #d6d6d6); box-shadow: 1px 2px 3px #0007; }
+.eco-gball.rolling { transition: left var(--t, 1.5s) cubic-bezier(.15, .7, .35, 1), top var(--t, 1.5s) cubic-bezier(.6, 0, .85, .6); }
+.eco-gball.in { transform: scale(.4); opacity: 0; transition: transform .25s ease-in, opacity .25s ease-in; }
+.eco-gtag { position: absolute; z-index: 2; transform: translate(-50%, -170%); padding: 1px 7px; border-radius: 999px; background: #000b; color: #ffd3d3; font: 600 10px var(--mono); white-space: nowrap; }
+.eco-gtag.end { transform: translate(-92%, -170%); }
+@media (max-width: 640px) {
+  .eco-bj-body { grid-template-columns: 1fr; }
+  .eco-felt { min-height: 210px; padding: 10px 12px 14px; }
+  .bj-card { width: 44px; height: 62px; }
+  .bj-card b { font-size: 21px; }
+  .bj-card i { font-size: 11px; }
+  .eco-bj-hand { min-height: 64px; }
+  .eco-bj-hand .bj-card:first-child:nth-last-child(n+5) ~ .bj-card { margin-left: -14px; }
+  .eco-jackpot { grid-template-columns: auto 1fr; }
+  .dlg .eco-jp-info { grid-column: 1 / -1; }
+  .eco-jp-amount { font-size: 22px; }
+  .eco-party-title b { font-size: 30px; }
+}
+@media (prefers-reduced-motion: reduce) {
+  .eco-jackpot::after, .eco-felt.dealing .eco-shoe, .eco-court.rally .eco-tball, .eco-court.rally .eco-tp, .eco-green-wrap.aiming .eco-aim { animation: none; }
+  .eco-gball.rolling, .eco-tball, .eco-felt .sweep { transition: none; }
+}
 /* Classements */
 .eco-ranks { display: grid; gap: 12px; grid-template-columns: repeat(auto-fill, minmax(250px, 1fr)); }
 .eco-rank { padding: 12px 14px; border-radius: 12px; background: #121826; border: 1px solid var(--line); }
