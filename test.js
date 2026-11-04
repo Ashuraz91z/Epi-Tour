@@ -712,7 +712,7 @@ test("pauses : choix variés, stables au polling, café puis Club conservés", a
     assert.deepEqual(breakVisit(seed, 950), breakVisit(seed, 950));
     const visits = new Set();
     for (let age = 900; age < 2700; age += 2) visits.add(breakVisit(seed, age).place);
-    assert.ok(visits.size >= 6, "au moins café, repos, tabac, toilettes, club et casino");
+    assert.equal(visits.size, 8, "café, repos, tabac, toilettes, club, casino, tennis et golf");
   }
   assert.ok(new Set(Array.from({ length: 30 }, (_, seed) => breakVisit(seed, 1000).place)).size > 3);
 });

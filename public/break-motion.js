@@ -12,8 +12,9 @@ export function breakVisit(seed, age, silent = false) {
   const visit = Math.floor((Math.max(0, age) + seed % duration) / duration);
   if (!silent && age < 300) return { place: 'cafe', visit };
   if (!silent && age < 900) return { place: 'club', visit };
-  const places = ['rest', 'club', 'cafe', 'tabac', 'wc', 'casino'];
-  return { place: places[(seed % 6 + visit * (1 + (seed >>> 5) % 5)) % 6], visit };
+  // Pas premier avec 8 : en 8 visites, un agent passe par chaque lieu.
+  const places = ['rest', 'club', 'cafe', 'tabac', 'wc', 'casino', 'tennis', 'golf'];
+  return { place: places[(seed % 8 + visit * [1, 3, 5, 7][(seed >>> 5) % 4]) % 8], visit };
 }
 
 export function assignPauseSlots(entries, previous, capacity) {
