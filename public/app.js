@@ -199,6 +199,7 @@ const SHARED_SLOTS = {
   club: [0, 1, 2, 3].flatMap(r => [0, 1, 2, 3, 4, 5, 6].map(c => [325 + c * 55, 200 + r * 60, Math.PI, "Dance"]))
     .filter(([x, y]) => CLUB_NPCS.every(([nx, ny]) => Math.hypot(nx - x, ny - y) >= 48)),
   smoke: [...ASHTRAYS.flatMap(([x, y]) => around(x, y, 42, 3, Math.PI / 6)), ...[440, 600].map(x => [x, 560, 0])],
+  // Casino : tables de jeu (blackjack, roulette), bar, zone d'entrée
   casino: CASINO_SLOTS,
   tennis: TENNIS_SLOTS,
   golf: GOLF_SLOTS,
@@ -691,23 +692,25 @@ function walls(g, r, doors) {
 function removeFloor(k) {
   const f = floors.get(k);
   if (!f) return;
-  f.group.traverse(o => o.isCSS2DObject && o.element.remove());
+  f.group.traverse(o => (o.isCSS2DObject || o.isCSS3DObject) && o.element.remove());
   scene.remove(f.group);
   floors.delete(k);
 }
 
 function buildResident(apt, wing, officeTier) {
   officeTier = officeTier ?? { id: 1, open: "#2a3142", boss: "#3a3029", wood: "#573d2e", metal: "#b7a27b", deskScale: 2, chairScale: 1 };
-  const f = shell(wing.floor ?? officeTier.open ?? "#232a39");
+  // Ambiance choisie par le résident : elle habille son aile principale.
+  const cyber = (wing.id ?? "work") === "work" && apt.profile?.theme === "cyberpunk";
+  const f = shell(cyber ? CYBER.floor : wing.floor ?? officeTier.open ?? "#232a39");
   const g = f.group;
   const wingId = wing.id ?? "work";
   Object.assign(f, {
     key: `${apt.slug}:${wingId}`, kind: "resident", residentSlug: apt.slug, wingId, wing,
     name: wingId === "work" ? apt.name : `${apt.name} · ${wing.name ?? wingId}`,
-    officeTierId: officeTier.id, buildSlug: apt.slug,
+    officeTierId: officeTier.id, buildSlug: apt.slug, themeKey: themeKey(apt),
   });
-  const openMat = wingId === "work" ? officeTier.open : "#2a3142";
-  const bossMat = wingId === "work" ? officeTier.boss : "#3a3029";
+  const openMat = cyber ? CYBER.open : wingId === "work" ? officeTier.open : "#2a3142";
+  const bossMat = cyber ? CYBER.boss : wingId === "work" ? officeTier.boss : "#3a3029";
   const c = P(OPEN.x + OPEN.w / 2, OPEN.y + OPEN.h / 2), b = P(BOSS.x + BOSS.w / 2, BOSS.y + BOSS.h / 2);
   box(g, OPEN.w * S, 0.03, OPEN.h * S, mat(openMat), c.x, 0.05, c.z);
   box(g, BOSS.w * S, 0.03, BOSS.h * S, mat(bossMat), b.x, 0.05, b.z);
@@ -826,10 +829,12 @@ function buildResident(apt, wing, officeTier) {
         ctx.fillText(`${(r + 1) * 12}          ${(2451 - r * 0.1).toFixed(2)}          ${(10 - r) * 8}`, 50, y);
       }
     }
+    if (cyber) neonScreen(c, screenTexts(apt)[k], k);
     const texture = new THREE.CanvasTexture(c); texture.colorSpace = THREE.SRGBColorSpace;
     texture.anisotropy = renderer.capabilities.getMaxAnisotropy();
     const screen = new THREE.Mesh(new THREE.PlaneGeometry(0.94, 0.54), new THREE.MeshBasicMaterial({ map: texture }));
     screen.position.set(0, 0.49, 0.03); monitor.add(screen);
+    if (cyber) (f.bossScreens ??= []).push({ c, texture, k });
   }
   put(g, "computerKeyboard", bd.x - 0.15, bd.z - 0.38, Math.PI, 2, 0.98);
   box(g, 0.09, 0.04, 0.14, mat("#303b42"), bd.x + 0.65, 1.0, bd.z - 0.4);
@@ -1038,6 +1043,8 @@ function buildResident(apt, wing, officeTier) {
   f.alarmLight.position.set(bd.x, 2.4, bd.z);
   g.add(f.alarmLight);
   if (wingId === "work") placeDecor(g, f, apt);
+  if (wingId === "work" && apt.profile?.tv) giantTv(f, apt.profile.tv);
+  if (cyber) cyberpunk(f, apt);
   return f;
 }
 
@@ -1196,6 +1203,473 @@ function drawArcade(arcade, frame) {
   tex.needsUpdate = true;
 }
 
+// ---------- télé géante ----------
+// Liens normalisés par le serveur : identifiant YouTube ou chaîne Twitch, jamais une URL saisie.
+function tvLinks(tv) {
+  if (tv.kind === "youtube") return { url: `https://www.youtube-nocookie.com/embed/${encodeURIComponent(tv.id)}?autoplay=1&mute=1&rel=0&loop=1&playlist=${encodeURIComponent(tv.id)}`, page: `https://www.youtube.com/watch?v=${encodeURIComponent(tv.id)}` };
+  return { url: streamUrl(tv.channel), page: `https://www.twitch.tv/${encodeURIComponent(tv.channel)}` };
+}
+// Écran 16:9 de 4,9 m sur la vitre ouest, côté nord de l'ascenseur, cadre néon ; muet, un clic l'ouvre avec le son.
+function giantTv(f, tv) {
+  const g = f.group, w = 4.9, h = w * 9 / 16, y = 2.9, z = -3.42, x = -10.28, edge = glow("#ff2bd6", 1.8);
+  const frame = box(g, 0.12, h + 0.24, w + 0.24, mat("#0b0d14", { metalness: 0.6, roughness: 0.3 }), x, y, z);
+  box(g, 0.04, 0.04, w + 0.3, edge, x + 0.08, y + h / 2 + 0.14, z);
+  box(g, 0.04, 0.04, w + 0.3, edge, x + 0.08, y - h / 2 - 0.14, z);
+  for (const dz of [-1, 1]) box(g, 0.04, h + 0.32, 0.04, glow("#00e5ff", 1.8), x + 0.08, y, z + dz * (w / 2 + 0.14));
+  sign(g, "ON AIR", 0.9, 0.22, { color: "#ff3b5c", font: "800 72px Sora, sans-serif", blur: 16 }, x + 0.1, y + h / 2 + 0.38, z, Math.PI / 2);
+  const iframe = Object.assign(document.createElement("iframe"), { title: "Télé géante", allow: "autoplay; fullscreen; encrypted-media; picture-in-picture" });
+  Object.assign(iframe.style, { width: "1280px", height: "720px", border: "0", background: "#000", backfaceVisibility: "hidden" });
+  const view = new CSS3DObject(iframe);
+  // Le lecteur laisse passer les clics vers la 3D (CSS3DObject les réactive) : c'est l'écran qui ouvre le réglage ou la vidéo.
+  iframe.style.pointerEvents = "none";
+  view.position.set(x + 0.07, y, z); view.rotation.y = Math.PI / 2; view.scale.setScalar(w / 1280);
+  g.add(view);
+  f.tv = { frame, iframe, view, shown: "", ...tvLinks(tv) };
+}
+
+// ---------- ambiance cyberpunk ----------
+// Néons magenta et cyan, sol à grille, salle serveurs, borne d'arcade et hologramme ; les écrans affichent les textes du résident.
+const CYBER = { floor: "#07060f", open: "#0d0b1c", boss: "#150c24", pink: "#ff2bd6", cyan: "#00e5ff", violet: "#8b5cff" };
+const themeKey = a => JSON.stringify([a.profile?.theme ?? "classique", a.profile?.screens ?? [], a.profile?.tv ?? null]);
+const screenTexts = a => {
+  const own = a.profile?.screens?.length ? a.profile.screens : [a.name];
+  return [0, 1, 2].map(k => own[k % own.length]);
+};
+
+// Écran néon : fond quadrillé, texte principal, sous-titre et barres d'activité décoratives.
+function neonScreen(c, text, k) {
+  const ctx = c.getContext("2d"), { width: w, height: h } = c, color = [CYBER.pink, CYBER.cyan, CYBER.violet][k % 3];
+  ctx.fillStyle = "#08061a"; ctx.fillRect(0, 0, w, h);
+  ctx.strokeStyle = "#1f1747"; ctx.lineWidth = 2;
+  for (let x = 0; x <= w; x += 64) { ctx.beginPath(); ctx.moveTo(x, 0); ctx.lineTo(x, h); ctx.stroke(); }
+  for (let y = 0; y <= h; y += 64) { ctx.beginPath(); ctx.moveTo(0, y); ctx.lineTo(w, y); ctx.stroke(); }
+  ctx.strokeStyle = color; ctx.lineWidth = 6; ctx.strokeRect(14, 14, w - 28, h - 28);
+  ctx.textAlign = "center"; ctx.textBaseline = "middle";
+  let size = Math.round(h * 0.26);
+  ctx.font = `700 ${size}px Sora, sans-serif`;
+  while (size > 24 && ctx.measureText(text.toUpperCase()).width > w * 0.84) ctx.font = `700 ${size -= 6}px Sora, sans-serif`;
+  ctx.shadowColor = color; ctx.shadowBlur = 36; ctx.fillStyle = color;
+  ctx.fillText(text.toUpperCase(), w / 2, h * 0.42);
+  ctx.shadowBlur = 0; ctx.fillStyle = "#cfd8ff"; ctx.font = `500 ${Math.round(h * 0.06)}px monospace`;
+  ctx.fillText(["> EN LIGNE", "> AGENTS ACTIFS", "> SYSTÈME OK"][k % 3], w / 2, h * 0.66);
+  for (let i = 0; i < 18; i++) {
+    ctx.fillStyle = i % 4 ? color : "#ffffff"; ctx.globalAlpha = 0.55;
+    const bar = 18 + (i * 37 + k * 11) % 70;
+    ctx.fillRect(w * 0.1 + i * w * 0.045, h * 0.9 - bar, w * 0.03, bar);
+  }
+  ctx.globalAlpha = 1; ctx.textAlign = "start"; ctx.textBaseline = "alphabetic";
+}
+
+// BYTE, le drone de l'étage : il patrouille, parle, et file chez le résident quand un agent attend son accord.
+const BYTE_LINES = [
+  "Bip boup. Café détecté ☕", "git commit -m \"ça marche chez moi\"", "Nouvelle commande TikTok Shop 📦",
+  "toksy.fr en orbite 🚀", "Scan terminé : 0 bug. Pour l'instant.", "404 : sommeil introuvable",
+  "Ctrl+S. Toujours. Ctrl+S.", "Qui a laissé un console.log ici ?", "Psst… tape « toksy » 😏",
+  "Pixel dort encore sur le serveur 🐈", "Je ne suis pas un bug, je suis une feature", "Encore un colis expédié 📦✨",
+];
+// Mode secret : taper « toksy » hors d'un champ lance 12 s d'overdrive sur les étages cyberpunk.
+let overdriveUntil = 0, typed = "";
+addEventListener("keydown", e => {
+  if (e.target.closest?.("input, select, textarea, dialog") || e.key.length !== 1) return;
+  typed = (typed + e.key.toLowerCase()).slice(-5);
+  if (typed === "toksy") overdriveUntil = performance.now() / 1000 + 12;
+});
+const noise = x => { const s = Math.sin(x * 127.1) * 43758.5453; return s - Math.floor(s); };
+const canvasTexture = (w, h) => {
+  const c = document.createElement("canvas"); c.width = w; c.height = h;
+  const texture = new THREE.CanvasTexture(c); texture.colorSpace = THREE.SRGBColorSpace;
+  return { c, ctx: c.getContext("2d"), texture };
+};
+const additive = (color, opacity) => new THREE.MeshBasicMaterial({ color, transparent: true, opacity, blending: THREE.AdditiveBlending, depthWrite: false, side: THREE.DoubleSide, toneMapped: false });
+
+// Visage de BYTE : yeux ronds au calme, ^^ en fête, barres rouges en alerte, trait fermé quand il cligne.
+function drawFace(face, mood, blink) {
+  const { ctx } = face, color = mood === "alerte" ? "#ff3b5c" : mood === "fete" ? "#ffe066" : CYBER.cyan;
+  ctx.fillStyle = "#05030f"; ctx.fillRect(0, 0, 128, 64);
+  ctx.fillStyle = ctx.strokeStyle = color; ctx.lineWidth = 6; ctx.shadowColor = color; ctx.shadowBlur = 12;
+  for (const x of [40, 88]) {
+    if (blink) ctx.fillRect(x - 12, 30, 24, 4);
+    else if (mood === "fete") { ctx.beginPath(); ctx.arc(x, 40, 11, Math.PI * 1.15, Math.PI * 1.85); ctx.stroke(); }
+    else if (mood === "alerte") ctx.fillRect(x - 8, 16, 16, 30);
+    else { ctx.beginPath(); ctx.ellipse(x, 32, 9, 13, 0, 0, Math.PI * 2); ctx.fill(); }
+  }
+  ctx.shadowBlur = 0; face.texture.needsUpdate = true;
+}
+
+// Démo de la borne d'arcade : un serpent qui joue tout seul vers la pomme la plus proche.
+const newSnake = best => ({ body: [[4, 6], [3, 6], [2, 6]], dir: [1, 0], apple: [11, 4], score: 0, best: best ?? 0 });
+function stepSnake(s) {
+  const [hx, hy] = s.body[0], [ax, ay] = s.apple;
+  const free = (x, y) => x >= 0 && y >= 0 && x < 16 && y < 12 && !s.body.some(([bx, by]) => bx === x && by === y);
+  const options = [[1, 0], [0, 1], [-1, 0], [0, -1]].filter(([dx, dy]) => dx !== -s.dir[0] || dy !== -s.dir[1])
+    .map(d => ({ d, x: hx + d[0], y: hy + d[1] })).filter(o => free(o.x, o.y))
+    .sort((a, b) => Math.abs(a.x - ax) + Math.abs(a.y - ay) - Math.abs(b.x - ax) - Math.abs(b.y - ay));
+  if (!options.length) return newSnake(Math.max(s.best, s.score));
+  const pick = options.length > 1 && Math.random() < 0.08 ? options[1] : options[0];
+  s.dir = pick.d; s.body.unshift([pick.x, pick.y]);
+  if (pick.x === ax && pick.y === ay) {
+    s.score += 10;
+    do s.apple = [Math.floor(Math.random() * 16), Math.floor(Math.random() * 12)]; while (s.body.some(([bx, by]) => bx === s.apple[0] && by === s.apple[1]));
+  } else s.body.pop();
+  return s;
+}
+function drawSnake(screen, s) {
+  const { ctx } = screen;
+  ctx.fillStyle = "#06041a"; ctx.fillRect(0, 0, 256, 192);
+  ctx.fillStyle = "#140f33"; for (let x = 0; x < 16; x++) for (let y = 0; y < 12; y++) ctx.fillRect(x * 16 + 7, y * 16 + 7, 2, 2);
+  ctx.shadowBlur = 10; ctx.shadowColor = ctx.fillStyle = CYBER.pink; ctx.fillRect(s.apple[0] * 16 + 3, s.apple[1] * 16 + 3, 10, 10);
+  s.body.forEach(([x, y], k) => { ctx.shadowColor = ctx.fillStyle = k ? CYBER.cyan : "#ffffff"; ctx.fillRect(x * 16 + 1, y * 16 + 1, 14, 14); });
+  ctx.shadowBlur = 0; ctx.fillStyle = "#ffe066"; ctx.font = "bold 13px monospace";
+  ctx.fillText(`SCORE ${String(s.score).padStart(4, "0")}`, 6, 186); ctx.fillText(`HI ${String(s.best).padStart(4, "0")}`, 180, 186);
+  screen.texture.needsUpdate = true;
+}
+
+// Écrans du bureau en direct : agents à gauche, marque et compteur de colis au centre, quotas à droite.
+function drawBossScreen(screen, a, now, fx, texts) {
+  const { c, k } = screen, ctx = c.getContext("2d"), { width: w, height: h } = c;
+  if (k === 1) {
+    neonScreen(c, texts[0], 1);
+    ctx.fillStyle = "#08061a"; ctx.fillRect(40, 30, w - 80, 70);
+    ctx.fillStyle = "#cfd8ff"; ctx.font = "600 44px monospace"; ctx.textAlign = "center";
+    ctx.fillText(new Date().toLocaleTimeString("fr-FR"), w / 2, 82);
+    ctx.fillStyle = CYBER.pink; ctx.font = "700 36px monospace";
+    ctx.fillText(`COLIS EXPÉDIÉS · ${fx.shipped}`, w / 2, h * 0.79); ctx.textAlign = "start";
+  } else {
+    ctx.fillStyle = "#08061a"; ctx.fillRect(0, 0, w, h);
+    ctx.strokeStyle = k ? CYBER.violet : CYBER.cyan; ctx.lineWidth = 6; ctx.strokeRect(14, 14, w - 28, h - 28);
+    ctx.fillStyle = "#cfd8ff"; ctx.font = "700 44px Sora, sans-serif"; ctx.fillText(k ? "QUOTAS" : "AGENTS · LIVE", 48, 78);
+    const rows = k ? [["Claude 5 h", a?.usage?.claude?.five_hour], ["Claude semaine", a?.usage?.claude?.seven_day],
+      ["ChatGPT 5 h", a?.usage?.chatgpt?.five_hour], ["ChatGPT semaine", a?.usage?.chatgpt?.seven_day]]
+      .map(([name, win]) => { const left = win ? quotaRemaining(win, now) : null; return [name, left, left === null ? "—" : left + " %", left !== null && left <= 20 ? "#ff3b5c" : CYBER.violet]; })
+      : [["au travail", "travaille", STATE_COLOR.travaille], ["attend ton accord", "autorisation", STATE_COLOR.autorisation],
+        ["attend la suite", "attend", STATE_COLOR.attend], ["en pause", "fini", STATE_COLOR.fini]]
+        .map(([name, st, color]) => { const n = (a?.sessions ?? []).filter(s => stateOf(s, now) === st).length; return [name, Math.min(100, n * 25), String(n), color]; });
+    rows.forEach(([name, pct, value, color], r) => {
+      const y = 150 + r * 110;
+      ctx.fillStyle = "#8f9bd0"; ctx.font = "500 32px Sora, sans-serif"; ctx.fillText(name, 48, y);
+      ctx.fillStyle = color; ctx.font = "700 40px monospace"; ctx.textAlign = "end"; ctx.fillText(value, w - 48, y); ctx.textAlign = "start";
+      ctx.fillStyle = "#1a1540"; ctx.fillRect(48, y + 18, w - 96, 22);
+      ctx.shadowColor = ctx.fillStyle = color; ctx.shadowBlur = 16; ctx.fillRect(48, y + 18, (w - 96) * (pct ?? 0) / 100, 22); ctx.shadowBlur = 0;
+    });
+  }
+  screen.texture.needsUpdate = true;
+}
+
+function cyberpunk(f, apt) {
+  const g = f.group, { pink, cyan, violet } = CYBER, texts = screenTexts(apt);
+  const center = P(OPEN.x + OPEN.w / 2, LANE), m4 = new THREE.Matrix4(), q0 = new THREE.Quaternion(), color = new THREE.Color();
+  const cyanC = new THREE.Color(cyan), violetC = new THREE.Color(violet), pinkC = new THREE.Color(pink);
+  const fx = { waves: [0], sessions: new Map(), primed: false, shipped: 0, mood: "calme", moodUntil: 0, said: -99, bubbleUntil: 0,
+    meowUntil: 0, nextData: 0, nextRain: 0, nextSnake: 0, nextLeds: 0, nextBoss: 0, nextWave: 0, burstAt: -99, face: "", alert: false, working: 0 };
+
+  // Grille lumineuse au sol : une instance par ligne ; des ondes partent de l'hologramme et la parcourent.
+  const grid = [];
+  for (let x = OPEN.x + 40; x < OPEN.x + OPEN.w; x += 80) grid.push({ d: Math.abs(P(x, 0).x - center.x), pos: P(x, OPEN.y + OPEN.h / 2, 0.075), size: new THREE.Vector3(0.03, 0.01, OPEN.h * S - 0.2) });
+  for (let y = OPEN.y + 40; y < OPEN.y + OPEN.h; y += 80) grid.push({ d: Math.abs(P(0, y).z - center.z), pos: P(OPEN.x + OPEN.w / 2, y, 0.075), size: new THREE.Vector3(OPEN.w * S - 0.2, 0.01, 0.03) });
+  const lines = new THREE.InstancedMesh(boxGeometry, new THREE.MeshBasicMaterial({ toneMapped: false }), grid.length);
+  grid.forEach((l, k) => { lines.setMatrixAt(k, m4.compose(l.pos, q0, l.size)); lines.setColorAt(k, violetC); });
+  g.add(lines);
+  // Tubes néon le long de la façade et des cloisons, magenta en haut, cyan en bas.
+  box(g, 20.4, 0.05, 0.05, glow(pink, 2.2), 0, 4.55, -6.4);
+  box(g, 20.4, 0.05, 0.05, glow(cyan, 2), 0, 0.12, -6.4);
+  for (const x of [-10.3, 10.3]) {
+    box(g, 0.05, 0.05, 12.6, glow(pink, 2.2), x, 4.55, 0);
+    box(g, 0.05, 0.05, 12.6, glow(cyan, 2), x, 0.12, 0);
+  }
+  for (const x of [OPEN.x + OPEN.w, BOSS.x]) box(g, 0.04, 0.04, OPEN.h * S, glow(cyan, 1.6), P(x, 0).x, 1.08, P(0, OPEN.y + OPEN.h / 2).z);
+  // Enseignes néon des projets du résident, sur la vitre du fond ; la première grésille de temps en temps.
+  const signs = texts.slice(0, 2).map((text, k) => {
+    const x = P(OPEN.x + OPEN.w * (k ? 0.72 : 0.28), 0).x, tint = k ? cyan : pink;
+    box(g, 5.1, 1.05, 0.04, mat("#0b0918"), x, 2.0, -6.44);
+    box(g, 5.1, 0.03, 0.03, glow(tint, 1.6), x, 1.46, -6.41);
+    return sign(g, text.toUpperCase(), 5, 1, { color: tint, font: "700 160px Sora, sans-serif", w: 1024, h: 205, blur: 26 }, x, 2.0, -6.41);
+  });
+  // Pluie de données sur la vitre ouest, de part et d'autre de l'ascenseur.
+  const rain = canvasTexture(128, 256), drops = Array.from({ length: 16 }, () => Math.random() * -32);
+  const rainM = new THREE.MeshBasicMaterial({ map: rain.texture, transparent: true, opacity: 0.6, blending: THREE.AdditiveBlending, depthWrite: false, toneMapped: false });
+  for (const z of f.tv ? [3.4] : [-3.4, 3.4]) {
+    const panel = new THREE.Mesh(new THREE.PlaneGeometry(2.4, 3.8), rainM);
+    panel.position.set(-10.3, 2.3, z); panel.rotation.y = Math.PI / 2; g.add(panel);
+  }
+  // Écrans des postes : le texte du résident au repos, cyan vif quand un agent travaille.
+  const idle = canvasTexture(256, 160);
+  neonScreen(idle.c, texts[0], 0);
+  f.idleScreen = new THREE.MeshBasicMaterial({ map: idle.texture });
+  f.busyScreen = glow(cyan, 1.8);
+
+  // Baies serveurs contre la cloison ouest : leurs diodes clignotent plus vite quand les agents travaillent.
+  const leds = [];
+  for (const [y, k] of [[520, 0], [440, 1]]) {
+    const p = P(48, y);
+    box(g, 0.6, 2.1, 0.9, mat("#0e0d1a", { metalness: 0.6, roughness: 0.4 }), p.x, 1.05, p.z);
+    box(g, 0.02, 1.9, 0.8, mat("#16142b"), p.x + 0.31, 1.05, p.z);
+    for (let r = 0; r < 8; r++) for (let d = 0; d < 3; d++) leds.push({ pos: new THREE.Vector3(p.x + 0.33, 0.3 + r * 0.22, p.z - 0.25 + d * 0.25), hot: d === 2 && r % 3 === k });
+  }
+  const ledMesh = new THREE.InstancedMesh(boxGeometry, new THREE.MeshBasicMaterial({ toneMapped: false }), leds.length), ledSize = new THREE.Vector3(0.02, 0.04, 0.06);
+  leds.forEach((l, k) => { ledMesh.setMatrixAt(k, m4.compose(l.pos, q0, ledSize)); ledMesh.setColorAt(k, l.hot ? pinkC : cyanC); });
+  g.add(ledMesh);
+
+  // Pixel, le chat néon, assis sur la première baie : il suit BYTE des yeux et remue la queue.
+  const cat = new THREE.Group(), fur = mat("#1b1630", { roughness: 0.7 });
+  cat.position.copy(P(48, 520, 2.1)); cat.rotation.y = Math.PI / 2; g.add(cat);
+  box(cat, 0.22, 0.2, 0.34, fur, 0, 0.1, 0);
+  box(cat, 0.23, 0.04, 0.05, glow(pink, 1.4), 0, 0.2, 0.1);
+  const head = new THREE.Group(); head.position.set(0, 0.27, 0.13); cat.add(head);
+  box(head, 0.2, 0.17, 0.17, fur, 0, 0, 0.02);
+  for (const dx of [-0.06, 0.06]) {
+    const ear = new THREE.Mesh(new THREE.ConeGeometry(0.045, 0.09, 4), fur);
+    ear.position.set(dx, 0.12, 0.02); ear.rotation.y = Math.PI / 4; head.add(ear);
+  }
+  const eyes = [-0.05, 0.05].map(dx => box(head, 0.035, 0.03, 0.01, glow(cyan, 2.4), dx, 0.01, 0.11));
+  box(head, 0.03, 0.02, 0.01, glow(pink, 1.6), 0, -0.04, 0.11);
+  const tail = new THREE.Group(); tail.position.set(0, 0.06, -0.17); cat.add(tail);
+  cyl(tail, 0.022, 0.32, fur, 0, 0.14, -0.05, 8).rotation.x = -0.4;
+  box(tail, 0.05, 0.05, 0.05, glow(pink, 1.6), 0, 0.29, -0.11);
+  const meow = label(cat, "", "drone-bubble cat", 0, 0.62, 0); meow.visible = false;
+
+  // Tapis d'expédition des commandes TikTok Shop, avec portique scanner ; la cadence suit le travail des agents.
+  const belt0 = P(95, 36).x, belt1 = P(560, 36).x, beltZ = P(0, 36).z, beltLen = belt1 - belt0, steel = mat("#2a2550", { metalness: 0.6, roughness: 0.35 });
+  box(g, beltLen + 0.4, 0.08, 0.5, mat("#15122a", { metalness: 0.4, roughness: 0.6 }), (belt0 + belt1) / 2, 0.55, beltZ);
+  box(g, beltLen + 0.4, 0.02, 0.02, glow(pink, 1.4), (belt0 + belt1) / 2, 0.6, beltZ + 0.26);
+  for (let x = belt0; x <= belt1 + 0.01; x += beltLen / 4) for (const dz of [-0.2, 0.2]) box(g, 0.06, 0.5, 0.06, steel, x, 0.26, beltZ + dz);
+  const scanX = (belt0 + belt1) / 2;
+  for (const dz of [-0.3, 0.3]) box(g, 0.06, 0.75, 0.06, steel, scanX, 0.95, beltZ + dz);
+  const scanBar = box(g, 0.08, 0.06, 0.66, glow(cyan, 2), scanX, 1.33, beltZ);
+  sign(g, "EXPÉDITIONS", 1.3, 0.22, { color: cyan, font: "700 64px Sora, sans-serif", blur: 14 }, belt1 - 0.4, 0.95, beltZ + 0.05);
+  const parcelArt = canvasTexture(128, 128);
+  parcelArt.ctx.fillStyle = "#b98a52"; parcelArt.ctx.fillRect(0, 0, 128, 128);
+  parcelArt.ctx.fillStyle = pink; parcelArt.ctx.fillRect(54, 0, 20, 128);
+  parcelArt.ctx.fillStyle = "#1b1630"; parcelArt.ctx.font = "800 26px Sora, sans-serif"; parcelArt.ctx.textAlign = "center"; parcelArt.ctx.fillText(texts[1] ?? texts[0], 64, 96, 120);
+  const PARCELS = 7, parcels = new THREE.InstancedMesh(boxGeometry, new THREE.MeshStandardMaterial({ map: parcelArt.texture, roughness: 0.8 }), PARCELS);
+  const parcelSize = new THREE.Vector3(0.32, 0.24, 0.3), parcelPos = new THREE.Vector3(), phases = Array.from({ length: PARCELS }, (_, k) => k / PARCELS);
+  g.add(parcels);
+  let beltRun = 0;
+
+  // Borne d'arcade dans le coin est : le serpent joue en démo.
+  const arcade = new THREE.Group(); arcade.position.copy(P(600, 150)); g.add(arcade);
+  box(arcade, 0.8, 1.9, 0.75, mat("#140f2e"), 0, 0.95, 0);
+  for (const dx of [-0.41, 0.41]) box(arcade, 0.03, 1.9, 0.03, glow(pink, 1.8), dx, 0.95, 0.38);
+  const snakeScreen = canvasTexture(256, 192);
+  const arcadeScreen = new THREE.Mesh(new THREE.PlaneGeometry(0.62, 0.46), new THREE.MeshBasicMaterial({ map: snakeScreen.texture, toneMapped: false }));
+  arcadeScreen.position.set(0, 1.35, 0.38); arcade.add(arcadeScreen);
+  box(arcade, 0.76, 0.08, 0.3, mat("#221a48"), 0, 0.98, 0.42);
+  for (const [dx, tint] of [[-0.2, pink], [0.05, cyan], [0.2, violet]]) cyl(arcade, 0.035, 0.03, glow(tint, 1.8), dx, 1.03, 0.42, 12);
+  sign(arcade, "ARCADE", 0.7, 0.16, { color: pink, font: "700 72px Sora, sans-serif", blur: 18 }, 0, 1.78, 0.38);
+  let snake = newSnake();
+  drawSnake(snakeScreen, snake);
+
+  // Hologramme projeté du plafond : noyau filaire, anneau, nom qui tourne et particules en orbite.
+  const holo = new THREE.Group(); holo.position.set(center.x, 3.3, center.z); g.add(holo);
+  const core = new THREE.Mesh(new THREE.IcosahedronGeometry(0.42, 1), new THREE.MeshBasicMaterial({ color: cyan, wireframe: true, transparent: true, opacity: 0.85, toneMapped: false }));
+  const ring = new THREE.Mesh(new THREE.TorusGeometry(0.62, 0.012, 6, 48), new THREE.MeshBasicMaterial({ color: pink, toneMapped: false }));
+  holo.add(core, ring);
+  const logo = sign(holo, (texts[1] ?? texts[0]).toUpperCase(), 1.5, 0.3, { color: "#ffffff", font: "700 90px Sora, sans-serif", blur: 22 }, 0, -0.72, 0);
+  logo.material.side = THREE.DoubleSide;
+  cyl(g, 0.24, 0.12, mat("#1a1530", { metalness: 0.7 }), center.x, 4.62, center.z, 20);
+  cyl(g, 0.12, 0.02, glow(cyan, 2.5), center.x, 4.55, center.z, 20);
+  const beam = new THREE.Mesh(new THREE.ConeGeometry(0.8, 1.15, 32, 1, true), additive(cyan, 0.07));
+  beam.position.set(center.x, 3.98, center.z); g.add(beam);
+  const ORBIT = 90, orbit = new THREE.Points(new THREE.BufferGeometry().setAttribute("position", new THREE.Float32BufferAttribute(new Float32Array(ORBIT * 3), 3)),
+    new THREE.PointsMaterial({ color: pink, size: 0.05, transparent: true, opacity: 0.9, blending: THREE.AdditiveBlending, depthWrite: false }));
+  holo.add(orbit);
+  // Confettis néon lancés par l'hologramme quand un agent termine une tâche.
+  const BURST = 160, burstVel = new Float32Array(BURST * 3), burstColors = new Float32Array(BURST * 3);
+  const confetti = new THREE.Points(new THREE.BufferGeometry()
+    .setAttribute("position", new THREE.Float32BufferAttribute(new Float32Array(BURST * 3), 3))
+    .setAttribute("color", new THREE.Float32BufferAttribute(burstColors, 3)),
+    new THREE.PointsMaterial({ size: 0.09, vertexColors: true, transparent: true, opacity: 1, blending: THREE.AdditiveBlending, depthWrite: false }));
+  confetti.visible = false; holo.add(confetti);
+  const palette = [pinkC, cyanC, violetC, new THREE.Color("#ffe066")];
+  const burst = now => {
+    const pos = confetti.geometry.attributes.position;
+    for (let k = 0; k < BURST; k++) {
+      const a = Math.random() * Math.PI * 2, up = Math.random() * 0.9 + 0.1, speed = 2 + Math.random() * 2.5;
+      pos.setXYZ(k, 0, 0, 0);
+      burstVel.set([Math.cos(a) * speed * (1 - up * 0.5), up * speed * 1.2, Math.sin(a) * speed * (1 - up * 0.5)], k * 3);
+      burstColors.set(palette[k % 4].toArray(), k * 3);
+    }
+    pos.needsUpdate = true; confetti.geometry.attributes.color.needsUpdate = true;
+    confetti.visible = true; fx.burstAt = now; fx.waves.push(now);
+  };
+
+  // BYTE : coque sphérique, visière à visage, quatre rotors, antenne et faisceau scanner.
+  const drone = new THREE.Group(), shellM = mat("#1c1838", { metalness: 0.75, roughness: 0.3 });
+  drone.position.set(center.x, 2.5, center.z); g.add(drone);
+  drone.add(new THREE.Mesh(new THREE.SphereGeometry(0.22, 24, 16), shellM));
+  const face = canvasTexture(128, 64);
+  const visor = new THREE.Mesh(new THREE.PlaneGeometry(0.27, 0.135), new THREE.MeshBasicMaterial({ map: face.texture, toneMapped: false }));
+  visor.position.set(0, 0.02, 0.212); drone.add(visor);
+  const belt = new THREE.Mesh(new THREE.TorusGeometry(0.225, 0.012, 6, 32), new THREE.MeshBasicMaterial({ color: pink, toneMapped: false }));
+  belt.rotation.x = Math.PI / 2; drone.add(belt);
+  const rotors = [0, 1, 2, 3].map(i => {
+    const a = Math.PI / 4 + i * Math.PI / 2;
+    box(drone, 0.03, 0.02, 0.3, shellM, Math.sin(a) * 0.25, 0.1, Math.cos(a) * 0.25, a);
+    const rotor = new THREE.Group(); rotor.position.set(Math.sin(a) * 0.4, 0.13, Math.cos(a) * 0.4); drone.add(rotor);
+    for (const r of [0, Math.PI / 2]) box(rotor, 0.22, 0.006, 0.025, additive(cyan, 0.6), 0, 0, 0, r);
+    return rotor;
+  });
+  cyl(drone, 0.008, 0.14, shellM, 0, 0.28, 0, 6);
+  const tip = new THREE.Mesh(new THREE.SphereGeometry(0.025, 10, 8), new THREE.MeshBasicMaterial({ color: pink, toneMapped: false }));
+  tip.position.y = 0.36; drone.add(tip);
+  const scan = new THREE.Mesh(new THREE.ConeGeometry(0.5, 2, 24, 1, true), additive(cyan, 0.06));
+  scan.position.y = -1.05; drone.add(scan);
+  const bubble = label(drone, "", "drone-bubble", 0, 0.62, 0); bubble.visible = false;
+  const say = (now, text, seconds = 5) => { bubble.element.textContent = text; fx.bubbleUntil = now + seconds; fx.said = now; };
+  drawFace(face, "calme", false);
+
+  // Lumières d'ambiance : magenta sur l'open space, cyan sur le bureau ; arc-en-ciel en overdrive.
+  const lights = [[330, 310, pink], [820, 310, cyan]].map(([x, y, tint]) => {
+    const light = new THREE.PointLight(tint, 9, 14, 1.6);
+    light.position.copy(P(x, y, 3.4)); g.add(light);
+    return light;
+  });
+  const boss = f.bossScreens ?? [];
+  const target = new THREE.Vector3(), toDrone = new THREE.Vector3(), yAxis = new THREE.Vector3(0, 1, 0);
+
+  f.cyber = {
+    hit: drone,
+    // Un clic sur BYTE : salto, confettis et une réplique.
+    poke() {
+      const now = performance.now() / 1000;
+      fx.flipAt = now; fx.mood = "fete"; fx.moodUntil = now + 2.5;
+      say(now, BYTE_LINES[Math.floor(Math.random() * BYTE_LINES.length)]);
+      burst(now);
+    },
+    tick(dt, near) {
+      if (!near) { bubble.visible = meow.visible = false; return; }
+      const now = performance.now() / 1000, still = reducedMotion.matches, od = now < overdriveUntil;
+      const a = residents.find(x => x.slug === f.residentSlug), dnow = data?.now ?? now;
+
+      // Lecture de l'activité, deux fois par seconde : fin de tâche = fête, nouveau travail = onde au sol.
+      if (now >= fx.nextData) {
+        fx.nextData = now + 0.5;
+        const states = (a?.sessions ?? []).map(s => [`${s.src}:${s.sid}`, stateOf(s, dnow)]);
+        fx.working = states.filter(([, st]) => st === "travaille").length;
+        fx.alert = states.some(([, st]) => st === "autorisation");
+        if (fx.primed) for (const [key, st] of states) {
+          const before = fx.sessions.get(key);
+          if (before === "travaille" && (st === "fini" || st === "attend")) { burst(now); fx.mood = "fete"; fx.moodUntil = now + 3; say(now, "GG ! Tâche bouclée ✅"); }
+          if (before !== "travaille" && st === "travaille") fx.waves.push(now);
+        }
+        fx.sessions = new Map(states); fx.primed = true;
+      }
+      if (od && !fx.wasOd) { say(now, "MODE OVERDRIVE 🔥🔥🔥", 6); burst(now); }
+      fx.wasOd = od;
+      const mood = fx.alert ? "alerte" : now < fx.moodUntil || od ? "fete" : "calme";
+      if (now - fx.said > 10) {
+        const lines = [...BYTE_LINES];
+        if (fx.working) lines.push(`${fx.working} agent${fx.working > 1 ? "s" : ""} au charbon ⚡`, `${fx.working} agent${fx.working > 1 ? "s" : ""} au charbon ⚡`);
+        say(now, fx.alert ? "🚨 Un agent attend ton feu vert !" : lines[Math.floor(noise(now) * lines.length)]);
+      }
+      bubble.visible = now < fx.bubbleUntil;
+
+      // Vol de BYTE : patrouille en huit au-dessus des postes, ou station devant le bureau si un accord est attendu.
+      const k = still ? 0 : now * (od ? 2.4 : 1);
+      if (fx.alert) target.copy(P(820, 300, 2.3 + Math.sin(k * 6) * 0.05));
+      else target.set(center.x + Math.sin(k * 0.23) * 4.6, 2.5 + Math.sin(k * 1.7) * 0.12, center.z + Math.sin(k * 0.37 + 1) * 2.4);
+      toDrone.subVectors(target, drone.position);
+      drone.position.addScaledVector(toDrone, Math.min(1, dt * (fx.alert ? 1.5 : 3)));
+      if (toDrone.lengthSq() > 1e-3) {
+        const turn = (Math.atan2(toDrone.x, toDrone.z) - drone.rotation.y + Math.PI * 3) % (Math.PI * 2) - Math.PI;
+        drone.rotation.y += turn * Math.min(1, dt * 3);
+      }
+      drone.rotation.x = fx.flipAt && now - fx.flipAt < 0.8 ? (now - fx.flipAt) / 0.8 * Math.PI * 2 : 0.12;
+      if (!still) rotors.forEach((r, i) => { r.rotation.y += dt * (i % 2 ? 38 : -38); });
+      scan.rotation.z = still ? 0 : Math.sin(now * 1.3) * 0.25;
+      tip.visible = still || Math.floor(now * 2) % 2 === 0;
+      const blink = !still && noise(Math.floor(now * 3)) > 0.93;
+      if (fx.face !== mood + blink) { fx.face = mood + blink; drawFace(face, mood, blink); }
+
+      // Pixel suit BYTE du regard, remue la queue, cligne, et miaule quand le drone passe tout près.
+      toDrone.subVectors(drone.position, cat.position).applyAxisAngle(yAxis, -cat.rotation.y);
+      head.rotation.y += (Math.max(-1.1, Math.min(1.1, Math.atan2(toDrone.x, toDrone.z))) - head.rotation.y) * Math.min(1, dt * 4);
+      head.rotation.x = -Math.max(-0.4, Math.min(0.5, Math.atan2(toDrone.y - 0.3, Math.hypot(toDrone.x, toDrone.z))));
+      tail.rotation.z = still ? 0 : Math.sin(now * (od ? 9 : 2.2)) * 0.5;
+      eyes.forEach(e => { e.scale.y = !still && noise(Math.floor(now * 2) + 7) > 0.9 ? 0.15 : 1; });
+      if (toDrone.length() < 1.6 && now > fx.meowUntil + 6) { meow.element.textContent = od ? "MIAOU !!! 😼" : "Miaou. 😼"; fx.meowUntil = now + 2; }
+      meow.visible = now < fx.meowUntil;
+
+      // Ondes du sol : une toutes les 4 s (bien plus en overdrive), plus une à chaque tâche lancée ou terminée.
+      if (!still && now >= fx.nextWave) { fx.waves.push(now); fx.nextWave = now + (od ? 0.7 : 4); }
+      fx.waves = fx.waves.filter(w => now - w < 3.2);
+      grid.forEach((l, i) => {
+        let lit = 0;
+        for (const w of fx.waves) lit += Math.exp(-((l.d - (now - w) * 5) ** 2) / 0.35) * Math.max(0, 1 - (now - w) / 3.2);
+        if (od && !still) color.setHSL((now * 0.25 + i * 0.05) % 1, 1, 0.55);
+        else color.copy(violetC).lerp(cyanC, Math.min(1, lit));
+        lines.setColorAt(i, color.multiplyScalar(0.55 + Math.min(lit, 1.5)));
+      });
+      lines.instanceColor.needsUpdate = true;
+
+      // Diodes des baies, colis sur le tapis et scanner.
+      if (now >= fx.nextLeds) {
+        fx.nextLeds = now + 1 / 12;
+        const rate = still ? 0 : od ? 14 : 2 + fx.working * 3;
+        leds.forEach((l, i) => ledMesh.setColorAt(i, noise(Math.floor(now * rate) * 0.37 + i * 7.3) > 0.35 ? (l.hot ? pinkC : cyanC) : color.set("#0a1a24")));
+        ledMesh.instanceColor.needsUpdate = true;
+      }
+      const speed = still ? 0 : od ? 2.6 : 0.3 + Math.min(fx.working, 4) * 0.25;
+      const before = beltRun; beltRun += dt * speed / beltLen;
+      fx.shipped += Math.floor(beltRun * PARCELS) - Math.floor(before * PARCELS);
+      let scanning = false;
+      phases.forEach((p, i) => {
+        const s = (p + beltRun) % 1, x = belt0 + s * beltLen;
+        parcels.setMatrixAt(i, m4.compose(parcelPos.set(x, 0.71, beltZ), q0, parcelSize));
+        scanning ||= Math.abs(x - scanX) < 0.2;
+      });
+      parcels.instanceMatrix.needsUpdate = true;
+      scanBar.material = scanning ? glow(pink, 3) : glow(cyan, 2);
+
+      // Hologramme, particules en orbite et confettis.
+      core.rotation.y = still ? 0 : now * (od ? 4 : 0.9); core.rotation.x = still ? 0 : now * 0.35;
+      ring.rotation.x = Math.PI / 2.4 + (still ? 0 : Math.sin(now * 0.8) * 0.3); ring.rotation.z = still ? 0 : now * 0.6;
+      logo.rotation.y = still ? 0 : now * (od ? 3 : 0.7);
+      const orbitPos = orbit.geometry.attributes.position;
+      for (let i = 0; i < ORBIT; i++) {
+        const ang = i / ORBIT * Math.PI * 2 + (still ? 0 : now * (0.5 + (i % 3) * 0.2)), rad = 0.75 + (i % 3) * 0.18;
+        orbitPos.setXYZ(i, Math.cos(ang) * rad, Math.sin(ang * 3 + i) * 0.12, Math.sin(ang) * rad);
+      }
+      orbitPos.needsUpdate = true;
+      beam.material.opacity = 0.06 + (still ? 0 : Math.sin(now * 3) * 0.015) + (od ? 0.05 : 0);
+      const age = now - fx.burstAt;
+      if (confetti.visible) {
+        if (age > 2.6) confetti.visible = false;
+        const pos = confetti.geometry.attributes.position;
+        for (let i = 0; i < BURST; i++) {
+          burstVel[i * 3 + 1] -= 4.2 * dt;
+          pos.setXYZ(i, pos.getX(i) + burstVel[i * 3] * dt, pos.getY(i) + burstVel[i * 3 + 1] * dt, pos.getZ(i) + burstVel[i * 3 + 2] * dt);
+        }
+        pos.needsUpdate = true; confetti.material.opacity = Math.max(0, 1 - age / 2.6);
+      }
+
+      // Enseigne qui grésille, lumières qui respirent (arc-en-ciel lent en overdrive).
+      if (signs[0]) signs[0].material.opacity = !still && Math.sin(now * 23.7) * Math.sin(now * 7.1 + 1.3) > 0.93 ? 0.3 : 1;
+      lights.forEach((light, i) => {
+        if (od && !still) light.color.setHSL((now * 0.2 + i * 0.5) % 1, 1, 0.55);
+        else light.color.set(i ? cyan : pink);
+        light.intensity = 9 + (still ? 0 : Math.sin(now * 0.9 + i * 2) * 1.5);
+      });
+
+      // Textures dessinées à cadence réduite : pluie de données, serpent de l'arcade, écrans du bureau.
+      if (!still && now >= fx.nextRain) {
+        fx.nextRain = now + 1 / 15;
+        const ctx = rain.ctx;
+        ctx.fillStyle = "rgba(0, 0, 0, 0.18)"; ctx.fillRect(0, 0, 128, 256);
+        ctx.font = "bold 11px monospace";
+        drops.forEach((y, i) => {
+          const word = "TOKSY·DANY·0xC0FFEE·SHIP·"[Math.floor(noise(i * 3.1 + Math.floor(y)) * 24)] ?? "0";
+          ctx.fillStyle = noise(i + y) > 0.85 ? "#ffffff" : i % 4 ? cyan : pink;
+          ctx.fillText(noise(i * 1.7 + y) > 0.8 ? word : "0123456789ABCDEF"[Math.floor(noise(y * 9.1 + i) * 16)], i * 8, y * 12);
+          drops[i] = y * 12 > 256 && Math.random() > 0.9 ? 0 : y + (od ? 2 : 1);
+        });
+        rain.texture.needsUpdate = true;
+      }
+      if (!still && now >= fx.nextSnake) { fx.nextSnake = now + (od ? 0.05 : 0.12); snake = stepSnake(snake); drawSnake(snakeScreen, snake); }
+      if (now >= fx.nextBoss) { fx.nextBoss = now + 1; boss.forEach(screen => drawBossScreen(screen, a, dnow, fx, texts)); }
+    },
+  };
+}
+
 // ---------- étages communs ----------
 // La télécommande : « Auto » met la première chaîne en direct de la liste (Lofi Girl, en direct 24 h/24, en dernier recours).
 // La chaîne est commune à tout le penthouse : le serveur la garde, et chacun voit la même télé.
@@ -1226,6 +1700,7 @@ function tvPageUrl() {
 const stream = Object.assign(document.createElement("iframe"), { title: "Télé du salon", allow: "autoplay; fullscreen; encrypted-media; picture-in-picture" });
 Object.assign(stream.style, { width: "1280px", height: "720px", border: "0", background: "#000", backfaceVisibility: "hidden" });
 let shownUrl = "", tvFrame = null;
+
 // Petits nuages en un seul appel de dessin ; le dégradé évite les particules carrées.
 function ambientSmoke(parent, origin, color, count, spread, rise) {
   const canvas = document.createElement("canvas");
@@ -1256,7 +1731,8 @@ const reelGeometry = new THREE.PlaneGeometry(0.17, 0.4);
 const mod1 = v => v - Math.floor(v);
 const easeOut = k => 1 - (1 - k) ** 3;
 const BULB_ON = new THREE.Color("#ffe9a8"), BULB_DIM = new THREE.Color("#4a2a0c");
-function canvasTexture(w, h, draw) {
+// Texture dessinée une fois (casino, tennis, golf) ; à ne pas confondre avec canvasTexture de l'étage cyberpunk.
+function drawnTexture(w, h, draw) {
   const c = document.createElement("canvas");
   c.width = w; c.height = h;
   draw(c.getContext("2d"), w, h);
@@ -1267,7 +1743,7 @@ function canvasTexture(w, h, draw) {
 }
 // Panneau dessiné à la main : sa texture n'est renvoyée à la carte graphique que quand son contenu change (clé comparée).
 function canvasPanel(parent, w, h, pxW, pxH, x, y, z, ry = 0) {
-  const tex = canvasTexture(pxW, pxH, () => {});
+  const tex = drawnTexture(pxW, pxH, () => {});
   const mesh = new THREE.Mesh(new THREE.PlaneGeometry(w, h), new THREE.MeshBasicMaterial({ map: tex, toneMapped: false }));
   mesh.position.set(x, y, z);
   mesh.rotation.y = ry;
@@ -1344,7 +1820,7 @@ function drawSlotSymbol(x, i, cx, cy) {
   x.restore();
 }
 function slotStripTexture() {
-  slotStrip ??= canvasTexture(128, 128 * SLOT_SYMBOLS.length, x => SLOT_SYMBOLS.forEach((_, i) => {
+  slotStrip ??= drawnTexture(128, 128 * SLOT_SYMBOLS.length, x => SLOT_SYMBOLS.forEach((_, i) => {
     x.fillStyle = i % 2 ? "#f3ecdc" : "#fbf7ec"; x.fillRect(0, i * 128, 128, 128);
     x.fillStyle = "rgba(0,0,0,0.08)"; x.fillRect(0, i * 128, 128, 3);
     drawSlotSymbol(x, i, 64, i * 128 + 64);
@@ -1356,7 +1832,7 @@ function slotStripTexture() {
 const reelOffset = i => mod1(0.75 - (i + 0.5) / SLOT_SYMBOLS.length);
 // Ombre haute et basse devant les rouleaux : ils paraissent bombés.
 function reelShadeTexture() {
-  return reelShade ??= canvasTexture(8, 128, (x, w, h) => {
+  return reelShade ??= drawnTexture(8, 128, (x, w, h) => {
     const gr = x.createLinearGradient(0, 0, 0, h);
     gr.addColorStop(0, "rgba(0,0,0,0.85)"); gr.addColorStop(0.3, "rgba(0,0,0,0)"); gr.addColorStop(0.7, "rgba(0,0,0,0)"); gr.addColorStop(1, "rgba(0,0,0,0.85)");
     x.fillStyle = gr; x.fillRect(0, 0, w, h);
@@ -1364,7 +1840,7 @@ function reelShadeTexture() {
 }
 // Maille de filet (tennis, practice) : chaque filet en prend une copie à sa propre répétition.
 function netTexture(rx, ry) {
-  netMap ??= canvasTexture(64, 64, x => {
+  netMap ??= drawnTexture(64, 64, x => {
     x.strokeStyle = "rgba(240,244,240,0.9)"; x.lineWidth = 2;
     for (let k = 0; k <= 64; k += 8) { x.beginPath(); x.moveTo(k, 0); x.lineTo(k, 64); x.moveTo(0, k); x.lineTo(64, k); x.stroke(); }
   });
@@ -1376,7 +1852,7 @@ function netTexture(rx, ry) {
 // Cartes : une texture par carte, créée au premier tirage puis réutilisée ; « ?? » est le dos (carte cachée de la banque).
 const cardTextures = new Map();
 function cardTexture(label) {
-  if (!cardTextures.has(label)) cardTextures.set(label, canvasTexture(128, 180, (x, w, h) => {
+  if (!cardTextures.has(label)) cardTextures.set(label, drawnTexture(128, 180, (x, w, h) => {
     x.fillStyle = label === "??" ? "#8c1c2b" : "#fbfaf5";
     x.beginPath(); x.roundRect(2, 2, w - 4, h - 4, 12); x.fill();
     if (label === "??") {
@@ -1633,10 +2109,10 @@ function buildShared(def) {
     }
     // Grand écran mural : le direct d'OTPLOL sur Twitch, muet
     const tv = at(570, 24);
-    tvFrame = box(g, 3.24, 1.9, 0.08, mat("#0b0d14", { metalness: 0.6, roughness: 0.3 }), tv.x, 1.75, tv.z);
+    tvFrame = box(g, 4.8, 2.7, 0.08, mat("#0b0d14", { metalness: 0.6, roughness: 0.3 }), tv.x, 1.85, tv.z);
     const view = new CSS3DObject(stream);
-    view.position.set(tv.x, 1.75, tv.z + 0.05);
-    view.scale.setScalar(3.0 / 1280);
+    view.position.set(tv.x, 1.85, tv.z + 0.05);
+    view.scale.setScalar(4.5 / 1280);
     g.add(view);
     sign(g, "REPOS", 2.6, 0.7, { color: "#c7a8ff", font: "700 80px Sora, sans-serif" }, at(570, 20).x, 3.2, back + 0.05);
 
@@ -1786,7 +2262,7 @@ function buildShared(def) {
     zone(40, 380, 240, 590, "#4a1830");
     for (const [x, y] of [[240, 380], [240, 485], [240, 590]]) cyl(g, 0.04, 0.9, mat("#c9a86a", { metalness: 0.8, roughness: 0.3 }), at(x, y).x, 0.45, at(x, y).z, 8);
     box(g, 0.03, 0.03, 4.2, mat("#a3203a"), at(240, 485).x, 0.8, at(240, 485).z);
-    for (const y of [420, 530]) put(g, "loungeDesignSofa", at(70, y).x, at(70, y).z, Math.PI / 2, 2.2);
+    for (const y of [420, 530]) put(g, "loungeDesignSofa", at(70, y).x, at(70, y).z, 0, 2.2);
     put(g, "tableCoffee", at(160, 475).x, at(160, 475).z, 0, 2);
     sign(g, "VIP", 1.4, 0.5, { color: "#f1cd85", font: "700 90px Sora, sans-serif", w: 256 }, at(140, 380).x, 2.2, at(0, 380).z);
     // Platines du DJ : disques qui tournent et petite console à faders.
@@ -1844,7 +2320,7 @@ function buildCasino(f, g, { at, zone, tag, staff, back }) {
   const leather = mat("#24120e", { roughness: 0.45 }), felt = mat("#0f5a33", { roughness: 0.95 });
 
   // Moquette de casino : un motif dessiné une fois et répété ; tapis bordé d'or sur l'allée de l'ascenseur.
-  const carpetMap = canvasTexture(256, 256, x => {
+  const carpetMap = drawnTexture(256, 256, x => {
     x.fillStyle = "#3a0d1c"; x.fillRect(0, 0, 256, 256);
     x.strokeStyle = "#6e2236"; x.lineWidth = 4;
     for (const [cx, cy] of [[64, 64], [192, 192], [64, 192], [192, 64]]) { x.beginPath(); x.arc(cx, cy, 36, 0, Math.PI * 2); x.stroke(); }
@@ -1872,7 +2348,7 @@ function buildCasino(f, g, { at, zone, tag, staff, back }) {
   box(g, 2.42, 0.03, 1.12, felt, rt.x, 0.82, rt.z);
   for (const dz of [-0.6, 0.6]) box(g, 2.6, 0.06, 0.08, leather, rt.x, 0.86, rt.z + dz);
   for (const dx of [-1.26, 1.26]) box(g, 0.08, 0.06, 1.28, leather, rt.x + dx, 0.86, rt.z);
-  const layout = canvasTexture(512, 320, (x, w, h) => {
+  const layout = drawnTexture(512, 320, (x, w, h) => {
     x.fillStyle = "#0f5a33"; x.fillRect(0, 0, w, h);
     x.strokeStyle = "#f4efe2"; x.lineWidth = 3; x.textAlign = "center"; x.textBaseline = "middle";
     const cw = 34, ch = 62, ox = 50, oy = 24;
@@ -1899,7 +2375,7 @@ function buildCasino(f, g, { at, zone, tag, staff, back }) {
   layoutMesh.position.set(rt.x + 0.47, 0.837, rt.z);
   g.add(layoutMesh);
   for (let k = 0; k < 6; k++) cyl(g, 0.035, 0.03 + (k % 3) * 0.02, mat(["#c0392b", "#f4efe2", "#2980b9"][k % 3]), rt.x + 0.1 + k * 0.17, 0.85, rt.z + 0.25 - (k % 2) * 0.42, 14);
-  const wheelTexture = canvasTexture(512, 512, x => {
+  const wheelTexture = drawnTexture(512, 512, x => {
     const o = 256;
     x.fillStyle = "#3a2214"; x.beginPath(); x.arc(o, o, 256, 0, Math.PI * 2); x.fill();
     x.textAlign = "center"; x.textBaseline = "middle"; x.font = "700 26px Sora, sans-serif";
@@ -1962,7 +2438,7 @@ function buildCasino(f, g, { at, zone, tag, staff, back }) {
   half(0.86, 0.76, wood, 0.38);
   box(bj, 1.72, 0.76, 0.04, wood, 0, 0.38, 0);
   half(1.0, 0.05, leather, 0.785);
-  const bjFelt = canvasTexture(512, 512, (x, w) => {
+  const bjFelt = drawnTexture(512, 512, (x, w) => {
     x.fillStyle = "#0e5631"; x.fillRect(0, 0, w, w);
     x.textAlign = "center"; x.textBaseline = "middle";
     x.fillStyle = "#e9c46a"; x.font = "700 25px Sora, sans-serif"; x.fillText("LE BLACKJACK PAIE 3 POUR 2", 256, 256 + 99);
@@ -2437,7 +2913,7 @@ function buildTennis(f, g, { at, tag, staff, back }) {
   const C = TENNIS_COURT, mid = (C.y0 + C.y1) / 2;
   const slab = (x0, y0, x1, y1, m, top) => { const a = P(x0, y0), b = P(x1, y1); return box(g, b.x - a.x, 0.02, b.z - a.z, m, (a.x + b.x) / 2, top - 0.01, (a.z + b.z) / 2); };
   // Terre battue : un grain dessiné une fois ; l'aire de jeu est un ton plus clair que les dégagements.
-  const clay = canvasTexture(128, 128, x => {
+  const clay = drawnTexture(128, 128, x => {
     x.fillStyle = "#ffffff"; x.fillRect(0, 0, 128, 128);
     for (let k = 0; k < 1400; k++) { const v = 200 + Math.random() * 55; x.fillStyle = `rgb(${v},${v * 0.9 | 0},${v * 0.84 | 0})`; x.fillRect(Math.random() * 128, Math.random() * 128, 2, 2); }
   });
@@ -2666,7 +3142,7 @@ function buildGolf(f, g, { at, tag, staff, back }) {
   };
   // Gazon tondu en bandes (une texture par tonte, dessinée une fois).
   const grass = (base, stripe, rx, ry) => {
-    const t = canvasTexture(256, 256, x => {
+    const t = drawnTexture(256, 256, x => {
       for (let k = 0; k < 8; k++) { x.fillStyle = k % 2 ? base : stripe; x.fillRect(k * 32, 0, 32, 256); }
       for (let k = 0; k < 1200; k++) { x.fillStyle = `rgba(10,40,15,${(0.05 + Math.random() * 0.1).toFixed(2)})`; x.fillRect(Math.random() * 256, Math.random() * 256, 2, 2); }
     });
@@ -2692,7 +3168,7 @@ function buildGolf(f, g, { at, tag, staff, back }) {
     ellipse(hx, hy, 3.6, 3.6, mat("#0a0c0a"), 0.077);
     const lipRing = new THREE.Mesh(new THREE.RingGeometry(0.072, 0.086, 24).rotateX(-Math.PI / 2), mat("#e9ecef"));
     lipRing.position.set(p.x, 0.0775, p.z); g.add(lipRing);
-    const flagMat = new THREE.MeshBasicMaterial({ side: THREE.DoubleSide, map: canvasTexture(128, 82, (x, w, h) => {
+    const flagMat = new THREE.MeshBasicMaterial({ side: THREE.DoubleSide, map: drawnTexture(128, 82, (x, w, h) => {
       x.fillStyle = ["#e63946", "#ffd23f", "#4cc9f0"][k]; x.fillRect(0, 0, w, h);
       x.fillStyle = "#14213d"; x.font = "900 60px Sora, sans-serif"; x.textAlign = "center"; x.textBaseline = "middle"; x.fillText(String(k + 1), w / 2, h / 2 + 3);
     }) });
@@ -2708,7 +3184,7 @@ function buildGolf(f, g, { at, tag, staff, back }) {
     flag.position.set(p.x, 1.62, p.z); flag.rotation.y = -0.5; g.add(flag);
   });
   // Bunker : sable ratissé, lèvre d'herbe et râteau.
-  const sand = canvasTexture(128, 128, x => {
+  const sand = drawnTexture(128, 128, x => {
     x.fillStyle = "#e6d3a0"; x.fillRect(0, 0, 128, 128);
     for (let k = 0; k < 900; k++) { x.fillStyle = Math.random() < 0.5 ? "#d4bf86" : "#f2e3b8"; x.fillRect(Math.random() * 128, Math.random() * 128, 2, 2); }
     x.strokeStyle = "rgba(150,120,70,0.35)"; x.lineWidth = 2;
@@ -2781,7 +3257,7 @@ function buildGolf(f, g, { at, tag, staff, back }) {
     for (let k = 0; k < 12; k++) cyl(g, 0.04, 0.26, glow(["#ffb347", "#9bff6b", "#ff6b6b", "#5ce1ff"][(k + y * 2) % 4], 0.5), cb.x - 2 + k * 0.36, y + 0.15, shelfZ + 0.1, 8);
   }
   const awning = new THREE.Mesh(new THREE.PlaneGeometry(4.9, 1.1), new THREE.MeshStandardMaterial({ side: THREE.DoubleSide, roughness: 0.8,
-    map: canvasTexture(256, 32, (x, w, h) => { for (let k = 0; k < 16; k++) { x.fillStyle = k % 2 ? "#f4ecd8" : "#2f6b45"; x.fillRect(k * 16, 0, 16, h); } }) }));
+    map: drawnTexture(256, 32, (x, w, h) => { for (let k = 0; k < 16; k++) { x.fillStyle = k % 2 ? "#f4ecd8" : "#2f6b45"; x.fillRect(k * 16, 0, 16, h); } }) }));
   awning.position.set(cb.x, 2.75, cb.z - 0.15);
   awning.rotation.x = -Math.PI / 2 + 0.35;
   g.add(awning);
@@ -3034,8 +3510,8 @@ function syncFloors(list) {
       const prev = floors.get(k);
       if (!prev) {
         floors.set(k, buildResident(a, w, tier ?? undefined));
-      } else if (w.id === "work" && (prev.officeTierId !== tier.id || prev.decorKey !== decorKeyOf(a))) {
-        // Palier d'aménagement ou décor acheté : l'étage est reconstruit, ses agents passent dans le nouveau.
+      } else if (w.id === "work" && (prev.officeTierId !== tier.id || prev.decorKey !== decorKeyOf(a) || prev.themeKey !== themeKey(a))) {
+        // Palier d'aménagement, décor acheté ou ambiance : l'étage est reconstruit, ses agents passent dans le nouveau.
         for (const [, g] of agents) if (g.userData.floor === k) prev.group.remove(g);
         removeFloor(k);
         floors.set(k, buildResident(a, w, tier));
@@ -3046,7 +3522,7 @@ function syncFloors(list) {
   }
   for (const d of SHARED) if (!floors.has(d.id)) floors.set(d.id, buildShared(d));
   for (const [k, f] of floors) if (!order.includes(k)) {
-    f.group.traverse(o => o.isCSS2DObject && o.element.remove());
+    f.group.traverse(o => (o.isCSS2DObject || o.isCSS3DObject) && o.element.remove());
     scene.remove(f.group);
     floors.delete(k);
   }
@@ -3154,7 +3630,7 @@ function update(now) {
         const wnt = want.get(row.key);
         if (wnt) busy.add(wnt.index);
       }
-      f.screens.forEach((sc, k) => { sc.material = busy.has(k) ? glow("#4fb6ff", 1.4) : mat("#1d2433"); });
+      f.screens.forEach((sc, k) => { sc.material = busy.has(k) ? f.busyScreen ?? glow("#4fb6ff", 1.4) : f.idleScreen ?? mat("#1d2433"); });
     }
     const fw = floors.get(`${a.slug}:work`);
     if (fw) fw.alert = (groups.get(`${a.slug}:work/boss`) ?? []).length > 0;
@@ -3205,6 +3681,8 @@ function animate(frameTime = performance.now()) {
     });
     const decorTime = reducedMotion.matches ? 0 : t;
     f.records?.forEach(d => { d.rotation.y = decorTime * 1.8; });
+    f.cyber?.tick(dt, near);
+    if (f.tv) { f.tv.view.visible = near; const want = near ? f.tv.url : "about:blank"; if (f.tv.shown !== want) { f.tv.shown = want; f.tv.iframe.src = want; } }
     f.flames?.forEach((flame, k) => {
       flame.scale.set(1, 0.8 + Math.sin(decorTime * 5 + k * 2) * 0.3, 1);
     });
@@ -3416,6 +3894,8 @@ addEventListener("keydown", e => {
 
 // Clic sur un agent : sa fiche.
 const onFocus = () => [...agents.values()].filter(g => g.userData.floor === order[focus] && g.visible);
+const onGiantTv = () => { const t = floors.get(order[focus])?.tv; return t && ray.intersectObject(t.frame).length ? t : null; };
+const onByte = () => { const c = floors.get(order[focus])?.cyber; return c && ray.intersectObject(c.hit, true).length ? c : null; };
 const onTv = () => order[focus] === "lounge" && tvFrame && ray.intersectObject(tvFrame).length > 0;
 // Machines, tables, court et green : un clic ouvre le dialogue Entreprise sur le bon onglet (résidents seulement).
 const onPlayTarget = () => {
@@ -3432,10 +3912,20 @@ renderer.domElement.addEventListener("pointerup", e => {
   if (Math.hypot(e.clientX - x, e.clientY - y) > 6) return; // c'était un glisser, pas un clic
   mouse.set((e.clientX / innerWidth) * 2 - 1, -(e.clientY / innerHeight) * 2 + 1);
   ray.setFromCamera(mouse, camera);
+
   let o = ray.intersectObjects(onFocus(), true)[0]?.object;
   while (o && !o.userData.key) o = o.parent;
   if (o) return showAgent(o.userData.apt, o.userData.s);
+  const byte = onByte(), giant = onGiantTv();
+  // Sa propre télé : le clic ouvre le réglage du lien ; celle d'un autre résident s'ouvre avec le son.
+  if (giant && floors.get(order[focus])?.residentSlug === JSON.parse(localStorage.getItem(ME) ?? "null")?.slug) {
+    showCustomize();
+    return $("#customizeForm").tv.select();
+  }
+  if (giant) return open(giant.page, "_blank", "noopener");
+  if (byte) return byte.poke();
   if (onTv()) return void open(tvPageUrl(), "_blank", "noopener");
+  // Machines, roulette, blackjack, court, green : le jeu s'ouvre dans « Entreprise ».
   const tab = onPlayTarget();
   if (tab) economyUi.open(tab);
 });
@@ -3443,7 +3933,7 @@ renderer.domElement.addEventListener("pointermove", e => {
   if (e.buttons) return;
   mouse.set((e.clientX / innerWidth) * 2 - 1, -(e.clientY / innerHeight) * 2 + 1);
   ray.setFromCamera(mouse, camera);
-  renderer.domElement.style.cursor = ray.intersectObjects(onFocus(), true).length || onTv() || onPlayTarget() ? "pointer" : "";
+  renderer.domElement.style.cursor = ray.intersectObjects(onFocus(), true).length || onTv() || onByte() || onGiantTv() || onPlayTarget() ? "pointer" : "";
 });
 
 // ---------- interface ----------
@@ -3896,6 +4386,9 @@ function showCustomize() {
   const form = $("#customizeForm");
   form.accent.value = apt.profile?.accent ?? "#e8c27a";
   form.tagline.value = apt.profile?.tagline ?? "";
+  form.theme.value = apt.profile?.theme ?? "classique";
+  form.screens.value = (apt.profile?.screens ?? []).join(" / ");
+  form.tv.value = apt.profile?.tv ? tvLinks(apt.profile.tv).page : "";
   $("#customizeDlg").showModal();
 }
 $("#customizeBtn").addEventListener("click", showCustomize);
@@ -3906,7 +4399,7 @@ $("#customizeForm").addEventListener("submit", async e => {
   const fields = Object.fromEntries(new FormData(e.currentTarget));
   $("#customizeErr").textContent = "";
   try {
-    await saveProfile(token, { accent: fields.accent, tagline: fields.tagline });
+    await saveProfile(token, { accent: fields.accent, tagline: fields.tagline, theme: fields.theme, screens: fields.screens, tv: fields.tv });
     $("#customizeDlg").close();
     await tick();
   } catch (error) { $("#customizeErr").textContent = error.message; }

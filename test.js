@@ -791,8 +791,22 @@ test("profil étage : enregistrement avec clé et exposition dans l'état", asyn
     assert.equal(saved.profile.tagline, "Nuit code");
     assert.equal(sanitizeProfile({ accent: "bad", tagline: "x".repeat(200) }).accent, "#e8c27a");
     assert.equal(sanitizeProfile({ accent: "bad", tagline: "x".repeat(200) }).tagline.length, 80);
+    const themed = await (await call("/api/profile", { profile: { theme: "cyberpunk", screens: "TikTok Shop / Toksy / toksy.fr / trop" } }, { Cookie: cookie, "X-Tour-Token": token })).json();
+    assert.equal(themed.profile.theme, "cyberpunk");
+    assert.deepEqual(themed.profile.screens, ["TikTok Shop", "Toksy", "toksy.fr"]);
+    assert.equal(themed.profile.tagline, "Nuit code");
+    const saveTv = tv => call("/api/profile", { profile: { tv } }, { Cookie: cookie, "X-Tour-Token": token });
+    assert.deepEqual((await (await saveTv("https://www.youtube.com/watch?v=abcdefghijk")).json()).profile.tv, { kind: "youtube", id: "abcdefghijk" });
+    assert.equal((await saveTv("https://exemple.com/page")).status, 400);
+    assert.deepEqual((await (await saveTv("https://twitch.tv/LofiGirl")).json()).profile.tv, { kind: "twitch", channel: "lofigirl" });
+    assert.deepEqual(sanitizeProfile({ tv: { kind: "youtube", id: "javascript:x" } }).tv, null);
+    assert.equal((await (await saveTv("")).json()).profile.tv, null);
+    assert.equal((await (await saveTv("https://twitch.tv/lofigirl")).json()).profile.theme, "cyberpunk");
     const state = await (await fetch(url + "/api/state", { headers: { cookie } })).json();
-    assert.equal(state.apartments.find(a => a.slug === slug).profile.accent, "#112233");
+    const mine = state.apartments.find(a => a.slug === slug).profile;
+    assert.equal(mine.accent, "#112233");
+    assert.equal(mine.theme, "cyberpunk");
+    assert.deepEqual(mine.screens, ["TikTok Shop", "Toksy", "toksy.fr"]);
   } finally {
     app.close();
   }

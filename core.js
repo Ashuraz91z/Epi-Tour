@@ -7,15 +7,25 @@ export function createStore() {
   // sessions : par clé "src:machine:session" ; usage : quotas par fournisseur ;
   // seen : dernier signe de vie par machine ; stats : compteurs par jour ; health : services d'Hermes.
   return { sessions: {}, feed: [], usage: {}, seen: {}, stats: {}, health: {},
-    profile: { accent: "#e8c27a", tagline: "" }, game: createGame(), economy: createEconomy() };
+    profile: { accent: "#e8c27a", tagline: "", theme: "classique", screens: [] }, game: createGame(), economy: createEconomy() };
 }
 
 const ACCENT = /^#[0-9a-fA-F]{6}$/;
+export const THEMES = ["classique", "cyberpunk"];
 export function sanitizeProfile(raw, previous = {}) {
   const accent = typeof raw?.accent === "string" && ACCENT.test(raw.accent) ? raw.accent.toLowerCase() : (previous.accent ?? "#e8c27a");
   const tagline = typeof raw?.tagline === "string" ? raw.tagline.trim().slice(0, 80) : (previous.tagline ?? "");
-  return { accent, tagline };
+  const theme = THEMES.includes(raw?.theme) ? raw.theme : THEMES.includes(previous.theme) ? previous.theme : "classique";
+  // Textes des écrans du bureau : « TikTok Shop / Toksy » depuis le formulaire, ou une liste ; 3 au plus, courts.
+  const list = typeof raw?.screens === "string" ? raw.screens.split("/") : Array.isArray(raw?.screens) ? raw.screens : null;
+  const screens = list ? list.filter(s => typeof s === "string").map(s => s.trim().slice(0, 24)).filter(Boolean).slice(0, 3)
+    : Array.isArray(previous.screens) ? previous.screens : [];
+  // Télé géante de l'étage : déjà normalisée par le serveur (parseTvLink) ; null l'éteint.
+  const tv = raw && "tv" in raw ? cleanTv(raw.tv) : cleanTv(previous.tv);
+  return { accent, tagline, theme, screens, tv };
 }
+const cleanTv = tv => tv?.kind === "youtube" && /^[A-Za-z0-9_-]{11}$/.test(tv.id ?? "") ? { kind: "youtube", id: tv.id }
+  : tv?.kind === "twitch" && /^[a-z0-9_]{3,25}$/.test(tv.channel ?? "") ? { kind: "twitch", channel: tv.channel } : null;
 
 export function short(v, n = 140) {
   const s = (typeof v === "string" ? v : JSON.stringify(v) ?? "").split(/\s+/).filter(Boolean).join(" ");

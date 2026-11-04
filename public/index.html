@@ -110,6 +110,9 @@
   <form id="customizeForm" class="customize-form">
     <label>Couleur d’accent<input name="accent" type="color" value="#e8c27a"></label>
     <label>Phrase sur ton panneau<input name="tagline" maxlength="80" placeholder="ex. Full stack la nuit"></label>
+    <label>Ambiance de l’étage<select name="theme"><option value="classique">Classique</option><option value="cyberpunk">Cyberpunk</option></select></label>
+    <label>Texte des écrans<input name="screens" maxlength="80" placeholder="ex. TikTok Shop / Toksy / toksy.fr"></label>
+    <label>Télé géante (lien YouTube ou Twitch, vide pour l’éteindre)<input name="tv" type="url" maxlength="500" placeholder="ex. https://www.youtube.com/watch?v=…"></label>
     <button type="submit">Enregistrer</button>
     <p class="err" id="customizeErr" role="alert"></p>
   </form>
