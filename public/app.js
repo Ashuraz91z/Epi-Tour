@@ -343,9 +343,10 @@ function label(parent, html, cls, x, y, z) {
 
 // ---------- performances : lumières fixes, maillages fusionnés, étages hors scène ----------
 // Lumière d'un étage : un simple repère (position, couleur, intensité) que l'étage anime comme avant. Les vraies lampes
-// sont quatre PointLight toujours présentes dans la scène, prêtées chaque image aux repères de l'étage regardé (puis
-// de celui qui s'envole) : leur nombre ne change jamais, donc changer d'étage ne recompile aucun shader, et un étage
-// ne paie plus pour les lampes des autres.
+// sont trois PointLight toujours présentes dans la scène, prêtées chaque image aux repères de l'étage regardé (puis
+// de celui qui s'envole), par priorité : leur nombre ne change jamais, donc changer d'étage ne recompile aucun shader,
+// et chaque pixel ne calcule que trois lampes (jusqu'à cinq avant, sur un étage cyberpunk). Seule la lampe du salon
+// privé d'un étage cyberpunk, noyée dans ses néons, n'a plus de place.
 class LightSpot extends THREE.Object3D {
   constructor(color, intensity, distance, decay, priority = 2) {
     super();
@@ -354,21 +355,22 @@ class LightSpot extends THREE.Object3D {
     Object.assign(this, { intensity, distance, decay, priority });
   }
 }
-const LIGHT_RIG = Array.from({ length: 4 }, () => { const l = new THREE.PointLight("#ffffff", 0, 1, 2); scene.add(l); return l; });
-function lendLights(...list) {
-  let k = 0;
-  for (const f of list) {
-    if (!f?.lights) continue;
-    f.group.updateMatrix();
-    for (const s of f.lights) {
-      if (k >= LIGHT_RIG.length) break;
-      if (!(s.intensity > 0)) continue;
-      const l = LIGHT_RIG[k++];
-      l.color.copy(s.color); l.intensity = s.intensity; l.distance = s.distance; l.decay = s.decay;
-      l.position.copy(s.position).applyMatrix4(f.group.matrix); // repères posés directement sur l'étage
-    }
+const LIGHT_RIG = Array.from({ length: 3 }, () => { const l = new THREE.PointLight("#ffffff", 0, 1, 2); scene.add(l); return l; });
+function lendLights(main, leaving) {
+  const k = lendFrom(leaving, lendFrom(main, 0));
+  for (let i = k; i < LIGHT_RIG.length; i++) LIGHT_RIG[i].intensity = 0;
+}
+function lendFrom(f, k) {
+  if (!f?.lights) return k;
+  f.group.updateMatrix();
+  for (const s of f.lights) {
+    if (k >= LIGHT_RIG.length) break;
+    if (!(s.intensity > 0)) continue;
+    const l = LIGHT_RIG[k++];
+    l.color.copy(s.color); l.intensity = s.intensity; l.distance = s.distance; l.decay = s.decay;
+    l.position.copy(s.position).applyMatrix4(f.group.matrix); // repères posés directement sur l'étage
   }
-  for (; k < LIGHT_RIG.length; k++) LIGHT_RIG[k].intensity = 0;
+  return k;
 }
 
 // Objets animés, cliqués ou dont on remplace le matériau : marqués « live », ils ne sont jamais fusionnés (et servent
@@ -397,7 +399,6 @@ const geometrySignature = g => (g.index ? "i" : "n") + Object.entries(g.attribut
 // parent « live ») : des centaines d'appels de dessin et d'objets à parcourir deviennent quelques dizaines.
 // Restent tels quels : maillages instanciés ou animés par squelette, transparents, invisibles (zones de clic),
 // multi-matériaux, retournés (échelle négative) et tout ce qui est live ou porté par un robot.
-const bakeMatrix = new THREE.Matrix4();
 function bakeStatic(root) {
   root.updateMatrixWorld(true);
   const batches = new Map(), inverse = new Map();
@@ -4122,7 +4123,7 @@ function animate(frameTime = performance.now()) {
     css3d ||= f.hasCss3d;
     animateFloor(f, key, near, dt, t);
   }
-  // Les quatre lampes vont d'abord à l'étage regardé, le reste à celui qui s'envole.
+  // Les trois lampes vont d'abord à l'étage regardé, le reste à celui qui s'envole.
   lendLights(floors.get(focusKey), leaving);
   beacons.color.copy(Math.sin(t * 2.5) > 0.6 ? BEACON_ON : BEACON_OFF);
   // Le haut de la tour suit l'étage regardé.
@@ -4231,7 +4232,14 @@ function tickWorkFloor(f, dt, t) {
       if (f.workFlash) f.workFlash.intensity = 9 * env;
     }
   }
-  if (confetti.mesh.parent === f.group && confetti.alive) stepConfetti(dt, t);
+  if (confetti.mesh.parent !== f.group || !confetti.alive) return;
+  if (reducedMotion.matches) clearConfetti(); else stepConfetti(dt, t);
+}
+function clearConfetti() {
+  const c = confetti;
+  c.end.fill(0); c.alive = 0; c.mesh.visible = false;
+  for (let i = 0; i < CONFETTI_COUNT; i++) c.mesh.setMatrixAt(i, c.hidden);
+  c.mesh.instanceMatrix.needsUpdate = true;
 }
 
 // Confettis : une seule série d'instances (un appel de dessin), prêtée à l'étage qui fait la fête ; chaque morceau
@@ -4250,11 +4258,7 @@ const confetti = (() => {
 })();
 function confettiOn(f) {
   const c = confetti;
-  if (c.mesh.parent !== f.group) {
-    f.group.add(c.mesh);
-    c.end.fill(0); c.alive = 0;
-    for (let i = 0; i < CONFETTI_COUNT; i++) c.mesh.setMatrixAt(i, c.hidden);
-  }
+  if (c.mesh.parent !== f.group) { f.group.add(c.mesh); clearConfetti(); }
   c.mesh.visible = true;
 }
 function addConfetto(x, y, z, vx, vy, vz, life) {
@@ -4411,6 +4415,7 @@ function animateFloor(f, key, near, dt, t) {
   if (f.roomTags) for (const l of f.roomTags) l.visible = near;
   if (f.kind === "resident") {
     f.ownerTag.visible = near;
+    if (f.celebration) f.celebration.banner.visible = near;
     f.alarmLight.intensity = f.alert ? 6 + Math.sin(t * 9) * 5 : 0;
     f.alarm.material = f.alert && Math.sin(t * 9) > 0 ? ALARM_ON : ALARM_OFF;
     play(f.owner, "Sitting");
@@ -4589,7 +4594,11 @@ function adaptResolution(now) {
   q.last = now;
   if (gap > 250) { q.slowFor = q.fastFor = 0; return; } // onglet repris, étage reconstruit : rien à en conclure
   q.avg += (gap - q.avg) * 0.08;
-  if (q.avg > 20.5) { q.slowFor += gap; q.fastFor = 0; } else if (q.avg < 17.6) { q.fastFor += gap; q.slowFor = 0; } else q.slowFor = q.fastFor = 0;
+  // Lent : la moyenne glissante dépasse ~20 ms, et chaque image lente compte (une image rapide décompte, pour que le
+  // retard de la moyenne après une accalmie ne fasse pas descendre d'un cran de trop).
+  if (q.avg > 20.5) { q.slowFor = Math.max(0, q.slowFor + (gap > 18 ? gap : -gap)); q.fastFor = 0; }
+  else if (q.avg < 17.6) { q.fastFor += gap; q.slowFor = 0; }
+  else { q.slowFor = Math.max(0, q.slowFor - gap); q.fastFor = 0; }
   const r = renderer.getPixelRatio();
   if (q.slowFor > 1500 && r > pixelFloor() + 0.01) {
     // Ralenti juste après une remontée : ce cran est trop lourd pour la machine, on ne le retente pas tout de suite.
@@ -5356,7 +5365,7 @@ async function loadModels() {
 
 var modelsReady = false; // var : lu par ensureStream, défini plus haut, avant la fin du chargement
 document.addEventListener("visibilitychange", () => { if (modelsReady && !document.hidden) { tick(); refreshLive(); } });
-setInterval(() => { if (document.hidden) return; $("#clock").textContent = new Date().toLocaleTimeString("fr-FR", { hour: "2-digit", minute: "2-digit" }); }, 1000);
+setInterval(() => { if (document.hidden) return; setText($("#clock"), new Date().toLocaleTimeString("fr-FR", { hour: "2-digit", minute: "2-digit" })); }, 1000);
 await Promise.all([document.fonts.ready, loadModels()]);
 modelsReady = true;
 async function refreshLive() {
