@@ -97,14 +97,15 @@ export function pushToast(game, title, body, xp = 0) {
   if (game.toast.length > 8) game.toast.splice(0, game.toast.length - 8);
 }
 
-export function grantXp(game, amount, reason) {
+// quiet : XP gagnée en continu (travail des agents) : pas de toast à chaque fois, seulement les paliers.
+export function grantXp(game, amount, reason, { quiet = false } = {}) {
   if (!Number.isFinite(amount) || amount <= 0) return;
   const beforeLevel = levelFromXp(game.xp);
   const beforeOffice = officeTierForLevel(beforeLevel);
-  game.xp += amount;
+  game.xp = Math.round((game.xp + amount) * 100) / 100;
   const afterLevel = levelFromXp(game.xp);
   const afterOffice = officeTierForLevel(afterLevel);
-  pushToast(game, reason, `+${amount} XP`, amount);
+  if (!quiet) pushToast(game, reason, `+${amount} XP`, amount);
   if (afterLevel > beforeLevel) pushToast(game, "Niveau supérieur !", `Tu es niveau ${afterLevel}`, 0);
   if (afterOffice.id > beforeOffice.id) pushToast(game, "Aménagement amélioré !", `${afterOffice.name} · ${afterOffice.perks.join(", ")}`, 0);
   unlockBadges(game);

@@ -1041,13 +1041,14 @@ test("économie : le grade suit l'abonnement, le salaire suit le temps de travai
   assert.equal(claude.role, "🧭 Lead · Ingé logiciel");
   assert.equal(claude.todayMinutes, 60);
   assert.equal(claude.todayPay, 120, "1 h à 120 P$/h");
-  assert.equal(store.economy.wallet, 120);
-  // Sans abonnement déclaré, Codex est stagiaire : 1 h à 15 P$/h.
-  await workSession(store, "codex", "x1", CALM_MORNING, 60);
-  assert.equal(publicEconomy(store, CALM_MORNING + 3600).staff.find(s => s.src === "codex").todayPay, 15);
+  assert.equal(store.economy.wallet, 140, "120 P$ de salaire + 20 P$ de l'objectif Bronze (1 h de travail)");
+  // Sans abonnement déclaré, Codex est stagiaire : 1 h à 15 P$/h (étage à part : ni prime d'équipe ni série en cours).
+  const solo = createStore();
+  await workSession(solo, "codex", "x1", CALM_MORNING, 60);
+  assert.equal(publicEconomy(solo, CALM_MORNING + 3600).staff.find(s => s.src === "codex").todayPay, 15);
   // Un outil inconnu n'est pas un employé.
-  await workSession(store, "pirate", "p1", CALM_MORNING, 60);
-  assert.equal(store.economy.wallet, 135);
+  await workSession(solo, "pirate", "p1", CALM_MORNING, 60);
+  assert.equal(solo.economy.wallet, 35);
   assert.ok(store.game.badges.includes("first_pay"));
 });
 
@@ -1061,8 +1062,9 @@ test("économie : heures sup majorées, repos obligatoire après 10 h, gros trou
   const day = publicEconomy(store, start + 11 * 3600).staff[0];
   assert.equal(day.todayMinutes, 660);
   assert.ok(day.overtime && day.resting);
-  // 2 h à 30, 4 h à 31,80 (échelon 2), 1 h à 33,60 (échelon 3), 3 h sup à 33,60 × 1,25, la 11e heure non payée.
-  assert.equal(day.todayPay, money2(60 + 127.2 + 33.6 + 126));
+  // 1re heure à 30 P$/h ; dès 1 h de travail la série du jour ajoute +2 % : 2e heure à 30,60, 4 h à 32,44 (échelon 2),
+  // 1 h à 34,27 (échelon 3), 3 h sup à 34,27 × 1,25, la 11e heure non payée (arrondi au centime par tranche de 2 min).
+  assert.equal(day.todayPay, money2(30 + 30.6 + 129.6 + 34.2 + 128.7));
   const paid = store.economy.wallet;
   step({ hook_event_name: "PreToolUse", tool_name: "Bash" }, start + 11 * 3600 + 120);
   assert.equal(store.economy.wallet, paid, "au-delà de 10 h, plus rien");
@@ -1115,8 +1117,8 @@ test("économie : ancienneté, promotion d'échelon, primes de livraison et de r
   assert.ok(store.game.badges.includes("promo"));
   const before = store.economy.wallet;
   step({ hook_event_name: "Stop" }, CALM_MORNING + 7300);
-  // 100 s de travail à 15,90 P$/h (stagiaire, échelon 2) puis la prime de livraison d'un stagiaire : 4 P$.
-  assert.equal(money2(store.economy.wallet - before), money2(0.44 + 4));
+  // 100 s de travail à 16,22 P$/h (stagiaire, échelon 2, série +2 %) puis la prime de livraison d'un stagiaire : 4 P$.
+  assert.equal(money2(store.economy.wallet - before), money2(0.45 + 4));
   step({ hook_event_name: "PermissionRequest", tool_name: "Bash" }, CALM_MORNING + 7400);
   const mid = store.economy.wallet;
   step({ hook_event_name: "PreToolUse", tool_name: "Bash" }, CALM_MORNING + 7460);
@@ -1233,7 +1235,8 @@ test("économie par HTTP : abonnement, casino, primes entre résidents, missions
     const spectator = room.headers.get("set-cookie").split(";")[0];
     const state = await (await fetch(url + "/api/state", { headers: { Cookie: spectator } })).json();
     const view = state.apartments.find(a => a.slug === "ana").economy;
-    assert.deepEqual(Object.keys(view).sort(), ["decor", "earned", "records", "staff", "title", "today", "wallet"]);
+    assert.deepEqual(Object.keys(view).sort(), ["decor", "earned", "records", "staff", "title", "today", "wallet", "work"]);
+    assert.deepEqual(Object.keys(view.work).sort(), ["streak", "team", "today"], "ni projets ni événements pour un spectateur");
     assert.deepEqual(Object.keys(view.staff[0]).sort(), ["echelon", "grade", "role", "src"]);
     assert.equal((await call("/api/economy/casino", { game: "slots", bet: 10 }, { Cookie: spectator, "X-Tour-Token": ana.token })).status, 401);
   } finally { app.close(); }
@@ -1522,4 +1525,75 @@ SH`);
     assert.match(calls, /kickstart gui\/\d+\/xyz\.ashuraz\.penthouse\.sync/);
     assert.ok(!/Cursor/.test(calls), "seuls les outils cochés se lancent");
   } finally { rmSync(dir, { recursive: true, force: true }); }
+});
+
+// ---------- Le travail au centre du jeu ----------
+
+test("travail : XP au temps réel, prime d'équipe, objectifs du jour, projets et livraisons", async () => {
+  const { publicEconomy, rateFor, onIngestEconomy } = await import("./economy.js");
+  const store = createStore();
+  // Trois agents en parallèle pendant 1 h sur deux projets.
+  const step = (src, sid, p, t, cwd) => {
+    const prev = Object.fromEntries(Object.entries(store.sessions).map(([k, s]) => [k, { state: s.state, updated: s.updated }]));
+    ingest(store, src, "mac", { session_id: sid, cwd, ...p }, t);
+    onIngestEconomy(store, prev, t);
+  };
+  const agents = [["claude", "a", "/code/penthouse"], ["claude", "b", "/code/penthouse"], ["codex", "c", "/code/api"]];
+  for (const [src, sid, cwd] of agents) step(src, sid, { hook_event_name: "UserPromptSubmit" }, CALM_MORNING, cwd);
+  for (let m = 2; m <= 60; m += 2) for (const [src, sid, cwd] of agents) step(src, sid, { hook_event_name: "PreToolUse", tool_name: "Bash" }, CALM_MORNING + m * 60, cwd);
+  const view = publicEconomy(store, CALM_MORNING + 3600).work;
+  assert.equal(view.today.minutes, 180);
+  assert.equal(view.today.peakParallel, 3);
+  assert.equal(view.team.active, 3);
+  assert.equal(view.team.bonus, 0.2);
+  assert.match(view.team.label, /\+20 %/);
+  assert.ok(rateFor(store, "claude", CALM_MORNING + 3600).factors.some(f => f.label === "Prime d'équipe (3 agents)" && f.factor === 1.2));
+  // Objectifs : Bronze (1 h), Argent (3 h) et « 3 agents en même temps » atteints et payés.
+  const done = view.objectives.filter(o => o.done).map(o => o.id).sort();
+  assert.deepEqual(done, ["m180", "m60", "p3"]);
+  assert.ok(store.economy.ledger.some(e => e.label === "Objectif · Argent · 3 h de travail" && e.amount === 50));
+  assert.ok(store.game.badges.includes("polyglot") === false, "deux outils seulement");
+  // XP du travail : 0,5 par minute (180 min → 90) + objectifs (30 + 60 + 40), sans un toast par minute.
+  assert.equal(store.game.xp, 90 + 30 + 60 + 40);
+  assert.ok(store.game.toast.filter(t => t.title === "Travail").length === 0);
+  // Projets : temps et niveau par dossier de travail.
+  assert.deepEqual(view.projects.map(p => [p.name, p.todayMinutes, p.level]), [["penthouse", 120, 2], ["api", 60, 2]]);
+  // Une livraison : événement, XP, projet ; elle compte même au-delà du plafond de primes.
+  step("claude", "a", { hook_event_name: "Stop" }, CALM_MORNING + 3700, "/code/penthouse");
+  const after = publicEconomy(store, CALM_MORNING + 3700).work;
+  assert.equal(after.today.deliveries, 1);
+  assert.equal(after.events[0].kind, "delivery");
+  assert.equal(after.events[0].project, "penthouse");
+  assert.equal(after.projects.find(p => p.name === "penthouse").deliveries, 1);
+  store.economy.day.deliveries = 30; // plafond des primes atteint
+  for (let i = 0; i < 19; i++) {
+    step("codex", "d" + i, { hook_event_name: "UserPromptSubmit" }, CALM_MORNING + 3800 + i, "/code/api");
+    step("codex", "d" + i, { hook_event_name: "Stop" }, CALM_MORNING + 3810 + i, "/code/api");
+  }
+  const busy = publicEconomy(store, CALM_MORNING + 4000).work;
+  assert.equal(busy.today.deliveries, 20);
+  assert.ok(busy.objectives.find(o => o.id === "d15").done);
+  assert.ok(store.game.badges.includes("courier"));
+  assert.ok(busy.xpToday <= busy.xpCap);
+});
+
+test("travail : série de jours travaillés, plafond d'XP, vue spectateur réduite", async () => {
+  const { publicEconomy, rateFor, spectatorEconomy } = await import("./economy.js");
+  const store = createStore();
+  for (let d = 0; d < 7; d++) await workSession(store, "claude", "s" + d, CALM_MORNING + d * 86400, 62);
+  const day7 = CALM_MORNING + 6 * 86400 + 4000;
+  const view = publicEconomy(store, day7).work;
+  assert.equal(view.streak.days, 7);
+  assert.ok(view.streak.today);
+  assert.equal(view.streak.bonus, 0.14);
+  assert.ok(store.game.badges.includes("stakhanov"));
+  assert.ok(rateFor(store, "claude", day7).factors.some(f => f.label === "Série de travail 7 j" && f.factor === 1.14));
+  const spectator = spectatorEconomy(publicEconomy(store, day7));
+  assert.deepEqual(spectator.work, { today: { minutes: spectator.work.today.minutes, deliveries: 0 }, team: { active: spectator.work.team.active }, streak: { days: 7 } });
+  assert.equal(publicEconomy(store, day7 + 3 * 86400).work.streak.days, 0, "un jour sans travail casse la série");
+  // XP de travail plafonnée : 14 h d'agents ne donnent pas plus de 400 XP de travail.
+  const busy = createStore();
+  for (const sid of ["x", "y", "z"]) await workSession(busy, "claude", sid, CALM_MORNING, 300);
+  assert.equal(publicEconomy(busy, CALM_MORNING + 18000).work.xpToday, 400);
+  assert.ok(busy.game.badges.includes("marathon"));
 });

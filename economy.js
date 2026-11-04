@@ -9,7 +9,7 @@
 import { randomInt } from "node:crypto";
 import {
   CASINO, CHATGPT_PLANS, ECHELONS, ECHELON_BONUS, ECONOMY_BADGES, EVENTS, FREELANCE, GRADES, MAJORATIONS, MODEL_FACTORS,
-  MORALE, PRIMES, PROVIDERS, SHOP, SPECIALTIES, SPORTS, TIPS, TITLES, TOOL_PROVIDER, WORKDAY,
+  MORALE, PRIMES, PROVIDERS, SHOP, SPECIALTIES, SPORTS, TIPS, TITLES, TOOL_PROVIDER, WORK, WORKDAY,
 } from "./public/economy-data.js";
 import { createGame, grantXp, markActive, pushToast } from "./gamify.js";
 
@@ -36,7 +36,8 @@ export function eventOf(day) {
 
 export function createEconomy() {
   return { wallet: 0, earned: 0, subs: {}, staff: {}, day: null, history: [], ledger: [], perks: {}, decor: [],
-    records: { biggestWin: 0, jackpots: 0 }, counters: { tipsSent: 0 }, blackjack: null };
+    records: { biggestWin: 0, jackpots: 0 }, counters: { tipsSent: 0 }, blackjack: null,
+    workStreak: { days: 0, lastDay: null }, projects: {}, events: [], eventSeq: 0 };
 }
 // Étages créés avant l'économie, ou sauvegardes partielles : on complète sans rien effacer.
 function economyOf(store) {
@@ -44,10 +45,15 @@ function economyOf(store) {
   for (const [k, v] of Object.entries(createEconomy())) eco[k] ??= v;
   return eco;
 }
-const newDay = date => ({ date, minutes: {}, pay: {}, primes: 0, deliveries: 0, reactivity: 0, casino: { plays: 0, wagered: 0, won: 0 }, tipsSent: 0 });
+const newDay = date => ({ date, minutes: {}, pay: {}, primes: 0, deliveries: 0, reactivity: 0, casino: { plays: 0, wagered: 0, won: 0 }, tipsSent: 0,
+  delivered: 0, workXp: 0, objectives: {}, projects: {}, tools: {}, peakParallel: 0 });
 function ensureDay(eco, now) {
   const { day } = paris(now);
-  if (eco.day?.date === day) return eco.day;
+  if (eco.day?.date === day) {
+    // Journée commencée avant une mise à jour du serveur : on complète les compteurs ajoutés depuis.
+    for (const [k, v] of Object.entries(newDay(day))) eco.day[k] ??= v;
+    return eco.day;
+  }
   // Une journée ne recule jamais : un relevé en retard compte pour la journée en cours.
   if (eco.day && eco.day.date > day) return eco.day;
   if (eco.day) {
@@ -75,6 +81,7 @@ function badge(store, id) {
   if ((game.badges ??= []).includes(id)) return;
   game.badges.push(id);
   pushToast(game, "Nouveau badge !", ECONOMY_BADGES[id] ?? id);
+  workEvent(store, "badge", `🏅 ${ECONOMY_BADGES[id] ?? id}`, { badge: id });
 }
 // Argent gagné : salaires, primes et récompenses comptent pour le titre ; casino et virements non.
 function credit(store, amount, kind, label, now, extra = {}) {
@@ -138,6 +145,10 @@ export function rateFor(store, src, at) {
   if (hour >= MAJORATIONS.nightFrom || hour < MAJORATIONS.nightTo) add("Majoration de nuit", event.night ?? MAJORATIONS.night);
   if (sunday) add("Majoration du dimanche", MAJORATIONS.sunday);
   if ((eco.perks.objectifs ?? 0) > at) add("Objectifs trimestriels", 1.2);
+  const team = workingNow(store, at);
+  if (team > 1) add(`Prime d'équipe (${team} agents)`, 1 + Math.min(WORK.team.max, WORK.team.per * (team - 1)));
+  const streak = currentWorkStreak(eco, day);
+  if (streak > 0) add(`Série de travail ${streak} j`, 1 + Math.min(WORK.streak.max, WORK.streak.per * streak));
   if (event.salary) add(event.name, event.salary);
   if (event.intern && grade.rank === 0) add(event.name, event.intern);
   const rate = grade.rate * factors.reduce((p, f) => p * f.factor, 1);
@@ -155,7 +166,57 @@ function promote(store, src, before, now) {
 const staffOf = (eco, src) => (eco.staff[src] ??= { minutes: 0, cont: 0, lastWork: 0, model: null });
 
 // Paie d'une période de travail : 7 h normales, heures sup majorées jusqu'à 10 h, rien au-delà (repos obligatoire).
-function work(store, src, minutes, at, now) {
+// ---------- le travail au centre du jeu ----------
+// Agents qui travaillent à l'instant `at` : session au travail avec un signe de vie depuis moins de 10 minutes.
+function workingNow(store, at) {
+  let n = 0;
+  for (const s of Object.values(store.sessions ?? {})) if (TOOL_PROVIDER[s.src] && s.state === "travaille" && s.updated <= at + 1 && at - s.updated <= 600) n++;
+  return n;
+}
+const previousDay = date => { const d = new Date(date + "T12:00:00Z"); d.setUTCDate(d.getUTCDate() - 1); return d.toISOString().slice(0, 10); };
+// Série affichée : vivante si le dernier jour travaillé est aujourd'hui ou hier.
+function currentWorkStreak(eco, date) {
+  const st = eco.workStreak ?? { days: 0, lastDay: null };
+  return st.lastDay === date || st.lastDay === previousDay(date) ? st.days : 0;
+}
+function workEvent(store, kind, label, extra = {}) {
+  const eco = economyOf(store);
+  eco.eventSeq = (eco.eventSeq ?? 0) + 1;
+  eco.events.unshift({ id: eco.eventSeq, t: extra.t ?? Date.now() / 1000, kind, label, ...extra });
+  eco.events.splice(12);
+}
+function workXp(store, day, amount) {
+  const room = Math.max(0, WORK.dailyXpCap - (day.workXp ?? 0)), xp = Math.min(room, amount);
+  if (xp <= 0) return;
+  day.workXp = money((day.workXp ?? 0) + xp);
+  grantXp(gameOf(store), money(xp), "Travail", { quiet: true });
+}
+const todayMinutes = day => sum(day.minutes);
+// Objectifs du jour : vérifiés après chaque minute de travail ou livraison ; la récompense part à l'atteinte.
+function checkObjectives(store, day, now) {
+  const metric = { minutes: todayMinutes(day), deliveries: day.delivered ?? 0, parallel: day.peakParallel ?? 0 };
+  for (const o of WORK.objectives) {
+    if (day.objectives[o.id] || metric[o.metric] < o.target) continue;
+    day.objectives[o.id] = now;
+    credit(store, o.money, "prime", `Objectif · ${o.title}`, now);
+    grantXp(gameOf(store), o.xp, `${o.icon} ${o.title}`, { quiet: true });
+    pushToast(gameOf(store), `${o.icon} Objectif atteint !`, `${o.title} · +${o.money} P$ · +${o.xp} XP`);
+    workEvent(store, "objective", `${o.icon} ${o.title}`, { t: now, objective: o.id });
+  }
+}
+function trackProject(eco, day, project, minutes, delivered, now) {
+  if (typeof project !== "string" || !project) return;
+  const p = (eco.projects[project] ??= { minutes: 0, deliveries: 0, last: now });
+  p.minutes = money(p.minutes + minutes);
+  p.deliveries += delivered;
+  p.last = now;
+  day.projects[project] = money((day.projects[project] ?? 0) + minutes);
+  const names = Object.keys(eco.projects);
+  if (names.length > 40) for (const old of names.sort((a, b) => eco.projects[a].last - eco.projects[b].last).slice(0, names.length - 40)) delete eco.projects[old];
+}
+export const projectLevel = minutes => WORK.projectLevels.filter(m => minutes >= m).length;
+
+function work(store, src, minutes, at, now, project = null) {
   if (!(minutes > 0)) return;
   const eco = economyOf(store), day = ensureDay(eco, now), st = staffOf(eco, src);
   if (at - minutes * 60 - (st.lastWork ?? 0) > MORALE.pauseMinutes * 60) st.cont = 0;
@@ -177,10 +238,32 @@ function work(store, src, minutes, at, now) {
   }
   if (before < WORKDAY.max && after >= WORKDAY.max) pushToast(gameOf(store), "Repos obligatoire", `${SPECIALTIES[src] ?? src} (${src}) a fait ses 10 h : la suite n'est plus payée aujourd'hui.`);
   promote(store, src, echelon, now);
+  // Le travail fait progresser tout le reste : XP, projet, série, objectifs, badges.
+  day.tools[src] = true;
+  day.peakParallel = Math.max(day.peakParallel ?? 0, workingNow(store, at));
+  workXp(store, day, minutes * WORK.xpPerMinute);
+  trackProject(eco, day, project, minutes, 0, now);
+  const total = todayMinutes(day);
+  if (total >= WORK.streak.minMinutes && eco.workStreak.lastDay !== day.date) {
+    eco.workStreak = { days: eco.workStreak.lastDay === previousDay(day.date) ? eco.workStreak.days + 1 : 1, lastDay: day.date };
+    workEvent(store, "streak", `🔥 Série de travail : ${eco.workStreak.days} jour(s)`, { t: now });
+    if (eco.workStreak.days >= 7) badge(store, "stakhanov");
+  }
+  if (total >= 360) badge(store, "marathon");
+  if ((day.peakParallel ?? 0) >= 4) badge(store, "orchestra");
+  if (Object.keys(day.tools).length >= 3) badge(store, "polyglot");
+  checkObjectives(store, day, now);
 }
 
-function delivery(store, src, now) {
+function delivery(store, src, now, project = null) {
   const eco = economyOf(store), day = ensureDay(eco, now);
+  // Toutes les livraisons comptent pour les objectifs, l'XP et les projets ; la prime, elle, est plafonnée.
+  day.delivered = (day.delivered ?? 0) + 1;
+  workXp(store, day, WORK.xpPerDelivery);
+  trackProject(eco, day, project, 0, 1, now);
+  workEvent(store, "delivery", `${SPECIALTIES[src] ?? src} a livré une tâche${project ? ` · ${project}` : ""}`, { t: now, src, project: project ?? null });
+  if (day.delivered >= 20) badge(store, "courier");
+  checkObjectives(store, day, now);
   if (day.deliveries >= PRIMES.delivery.dailyMax) return;
   const { rank } = tierOf(store, src), event = eventOf(day.date);
   const amount = (PRIMES.delivery.base + PRIMES.delivery.perRank * rank) * (event.delivery ?? 1);
@@ -205,8 +288,8 @@ export function onIngestEconomy(store, prevSessions, now = Date.now() / 1000) {
     if (!TOOL_PROVIDER[s.src]) continue;
     if (typeof s.model === "string" && s.model) staffOf(eco, s.src).model = s.model;
     if (!was || !(s.updated > was.updated)) continue;
-    if (was.state === "travaille") work(store, s.src, Math.min(s.updated - was.updated, 600) / 60, s.updated, now);
-    if (was.state === "travaille" && s.state === "fini") delivery(store, s.src, now);
+    if (was.state === "travaille") work(store, s.src, Math.min(s.updated - was.updated, 600) / 60, s.updated, now, s.project ?? null);
+    if (was.state === "travaille" && s.state === "fini") delivery(store, s.src, now, s.project ?? null);
     if (was.state === "autorisation" && s.state === "travaille" && s.updated - was.updated <= PRIMES.reactivity.within) reactivity(store, now);
   }
 }
@@ -580,8 +663,32 @@ export function publicEconomy(store, now = Date.now() / 1000) {
     casino: { plays: day.casino.plays, wagered: day.casino.wagered, won: day.casino.won,
       lossLeft: Math.max(0, CASINO.dailyLossLimit - (day.casino.wagered - day.casino.won)), playsLeft: Math.max(0, CASINO.dailyPlays - day.casino.plays) },
     shopFactor: event.shop ?? 1,
+    work: workView(store, eco, day, now),
     // Main de blackjack en cours (carte cachée de la banque masquée), pour la reprendre après un rechargement.
     blackjack: eco.blackjack ? handView(eco.blackjack, "playing") : null,
+  };
+}
+
+// Le travail du jour : objectifs, prime d'équipe, série, projets et derniers exploits.
+function workView(store, eco, day, now) {
+  const minutes = todayMinutes(day), team = workingNow(store, now);
+  const teamBonus = team > 1 ? Math.min(WORK.team.max, WORK.team.per * (team - 1)) : 0;
+  const streakDays = currentWorkStreak(eco, day.date);
+  const metric = { minutes, deliveries: day.delivered ?? 0, parallel: day.peakParallel ?? 0 };
+  const projects = Object.entries(eco.projects ?? {}).map(([name, p]) => {
+    const level = projectLevel(p.minutes);
+    return { name, todayMinutes: money(day.projects?.[name] ?? 0), minutes: money(p.minutes), deliveries: p.deliveries, level,
+      nextLevelIn: level < WORK.projectLevels.length ? money(WORK.projectLevels[level] - p.minutes) : null };
+  }).sort((a, b) => b.todayMinutes - a.todayMinutes || b.minutes - a.minutes).slice(0, 5);
+  return {
+    today: { minutes: money(minutes), deliveries: day.delivered ?? 0, tools: Object.keys(day.tools ?? {}).length, peakParallel: day.peakParallel ?? 0 },
+    team: { active: team, bonus: money(teamBonus),
+      label: team > 1 ? `Prime d'équipe +${Math.round(teamBonus * 100)} % (${team} agents)` : team === 1 ? "1 agent au travail" : "Personne au travail" },
+    streak: { days: streakDays, bonus: money(streakDays ? Math.min(WORK.streak.max, WORK.streak.per * streakDays) : 0), today: eco.workStreak?.lastDay === day.date },
+    objectives: WORK.objectives.map(o => ({ id: o.id, title: o.title, icon: o.icon, metric: o.metric, target: o.target,
+      progress: Math.min(o.target, money(metric[o.metric])), money: o.money, xp: o.xp, done: !!day.objectives?.[o.id] })),
+    projects, xpToday: money(day.workXp ?? 0), xpCap: WORK.dailyXpCap,
+    events: (eco.events ?? []).slice(0, 12),
   };
 }
 
@@ -590,5 +697,7 @@ export function spectatorEconomy(view) {
   if (!view) return undefined;
   return { wallet: view.wallet, earned: view.earned, title: view.title, today: { pay: view.today?.pay ?? 0, minutes: view.today?.minutes ?? 0 },
     records: view.records, decor: [...(view.decor ?? [])], // le décor se voit dans la tour, aussi en spectateur
+    work: view.work ? { today: { minutes: view.work.today.minutes, deliveries: view.work.today.deliveries }, team: { active: view.work.team.active },
+      streak: { days: view.work.streak.days } } : undefined,
     staff: (view.staff ?? []).map(({ src, grade, role, echelon }) => ({ src, grade, role, echelon })) };
 }

@@ -128,6 +128,30 @@ export const CASINO = {
   ] },
 };
 
+// Le travail au centre du jeu : ce que font réellement les agents rapporte XP, objectifs, séries et niveaux de projet.
+export const WORK = {
+  xpPerMinute: 0.5, // XP par minute de travail d'un agent (tous agents confondus)
+  xpPerDelivery: 5, // XP par tâche livrée
+  dailyXpCap: 400, // XP de travail au plus par jour
+  // Prime d'équipe : plusieurs agents qui travaillent en même temps (signe de vie depuis moins de 10 min).
+  team: { per: 0.1, max: 0.4 }, // +10 % par agent en plus du premier, +40 % au plus
+  // Série de jours travaillés : au moins `minMinutes` de travail dans la journée.
+  streak: { minMinutes: 60, per: 0.02, max: 0.2 }, // +2 % par jour de série, +20 % au plus
+  // Objectifs du jour, atteints automatiquement : récompense versée tout de suite.
+  objectives: [
+    { id: "m60", metric: "minutes", target: 60, title: "Bronze · 1 h de travail", icon: "🥉", money: 20, xp: 30 },
+    { id: "m180", metric: "minutes", target: 180, title: "Argent · 3 h de travail", icon: "🥈", money: 50, xp: 60 },
+    { id: "m360", metric: "minutes", target: 360, title: "Or · 6 h de travail", icon: "🥇", money: 100, xp: 120 },
+    { id: "m600", metric: "minutes", target: 600, title: "Platine · 10 h de travail", icon: "💠", money: 200, xp: 200 },
+    { id: "d5", metric: "deliveries", target: 5, title: "5 tâches livrées", icon: "📦", money: 15, xp: 25 },
+    { id: "d15", metric: "deliveries", target: 15, title: "15 tâches livrées", icon: "🚚", money: 40, xp: 60 },
+    { id: "d30", metric: "deliveries", target: 30, title: "30 tâches livrées", icon: "🏭", money: 90, xp: 120 },
+    { id: "p3", metric: "parallel", target: 3, title: "3 agents en même temps", icon: "🎼", money: 30, xp: 40 },
+  ],
+  // Niveau d'un projet : minutes de travail cumulées.
+  projectLevels: [0, 60, 240, 600, 1200, 2400, 4800, 9600],
+};
+
 // Mini-jeux d'adresse des étages Tennis et Golf, joués dans le navigateur. Le résultat vient du joueur : la récompense
 // est donc vérifiée (durée, score possible) et plafonnée à quelques parties par jour et par sport.
 export const SPORTS = {
@@ -173,4 +197,6 @@ export const ECONOMY_BADGES = {
   first_pay: "Premier salaire", promo: "Première promotion", rich: "Fortune à 5 chiffres", jackpot: "Jackpot !",
   generous: "Patron·ne généreux·se", night_shift: "Équipe de nuit", decorator: "Décorateur·rice", unicorn: "Licorne",
   ace: "Trou en un", champion: "Champion du club",
+  marathon: "Marathon (6 h de travail)", orchestra: "Chef d'orchestre (4 agents)", courier: "Livreur (20 tâches)",
+  stakhanov: "Stakhanov (7 jours de travail)", polyglot: "Polyglotte (3 outils)",
 };

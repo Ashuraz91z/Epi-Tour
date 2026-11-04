@@ -28,6 +28,8 @@ const FILES = {
   "/economy-data.js": ["public/economy-data.js", "text/javascript"],
   "/economy-ui.js": ["public/economy-ui.js", "text/javascript"],
   "/sports-games.js": ["public/sports-games.js", "text/javascript"],
+  "/work-ui.js": ["public/work-ui.js", "text/javascript"],
+  "/work.css": ["public/work.css", "text/css"],
   "/style.css": ["public/style.css", "text/css"],
   "/tour-hook": ["collecteurs/tour-hook", "text/plain"], "/install-hook.py": ["collecteurs/install-hook.py", "text/plain"],
   "/hermes-handler.py": ["collecteurs/hermes-hook/handler.py", "text/plain"],
