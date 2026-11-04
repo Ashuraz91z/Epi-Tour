@@ -1491,3 +1491,35 @@ test("mini-jeux par HTTP : clé requise, réponse avec jeu et économie à jour"
     assert.equal((await call("/api/game/sport", { sport: "tennis", level: "pro", won: true, games: [3, 0], duration: 1 }, { Cookie: cookie, "X-Tour-Token": token })).status, 400);
   } finally { app.close(); }
 });
+
+test("app Mac : relie le Mac, retient les outils, les lance à l'ouverture de session", async () => {
+  const run = promisify(execFile);
+  const dir = mkdtempSync(join(tmpdir(), "penthouse-mac-"));
+  try {
+    const bin = join(dir, "bin"), home = join(dir, "home"), log = join(dir, "log");
+    for (const d of [bin, join(home, "Applications/Claude.app"), join(home, "Applications/Cursor.app")]) mkdirSync(d, { recursive: true });
+    const stub = (name, body) => writeFileSync(join(bin, name), `#!/bin/bash\n${body}\n`, { mode: 0o755 });
+    // macOS simulé : fenêtres (osascript), installeur du site (curl), open, launchctl, et la commande claude.
+    stub("osascript", `all="$*"; echo "OSA $all" >> "$LOG"
+case "$all" in *"display notification"*) ;; *"Adresse du penthouse"*) echo https://agent.ashuraz.xyz ;; *"Clé de ton étage"*) echo CLE ;;
+*"choose from list"*) printf 'Claude (app)\\nClaude Code (Terminal)\\n' ;; *Terminal*) ;;
+*"display dialog"*) printf '%s' "$all" | sed -n 's/.*buttons {"\\([^"]*\\)".*/\\1/p' ;; esac`);
+    stub("curl", `cat <<'SH'
+mkdir -p "$HOME/.config/tour"; printf '%s\\n' "$1" > "$HOME/.config/tour/secret"; printf '%s\\n' "$PENTHOUSE_URL" > "$HOME/.config/tour/url"; echo connecté
+SH`);
+    for (const c of ["open", "launchctl", "ditto", "claude"]) stub(c, `echo "${c} $*" >> "$LOG"`);
+    const app = fileURLToPath(new URL("./mac/Penthouse.app/Contents/MacOS/Penthouse", import.meta.url));
+    const env = { ...process.env, HOME: home, LOG: log, PATH: `${bin}:${process.env.PATH}` };
+    await run("bash", [app], { env });
+    assert.equal(readFileSync(join(home, ".config/tour/secret"), "utf8").trim(), "CLE");
+    assert.deepEqual(readFileSync(join(home, ".config/tour/login-apps"), "utf8").trim().split("\n").map(l => l.split("|")[0]), ["claude-app", "claude-code"]);
+    assert.match(readFileSync(join(home, "Library/LaunchAgents/xyz.ashuraz.penthouse.login.plist"), "utf8"), /<string>--login<\/string>/);
+    writeFileSync(log, "");
+    await run("bash", [app, "--login"], { env });
+    const calls = readFileSync(log, "utf8");
+    assert.match(calls, /^open -a Claude$/m);
+    assert.match(calls, /do script "cd ~ && claude"/);
+    assert.match(calls, /kickstart gui\/\d+\/xyz\.ashuraz\.penthouse\.sync/);
+    assert.ok(!/Cursor/.test(calls), "seuls les outils cochés se lancent");
+  } finally { rmSync(dir, { recursive: true, force: true }); }
+});

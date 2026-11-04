@@ -1,0 +1,185 @@
+#!/bin/bash
+# Penthouse pour Mac : relie ce Mac au penthouse et lance tes outils d'IA à chaque ouverture de session.
+#   Première ouverture : clé de ton étage (comme « Relier mes agents »), choix des outils, lancement automatique.
+#   Ouverture de session : lance les outils cochés (Claude, Claude Code, Codex, Cursor, Grok…) et relance le suivi.
+#   Ouverture à la main : lancer maintenant, changer les outils, vérifier la connexion, arrêter le lancement automatique.
+# Rien n'est envoyé d'autre que ce que fait déjà install.sh (métadonnées des sessions, jamais les conversations).
+set -u
+CONF="$HOME/.config/tour"
+APPS_FILE="$CONF/login-apps"
+SITE_DEFAULT="https://agent.ashuraz.xyz"
+LABEL="xyz.ashuraz.penthouse.login"
+PLIST="$HOME/Library/LaunchAgents/$LABEL.plist"
+APP="$(cd "$(dirname "$0")/../.." && pwd)"
+export PATH="$HOME/.local/bin:/opt/homebrew/bin:/usr/local/bin:$HOME/.npm-global/bin:$PATH"
+
+# ---------- fenêtres macOS ----------
+q() { printf '%s' "$1" | sed 's/\\/\\\\/g; s/"/\\"/g'; }
+notify() { osascript -e "display notification \"$(q "$1")\" with title \"Penthouse\"" >/dev/null 2>&1; }
+# dialog "message" "bouton 1" ["bouton 2" ["bouton 3"]] -> bouton choisi (vide si fermé)
+dialog() {
+  local msg="$1" buttons="" b; shift
+  for b in "$@"; do buttons="$buttons\"$(q "$b")\", "; done
+  osascript -e "button returned of (display dialog \"$(q "$msg")\" buttons {${buttons%, }} default button 1 with title \"Penthouse\" with icon note)" 2>/dev/null
+}
+# ask "message" "valeur par défaut" [hidden] -> texte saisi (vide si annulé)
+ask() {
+  local hidden=""; [ "${3:-}" = hidden ] && hidden="with hidden answer"
+  osascript -e "text returned of (display dialog \"$(q "$1")\" default answer \"$(q "$2")\" $hidden buttons {\"Annuler\", \"OK\"} default button 2 with title \"Penthouse\")" 2>/dev/null
+}
+# choose "message" "défauts séparés par |" choix... -> choix retenus, un par ligne ; "ANNULE" si annulé
+choose() {
+  local msg="$1" defaults="$2" items="" d="" i; shift 2
+  for i in "$@"; do items="$items\"$(q "$i")\", "; done
+  local IFS='|'; for i in $defaults; do [ -n "$i" ] && d="$d\"$(q "$i")\", "; done; unset IFS
+  osascript -e "set r to choose from list {${items%, }} with prompt \"$(q "$msg")\" default items {${d%, }} with multiple selections allowed with empty selection allowed with title \"Penthouse\"" \
+    -e 'if r is false then return "ANNULE"' -e "set AppleScript's text item delimiters to linefeed" -e 'return r as text' 2>/dev/null
+}
+
+# ---------- outils connus : identifiant | libellé | type | cible ----------
+catalog() {
+  local site; site="$(cat "$CONF/url" 2>/dev/null || echo "$SITE_DEFAULT")"
+  cat <<EOF
+claude-app|Claude (app)|app|Claude
+claude-code|Claude Code (Terminal)|term|claude
+codex|Codex (Terminal)|term|codex
+chatgpt|ChatGPT (app)|app|ChatGPT
+cursor|Cursor|app|Cursor
+windsurf|Windsurf|app|Windsurf
+grok-app|Grok (app)|app|Grok
+grok-web|Grok (site web)|url|https://grok.com
+penthouse|Le penthouse (site)|url|$site
+EOF
+}
+has_app() { local d; for d in /Applications "$HOME/Applications" /System/Applications; do [ -d "$d/$1.app" ] && return 0; done; return 1; }
+has_cli() { command -v "$1" >/dev/null 2>&1 || /bin/zsh -lic "command -v $1" </dev/null >/dev/null 2>&1; }
+available() {
+  local id label kind target
+  while IFS='|' read -r id label kind target; do
+    case "$kind" in
+      app) has_app "$target" && echo "$id|$label|$kind|$target" ;;
+      term) has_cli "$target" && echo "$id|$label|$kind|$target" ;;
+      url) echo "$id|$label|$kind|$target" ;;
+    esac
+  done < <(catalog)
+}
+
+# ---------- relier ce Mac au penthouse (même procédure que « Relier mes agents ») ----------
+linked() { [ -s "$CONF/secret" ] && [ -s "$CONF/url" ]; }
+link_mac() {
+  local site key out
+  site="$(ask "Adresse du penthouse :" "$(cat "$CONF/url" 2>/dev/null || echo "$SITE_DEFAULT")")" || return 1
+  [ -n "$site" ] || return 1
+  key="$(ask "Clé de ton étage (dans « Relier mes agents » sur le site, ou ~/.config/tour/secret sur un Mac déjà relié). Ce n'est pas le code d'entrée." "" hidden)" || return 1
+  [ -n "$key" ] || return 1
+  out="$(curl -fsSL "$site/install.sh" | PENTHOUSE_URL="$site" sh -s -- "$key" 2>&1)"
+  if printf '%s' "$out" | grep -q "déjà reliée"; then
+    [ "$(dialog "Ce Mac est déjà relié à une autre clé. La remplacer par celle-ci (l'ancienne configuration est sauvegardée) ?" "Remplacer" "Annuler")" = "Remplacer" ] || return 1
+    out="$(curl -fsSL "$site/install.sh" | PENTHOUSE_URL="$site" sh -s -- "$key" --replace 2>&1)"
+  fi
+  dialog "$(printf '%s' "$out" | tail -6)" "OK" >/dev/null
+  linked
+}
+
+# ---------- outils à lancer ----------
+pick_apps() {
+  local lines labels=() defaults="" line chosen id label kind target
+  lines="$(available)"
+  while IFS='|' read -r id label kind target; do [ -n "$id" ] && labels+=("$label"); done <<< "$lines"
+  # Bash 3.2 (celui de macOS) refuse un tableau vide avec set -u.
+  [ "${#labels[@]}" -gt 0 ] || { dialog "Aucun outil trouvé sur ce Mac." "OK" >/dev/null; return 1; }
+  if [ -s "$APPS_FILE" ]; then
+    while IFS='|' read -r id label kind target; do grep -q "^$id|" "$APPS_FILE" && defaults="$defaults|$label"; done <<< "$lines"
+  else
+    while IFS='|' read -r id label kind target; do case "$id" in claude-app|claude-code|cursor|penthouse) defaults="$defaults|$label" ;; esac; done <<< "$lines"
+  fi
+  chosen="$(choose "Que lancer à chaque ouverture de session ? (seuls les outils trouvés sur ce Mac sont proposés)" "$defaults" "${labels[@]}")"
+  [ "$chosen" = "ANNULE" ] && return 1
+  mkdir -p "$CONF" && : > "$APPS_FILE"
+  while IFS='|' read -r id label kind target; do
+    printf '%s\n' "$chosen" | grep -qxF "$label" && echo "$id|$label|$kind|$target" >> "$APPS_FILE"
+  done <<< "$lines"
+  chmod 600 "$APPS_FILE"
+}
+
+launch_all() {
+  local id label kind target n=0
+  [ -s "$APPS_FILE" ] || return 0
+  while IFS='|' read -r id label kind target; do
+    case "$kind" in
+      app) open -a "$target" && n=$((n + 1)) ;;
+      url) open "$target" && n=$((n + 1)) ;;
+      term) osascript -e "tell application \"Terminal\" to do script \"cd ~ && $(q "$target")\"" -e 'tell application "Terminal" to activate' >/dev/null 2>&1 && n=$((n + 1)) ;;
+    esac
+  done < "$APPS_FILE"
+  # Le suivi du penthouse : relancé tout de suite, puis toutes les 15 s par launchd (installé par install.sh).
+  launchctl kickstart "gui/$(id -u)/xyz.ashuraz.penthouse.sync" >/dev/null 2>&1
+  [ -f "$CONF/tour-sync" ] && (/usr/bin/python3 "$CONF/tour-sync" >/dev/null 2>&1 &)
+  notify "$n outil(s) lancé(s). Tes agents apparaissent au penthouse dès qu'ils travaillent."
+}
+
+# ---------- lancement à l'ouverture de session ----------
+login_installed() { [ -f "$PLIST" ]; }
+install_login() {
+  mkdir -p "$(dirname "$PLIST")"
+  cat > "$PLIST" <<EOF
+<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+<plist version="1.0"><dict>
+  <key>Label</key><string>$LABEL</string>
+  <key>ProgramArguments</key><array><string>/usr/bin/open</string><string>-g</string><string>-a</string><string>$APP</string><string>--args</string><string>--login</string></array>
+  <key>RunAtLoad</key><true/>
+</dict></plist>
+EOF
+  chmod 600 "$PLIST"
+  # Pas de « launchctl bootstrap » : il lancerait les outils tout de suite. macOS charge ce fichier à la prochaine
+  # ouverture de session.
+}
+remove_login() {
+  launchctl bootout "gui/$(id -u)/$LABEL" >/dev/null 2>&1
+  rm -f "$PLIST"
+}
+
+# Lancée depuis l'image disque : on propose de se copier dans Applications, sinon le lancement automatique casserait
+# au démontage du disque.
+install_in_applications() {
+  case "$APP" in /Volumes/*) ;; *) return 1 ;; esac
+  [ "$(dialog "Copier Penthouse dans Applications ? (nécessaire pour le lancement à l'ouverture de session)" "Copier" "Plus tard")" = "Copier" ] || return 1
+  ditto "$APP" "/Applications/Penthouse.app" && open -a "/Applications/Penthouse.app" && exit 0
+}
+
+check() {
+  local out
+  out="$(/usr/bin/python3 "$CONF/tour-check" 2>&1 | tail -6)"
+  [ -n "$out" ] || out="Ce Mac n'est pas encore relié."
+  dialog "$out" "OK" >/dev/null
+}
+
+# ---------- point d'entrée ----------
+case "${1:-}" in
+  --login) launch_all; exit 0 ;;
+  --launch) launch_all; exit 0 ;;
+esac
+
+install_in_applications
+if ! linked; then
+  [ "$(dialog "Bienvenue dans le penthouse ! Penthouse relie ce Mac à ton étage, puis lance tes outils d'IA à chaque ouverture de session pour que tes agents apparaissent dans la tour." "Commencer" "Quitter")" = "Commencer" ] || exit 0
+  link_mac || { dialog "Ce Mac n'est pas relié. Rouvre Penthouse quand tu as ta clé." "OK" >/dev/null; exit 0; }
+fi
+if [ ! -s "$APPS_FILE" ] || ! login_installed; then
+  pick_apps || exit 0
+  install_login
+  [ "$(dialog "C'est prêt : ces outils se lanceront à chaque ouverture de session. Les lancer maintenant ?" "Lancer" "Plus tard")" = "Lancer" ] && launch_all
+  exit 0
+fi
+case "$(dialog "Penthouse est actif : tes outils se lancent à chaque ouverture de session." "Lancer maintenant" "Réglages…" "Fermer")" in
+  "Lancer maintenant") launch_all ;;
+  "Réglages…")
+    case "$(choose "Réglages" "" "Choisir les outils à lancer" "Vérifier la connexion au penthouse" "Relier ce Mac avec une autre clé" "Ne plus rien lancer à l'ouverture de session")" in
+      "Choisir les outils à lancer") pick_apps && install_login && notify "Outils mis à jour." ;;
+      "Vérifier la connexion au penthouse") check ;;
+      "Relier ce Mac avec une autre clé") link_mac ;;
+      "Ne plus rien lancer à l'ouverture de session") remove_login && notify "Plus rien ne se lance à l'ouverture de session." ;;
+    esac ;;
+esac
+exit 0

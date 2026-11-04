@@ -56,6 +56,17 @@ Hermes/n8n se branchent sur leur serveur, avec les procédures du panneau ; ils 
 
 Le mode spectateur démarre automatiquement : dashboard des quotas de tous les résidents (pages de 14 s, adaptées à l’écran), chaque étage pendant 12 s, panneau des agents pendant 10 s, puis panneau des usages assez longtemps pour parcourir chaque résident. Retour au dashboard à la fin. Caméra cadrée sur chaque panneau. Bouton Pause/Reprendre ; navigation manuelle pendant la pause. Les transitions caméra sont instantanées si le navigateur demande une réduction des animations. Les quotas absents ou expirés sont affichés explicitement, sans estimation.
 
+## App Mac (Penthouse.dmg)
+
+`python3 mac/build-dmg.py` fabrique `mac/Penthouse.dmg` (sur un Mac avec hdiutil ; ailleurs avec `pip install pycdlib`).
+L'app relie le Mac au penthouse avec la clé de l'étage (comme « Relier mes agents »), fait cocher les outils trouvés sur ce
+Mac (Claude, Claude Code et Codex dans le Terminal, ChatGPT, Cursor, Windsurf, Grok, le site du penthouse), puis les lance à
+chaque ouverture de session et relance le suivi. Rouvrir l'app : lancer maintenant, changer les outils, vérifier la
+connexion, arrêter le lancement automatique (`~/Library/LaunchAgents/xyz.ashuraz.penthouse.login.plist`).
+L'app n'est pas signée par Apple : la première fois, clic droit > Ouvrir, ou Réglages Système > Confidentialité et
+sécurité > « Ouvrir quand même ». Claude Code et Codex apparaissent dans la tour dès qu'ils travaillent ; Cursor et Grok
+sont seulement ouverts (leur suivi passe par leurs ponts décrits dans « Relier mes agents »).
+
 ## Administration
 
 Sur le serveur, avec le même `DATA_DIR` que `server.js` (le serveur peut tourner pendant ce temps) :
