@@ -9,6 +9,7 @@ import { homedir } from "node:os";
 import { join } from "node:path";
 import { pathToFileURL } from "node:url";
 import { openDb } from "./db.js";
+import { createStore } from "./core.js";
 import { slugify } from "./penthouse.js";
 
 const money = x => Math.round(x * 100) / 100;
@@ -82,7 +83,10 @@ export function mergeStores(into, from) {
     store.stats[day] = target;
   }
   store.health = newer(into.health, from.health);
-  store.profile = into.profile ?? from.profile;
+  // Profil : celui de l'étage gardé, complété par ce que l'autre avait personnalisé (thème Prestige, accent, phrase…).
+  const base = createStore().profile, unset = (k, v) => v === undefined || v === "" || JSON.stringify(v) === JSON.stringify(base[k]);
+  store.profile = { ...base, ...(into.profile ?? {}) };
+  for (const [k, v] of Object.entries(from.profile ?? {})) if (unset(k, store.profile[k]) && !unset(k, v)) store.profile[k] = v;
   store.game = mergeGame(into.game, from.game);
   store.economy = mergeEconomy(into.economy, from.economy);
   return store;

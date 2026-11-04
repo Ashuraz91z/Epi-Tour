@@ -1613,7 +1613,9 @@ test("migration des doublons : trois étages de Paul en un, Linnix dans Arthur, 
     for (const [i, name] of ["Lucas", "Quentin", "Linnix", "hugoat", "Paul-Adrien", "Danny", "Arthur", "Paul-Arien", "Paul"].entries())
       keys[name] = (await (await call("/api/join", { name, code: "porte" }, { "X-Forwarded-For": "10.6.0." + i })).json()).token;
     db.change("danny", s => { s.profile.theme = "cyberpunk"; s.economy.wallet = 12.71; });
-    db.change("paul-arien", s => { s.economy.wallet = 97.87; s.profile.theme = "prestige"; });
+    db.change("paul-arien", s => { s.economy.wallet = 97.87; s.profile.tagline = "Golf & GT"; });
+    // Cas réel : Prestige choisi sur l'étage « Paul » (navigation privée), fusionné ensuite.
+    db.change("paul", s => { s.profile.theme = "prestige"; s.profile.tagline = "autre"; });
     db.change("paul-adrien", s => { s.economy.wallet = 10.67; });
     db.change("arthur", s => { s.economy.wallet = 167.42; });
     db.change("linnix", s => { s.economy.wallet = 5; });
@@ -1623,7 +1625,8 @@ test("migration des doublons : trois étages de Paul en un, Linnix dans Arthur, 
     assert.deepEqual(db.all().map(a => a.name).sort(), ["Arthur", "Danny", "Lucas", "Paul-Adrien", "Quentin", "hugoat"]);
     const paul = db.get("paul-adrien").store;
     assert.equal(paul.economy.wallet, 108.54);
-    assert.equal(paul.profile.theme, "prestige", "le profil de l'étage gardé (celui du Mac) reste");
+    assert.equal(paul.profile.theme, "prestige", "le thème choisi sur un étage fusionné n'est plus perdu");
+    assert.equal(paul.profile.tagline, "Golf & GT", "les réglages de l'étage gardé (celui du Mac) passent d'abord");
     assert.equal(db.get("arthur").store.economy.wallet, 172.42);
     assert.equal(JSON.stringify(db.get("danny").store), dannyBefore, "l'étage de Danny n'est pas touché");
     // Toutes les anciennes clés relient encore leurs machines, au bon étage.
@@ -1635,12 +1638,29 @@ test("migration des doublons : trois étages de Paul en un, Linnix dans Arthur, 
     const snapshot = JSON.stringify(db.all());
     runMigrations(db, l => lines.push(l));
     assert.equal(JSON.stringify(db.all()), snapshot);
-    assert.deepEqual(db.setting("migrations"), ["2026-11-04-doublons", "2026-11-04-anciens-noms"]);
+    assert.deepEqual(db.setting("migrations"), ["2026-11-04-doublons", "2026-11-04-anciens-noms", "2026-11-04-prestige-paul-adrien"]);
     // Base où ces étages n'existent pas : chaque étape est sautée sans erreur.
     const empty = openDb(":memory:");
     runMigrations(empty, () => {});
     assert.equal(empty.count(), 0);
   } finally { app.close(); }
+});
+
+test("migration Prestige : posé sur l'étage de Paul-Adrien resté au thème de base, jamais sur un autre choix", async () => {
+  const { runMigrations, MIGRATIONS } = await import("./migrations.js");
+  const only = MIGRATIONS.filter(m => m.id === "2026-11-04-prestige-paul-adrien");
+  for (const [before, after] of [["classique", "prestige"], ["cyberpunk", "cyberpunk"], ["prestige", "prestige"]]) {
+    const db = openDb(":memory:");
+    db.create("paul-adrien", "Paul-Adrien", "h1", 50);
+    db.create("danny", "Danny", "h2", 50);
+    db.change("paul-adrien", s => { s.profile.theme = before; s.profile.tagline = "Golf"; });
+    const danny = JSON.stringify(db.get("danny").store);
+    runMigrations(db, () => {}, only);
+    assert.equal(db.get("paul-adrien").store.profile.theme, after, before);
+    assert.equal(db.get("paul-adrien").store.profile.tagline, "Golf");
+    assert.equal(JSON.stringify(db.get("danny").store), danny, "l'étage de Danny n'est pas touché");
+  }
+  runMigrations(openDb(":memory:"), () => {}, only); // étage absent : sautée sans erreur
 });
 
 test("accès : anciens noms vers l'étage gardé, entrée par clé, version, app Mac téléchargeable", async () => {
@@ -1665,7 +1685,7 @@ test("accès : anciens noms vers l'étage gardé, entrée par clé, version, app
     const state = await (await fetch(url + "/api/state", { headers: { Cookie: entered.headers.get("set-cookie").split(";")[0] } })).json();
     assert.equal(state.viewer.role, "resident");
     assert.match(state.version, /^\d{4}-\d{2}-\d{2}/);
-    assert.deepEqual((await (await fetch(url + "/api/version")).json()).migrations, ["2026-11-04-doublons", "2026-11-04-anciens-noms"]);
+    assert.deepEqual((await (await fetch(url + "/api/version")).json()).migrations, ["2026-11-04-doublons", "2026-11-04-anciens-noms", "2026-11-04-prestige-paul-adrien"]);
     // Onglet resté sur un ancien nom : le site retrouve l'étage actuel (résidents seulement).
     const resident = { Cookie: entered.headers.get("set-cookie").split(";")[0] };
     assert.equal((await fetch(url + "/api/resolve?slug=paul")).status, 401);
