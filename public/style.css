@@ -513,8 +513,8 @@ body.kiosk-mode #moreWrap { display: none !important; }
   background: repeating-linear-gradient(45deg, #8a1f2e 0 4px, #6d1623 4px 8px); box-shadow: 2px 2px 0 #f5efe0, 4px 4px 0 #d9d1bf, 6px 6px 10px #0008; }
 .eco-felt.dealing .eco-shoe { animation: eco-shoe .4s ease-in-out infinite alternate; }
 @keyframes eco-shoe { to { transform: translate(-4px, 3px) rotate(-6deg); } }
-.eco-bj-row { display: grid; gap: 6px; min-width: 0; }
-.eco-bj-row.dealer { padding-right: 52px; }
+.eco-bj-row { display: grid; justify-items: center; gap: 6px; min-width: 0; }
+.eco-bj-row.dealer { padding: 0 48px; }
 .eco-bj-label { font-size: 12px; color: #d4eedd; letter-spacing: .04em; }
 .eco-bj-label b { margin-left: 4px; padding: 1px 9px; border-radius: 999px; font: 700 13px var(--mono); color: #fff; background: #0009; }
 .eco-bj-hand { display: flex; align-items: center; min-height: 76px; }
@@ -613,11 +613,11 @@ body.kiosk-mode #moreWrap { display: none !important; }
 .eco-green-wrap.aiming .eco-aim { animation: eco-aim .6s ease-in-out infinite alternate; }
 @keyframes eco-aim { from { opacity: .15; } to { opacity: .9; } }
 .eco-hole { position: absolute; left: 84%; top: 50%; width: 15px; height: 15px; margin: -7.5px; border-radius: 50%; background: radial-gradient(#050a06 55%, #102b16); box-shadow: 0 0 0 2px #ffffff33; }
-.eco-flag { position: absolute; left: 84%; top: 50%; width: 2px; height: 48px; margin: -48px 0 0 -1px; background: #ececec; transform-origin: 50% 100%; box-shadow: 1px 0 2px #0006; }
-.eco-flag::after { content: ""; position: absolute; left: 2px; top: 0; border-left: 20px solid #e0414f; border-top: 7px solid transparent; border-bottom: 7px solid transparent; }
+.eco-pin { position: absolute; left: 84%; top: 50%; width: 2px; height: 48px; margin: -48px 0 0 -1px; background: #ececec; transform-origin: 50% 100%; box-shadow: 1px 0 2px #0006; }
+.eco-pin::after { content: ""; position: absolute; left: 2px; top: 0; border-left: 20px solid #e0414f; border-top: 7px solid transparent; border-bottom: 7px solid transparent; }
 .eco-green-wrap.holed .eco-hole { box-shadow: 0 0 0 2px var(--gold), 0 0 14px #ffd76a; }
-.eco-green-wrap.cheer .eco-flag { animation: eco-flag .3s ease-in-out 6 alternate; }
-@keyframes eco-flag { from { transform: rotate(-10deg); } to { transform: rotate(10deg); } }
+.eco-green-wrap.cheer .eco-pin { animation: eco-pin .3s ease-in-out 6 alternate; }
+@keyframes eco-pin { from { transform: rotate(-10deg); } to { transform: rotate(10deg); } }
 .eco-gball { position: absolute; z-index: 1; width: 11px; height: 11px; margin: -5.5px; border-radius: 50%; background: radial-gradient(circle at 35% 35%, #fff, #d6d6d6); box-shadow: 1px 2px 3px #0007; }
 .eco-gball.rolling { transition: left var(--t, 1.5s) cubic-bezier(.15, .7, .35, 1), top var(--t, 1.5s) cubic-bezier(.6, 0, .85, .6); }
 .eco-gball.in { transform: scale(.4); opacity: 0; transition: transform .25s ease-in, opacity .25s ease-in; }

@@ -398,7 +398,7 @@ function greenHtml(choice, r, esc) {
   const tag = same && !r.holed && r.miss ? `<span class="eco-gtag${at.x > 80 ? " end" : ""}" style="left:${at.x}%;top:${at.y}%">${esc(r.miss)}</span>` : "";
   return `<div class="eco-green-wrap${same && r.holed ? " holed" : ""}" aria-hidden="true"><span class="eco-green"></span>
       ${SHOTS.map(s => `<span class="eco-gmark${s.id === choice ? " on" : ""}" style="left:${golfStart(s.id)}%"><span>${esc(distanceOf(s))}</span></span>`).join("")}
-      <span class="eco-aim" style="left:${x0}%;width:${HOLE.x - x0}%"></span><span class="eco-hole"></span><span class="eco-flag"></span>
+      <span class="eco-aim" style="left:${x0}%;width:${HOLE.x - x0}%"></span><span class="eco-hole"></span><span class="eco-pin"></span>
       <span class="eco-gball${same && r.holed ? " in" : ""}" style="left:${at.x}%;top:${at.y}%"></span>${tag}</div>`;
 }
 
