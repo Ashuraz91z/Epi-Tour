@@ -301,18 +301,22 @@ function tennisGame(ui) {
     }
     if (margin == null) ty = Math.min(ty, rand(1.2, 3.5));
     launch(tx, ty, speed, margin);
-    b.hitter = "p"; b.serve = false; b.weak = kind === "contre" || q < 0.35;
+    b.hitter = "p"; b.serve = false; b.drop = false; b.weak = kind === "contre" || q < 0.35;
     a.react = 0.28 / lv.speed; a.err = rand(-1, 1) * 0.5 / lv.speed;
     if (p.swing) p.swing.pending = false;
     rally++;
   }
   function aiHit() {
     const lvl = lv.speed, stretch = Math.abs(b.x - a.x) > 0.85, attack = b.weak;
-    let tx = Math.random() < 0.28 + 0.35 * (lvl - 0.75) ? -sign(p.x || rand(-1, 1)) * rand(2, 3.6) : rand(-3.3, 3.3);
+    // Plus le robot est fort, plus il joue loin de toi, et il glisse des amorties quand tu restes au fond du court.
+    let tx = Math.random() < 0.25 + 0.55 * (lvl - 0.75) ? -sign(p.x || rand(-1, 1)) * rand(2.2, 3.1 + 0.5 * lvl) : rand(-3.3, 3.3);
     if (attack) tx = sign(tx) * rand(2.7, 3.8);
-    let ty = -rand(7.4, 10.9), margin = 0.2;
+    let ty = -rand(7.4, 10.9), margin = 0.2, drop = false;
     let speed = (12 + rand(0, 4) + (attack ? 3.5 : 0)) * (0.8 + 0.27 * lvl) * (stretch ? 0.86 : 1);
-    const pErr = 0.1 / (lvl * lvl) + (stretch ? 0.1 : 0) + (attack ? 0.04 : 0);
+    if (!stretch && !attack && p.y < -8.5 && Math.random() < Math.max(0, (lvl - 0.8) * 0.3)) {
+      drop = true; tx = rand(-3, 3); ty = -rand(2.2, 4.2); speed = rand(10, 11.5); margin = 0.25;
+    }
+    const pErr = 0.1 / (lvl * lvl) + (stretch ? 0.1 : 0) + (attack ? 0.04 : 0) + (drop ? 0.05 : 0);
     if (Math.random() < pErr) {
       const k = Math.random();
       if (k < 0.4) tx = sign(tx) * rand(SW + 0.3, SW + 1.4);
@@ -320,7 +324,7 @@ function tennisGame(ui) {
       else { margin = null; ty = -rand(1.5, 3); speed *= 1.15; }
     }
     launch(tx, ty, speed, margin);
-    b.hitter = "a"; b.serve = false; b.weak = false;
+    b.hitter = "a"; b.serve = false; b.weak = false; b.drop = drop;
     a.swing = 0;
     rally++;
   }
@@ -351,7 +355,7 @@ function tennisGame(ui) {
     } else {
       const w = b.hitter === "p" ? 0 : 1;
       if (b.serve) endPoint(w, "Ace !", w === 0 ? "Service gagnant" : "Le robot sert un ace");
-      else endPoint(w, w === 1 ? "Gagnant du robot" : rally >= 6 ? "Coup gagnant !" : "Gagnant !", "");
+      else endPoint(w, w === 1 ? (b.drop ? "Amortie du robot" : "Gagnant du robot") : rally >= 6 ? "Coup gagnant !" : "Gagnant !", "");
     }
   }
   function stepBall(dt) {
@@ -740,7 +744,7 @@ function tennisGame(ui) {
       <p class="sport-small sport-limit">${limitText(ui.left("tennis"))}</p>
       <details class="sport-help"${ui.wide() ? " open" : ""}><summary>Commandes</summary><ul>
         <li><b>Souris / doigt</b> : déplacer la raquette</li><li><b>Clic, Espace, tap</b> : frapper. Pile au bon moment, la balle part plus fort et plus loin.</li>
-        <li><b>Bord du tamis</b> : la balle part en angle (attention au couloir)</li><li><b>← → ↑ ↓</b> ou <b>A D W S</b> (Q D Z S) : se déplacer</li>
+        <li><b>Bord du tamis</b> : la balle part en angle (attention au couloir)</li><li><b>← → ↑ ↓</b> ou <b>A D W S</b> (Q D Z S) : se déplacer ; monte vers le filet pour les balles courtes</li>
         <li><b>Service</b> : un appui lance la balle, un second la frappe au sommet ; vise avec la souris ou ← →</li><li><b>P</b> : pause</li></ul></details>`;
   }
   return {

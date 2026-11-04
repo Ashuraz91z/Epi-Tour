@@ -762,4 +762,14 @@ body.kiosk-mode #moreWrap { display: none !important; }
   #sportDlg { width: calc(100vw - 16px); max-height: calc(100dvh - 16px); padding: 12px 10px 10px; }
   .sport-layout { grid-template-columns: 1fr; gap: 10px; }
   .sport-head h3 { font-size: 14px; flex-basis: 100%; }
+  /* Le canvas ne fait que ~330 × 415 px : les cartes de choix et de résultat se resserrent pour tenir dessus. */
+  .sport-overlay { padding: 8px; }
+  .sport-card { gap: 7px; padding: 12px 10px; }
+  .sport-card h4 { font-size: 15px; }
+  .dlg .sport-card p, .sport-bareme { font-size: 12px; line-height: 1.35; }
+  .sport-level { min-height: 40px; padding: 5px 8px; grid-template-columns: 24px 1fr; }
+  .sport-level b { font-size: 13px; }
+  .sport-level-icon { font-size: 18px; }
+  .sport-go, .sport-alt { min-height: 40px; padding: 8px 14px; }
+  .sport-card-table.compact th, .sport-card-table.compact td { padding: 3px 4px; }
 }
