@@ -18,6 +18,7 @@ import {
   agentRoleText, createEconomyUi, decorKeyOf, eventChipHtml, fortuneLeaders, freshTipsIn, money, residentEconomyLine, staffOf, walletChipHtml,
 } from "./economy-ui.js";
 import { createSportsGames } from "./sports-games.js";
+import { bonusText, currentObjective, objectivePct, objectiveProgressText, workDuration, workEventText, workLeadersHtml, workPanelHtml } from "./work-ui.js";
 import { OrbitControls } from "three/addons/controls/OrbitControls.js";
 import { CSS2DObject, CSS2DRenderer } from "three/addons/renderers/CSS2DRenderer.js";
 import { CSS3DObject, CSS3DRenderer } from "three/addons/renderers/CSS3DRenderer.js";
@@ -455,6 +456,7 @@ function stageFloor(f, shown) {
   if (shown === (f.group.parent === scene)) return;
   if (shown) { scene.add(f.group); return; }
   scene.remove(f.group);
+  if (f.celebration) endCelebration(f);
   f.group.traverse(o => { if (o.isCSS2DObject || o.isCSS3DObject) o.element.style.display = "none"; });
   if (f.tv && f.tv.shown !== "about:blank") { f.tv.shown = "about:blank"; f.tv.iframe.src = "about:blank"; }
 }
@@ -859,9 +861,17 @@ function walls(g, r, doors) {
 function removeFloor(k) {
   const f = floors.get(k);
   if (!f) return;
-  f.group.traverse(o => (o.isCSS2DObject || o.isCSS3DObject) && o.element.remove());
+  disposeFloor(f);
   scene.remove(f.group);
   floors.delete(k);
+}
+// Étage retiré ou reconstruit : ses éléments HTML et ses maillages fusionnés (propres à lui) sont libérés.
+function disposeFloor(f) {
+  if (f.celebration) endCelebration(f);
+  f.group.traverse(o => {
+    if (o.isCSS2DObject || o.isCSS3DObject) o.element.remove();
+    if (o.geometry?.userData.baked) o.geometry.dispose();
+  });
 }
 
 // Écrans du poste de direction (classique) : marchés, graphique et carnet d'ordres, décoratifs.
@@ -930,7 +940,9 @@ function buildResident(apt, wing, officeTier) {
     label(g, `Bureau de ${esc(apt.name)}`, "room-tag", P(BOSS.x, 0).x + 0.25, 0.08, P(0, BOSS.y).z + 0.4)];
   // Le nom du résident en grand sur l'aile principale ; les autres ailes affichent leur enseigne.
   if (wingId === "work") {
-    sign(g, apt.name.toUpperCase(), 11, 1.7, { color: apt.profile?.accent ?? "#f1cd85", font: "700 130px Sora, sans-serif", w: 1024, h: 160 }, 0, 3.55, -6.42);
+    f.nameOpts = { color: apt.profile?.accent ?? "#f1cd85", font: "700 130px Sora, sans-serif", w: 1024, h: 160 };
+    f.nameText = apt.name.toUpperCase();
+    f.nameSign = sign(g, f.nameText, 11, 1.7, f.nameOpts, 0, 3.55, -6.42);
   } else if (wing.sign) {
     sign(g, wing.sign, 5, 1.1, { color: wing.accent ?? "#9ab4ff", font: "700 90px Sora, sans-serif", w: 720, h: 140 }, 0, 3.35, -6.35);
   }
@@ -1219,7 +1231,7 @@ function buildResident(apt, wing, officeTier) {
   f.alarmLight = new LightSpot("#ff3b3b", 0, 10, 1.6, 1);
   f.alarmLight.position.set(bd.x, 2.4, bd.z);
   g.add(f.alarmLight);
-  if (wingId === "work") placeDecor(g, f, apt);
+  if (wingId === "work") { placeDecor(g, f, apt); buildWorkBoard(f, g); }
   if (wingId === "work" && apt.profile?.tv) giantTv(f, apt.profile.tv);
   if (cyber) cyberpunk(f, apt);
   return finishFloor(f);
@@ -1776,7 +1788,7 @@ function cyberpunk(f, apt) {
 
       // Ondes du sol : une toutes les 4 s (bien plus en overdrive), plus une à chaque tâche lancée ou terminée.
       if (!still && now >= fx.nextWave) { fx.waves.push(now); fx.nextWave = now + (od ? 0.7 : 4); }
-      fx.waves = fx.waves.filter(w => now - w < 3.2);
+      while (fx.waves.length && now - fx.waves[0] >= 3.2) fx.waves.shift(); // ondes ajoutées dans l'ordre du temps
       grid.forEach((l, i) => {
         let lit = 0;
         for (const w of fx.waves) lit += Math.exp(-((l.d - (now - w) * 5) ** 2) / 0.35) * Math.max(0, 1 - (now - w) / 3.2);
@@ -2331,7 +2343,7 @@ function buildShared(def) {
       ["Rothmans", "#293d67", "#e9e4d6"], ["Gauloises", "#294c83", "#dce4ed"],
       ["Gitanes", "#223f77", "#dce4ed"], ["Vogue", "#476b61", "#ece9df"],
     ];
-    const packGeometry = new THREE.BoxGeometry(0.16, 0.29, 0.10);
+    const packFace = new THREE.PlaneGeometry(0.16, 0.29);
     brands.forEach(([name, color, paper], i) => {
       const canvas = document.createElement("canvas"); canvas.width = 256; canvas.height = 448;
       const ctx = canvas.getContext("2d");
@@ -2356,12 +2368,13 @@ function buildShared(def) {
       const texture = new THREE.CanvasTexture(canvas); texture.colorSpace = THREE.SRGBColorSpace;
       texture.anisotropy = renderer.capabilities.getMaxAnisotropy();
       const face = new THREE.MeshStandardMaterial({ map: texture, roughness: 0.8 });
-      const side = mat(paper);
-      const materials = [side, side, side, side, face, side];
       const x = pc.x - 0.285 + (i % 4) * 0.19, y = [1.59, 0.96, 0.34][Math.floor(i / 4)] + 0.145;
+      // Le paquet (couleur du papier) et sa face imprimée, posée devant : des maillages à un seul matériau, que la
+      // fusion regroupe (un paquet à six matériaux coûtait six appels de dessin).
       for (let stock = 0; stock < 2; stock++) {
-        const pack = new THREE.Mesh(packGeometry, materials);
-        pack.position.set(x, y, pc.z + 0.24 - stock * 0.12); g.add(pack);
+        const z = pc.z + 0.24 - stock * 0.12, front = new THREE.Mesh(packFace, face);
+        box(g, 0.16, 0.29, 0.10, mat(paper), x, y, z);
+        front.position.set(x, y, z + 0.051); g.add(front);
       }
     });
     sign(g, "CIGARETTES", 1.25, 0.26, { color: "#f1cd85", font: "700 80px Sora, sans-serif", blur: 8 }, pc.x, 2.56, pc.z + 0.3);
@@ -3630,8 +3643,13 @@ function makeRobot(color) {
   const g = new THREE.Group();
   const r = cloneSkinned(t.scene);
   r.scale.setScalar(t.scale);
+  // Une seule teinte par robot (corps et tête la partagent) ; les maillages fusionnés du corps partagent un squelette.
+  let main = null, skeleton = null;
   r.traverse(o => {
-    if (o.isMesh && o.material?.name === "Main") { o.material = o.material.clone(); o.material.color.set(color); o.userData.tourMaterial = true; }
+    if (o.isMesh && o.material?.name === "Main") {
+      o.material = main ??= o.material.clone(); main.color.set(color); o.userData.tourMaterial = true;
+    }
+    if (o.isSkinnedMesh && o.userData.robotBody) { if (skeleton) o.skeleton = skeleton; else skeleton = o.skeleton; }
     if (o.isMesh) o.frustumCulled = false; // les maillages animés sortent de leur boîte d'origine
   });
   // L'os de la paume droite porte raquette et club ; au premier robot, sa pose de repos (orientation, échelle ×100 du
@@ -3657,6 +3675,83 @@ function makeRobot(color) {
   Object.assign(g.userData, { mixer, actions, anim: null, hand, held: null });
   play(g, "Idle");
   return g;
+}
+
+// Le robot du modèle compte 19 maillages (un par pièce, chacun accroché à son os) : 19 appels de dessin par agent.
+// Au chargement, toutes les pièces rigides et les deux mains (déformées) deviennent un maillage déformé par matériau,
+// lié au même squelette : chaque vertex suit l'os de sa pièce (poids 1), les mains gardent leurs poids. Seule la tête
+// reste à part, ses expressions (morphs) étant animées. 19 appels deviennent 5, sans rien changer à l'image.
+function mergeRobotParts(root) {
+  root.updateMatrixWorld(true);
+  const bones = [];
+  root.traverse(o => { if (o.isBone) bones.push(o); });
+  const boneIndex = new Map(bones.map((b, i) => [b, i]));
+  let host = null;
+  root.traverse(o => { if (!host && o.isSkinnedMesh) host = o.parent; });
+  if (!host || !bones.length) return;
+  const hostInverse = host.matrixWorld.clone().invert();
+  const groups = new Map(), done = [];
+  const v = new THREE.Vector3(), n = new THREE.Vector3(), M = new THREE.Matrix4(), S = new THREE.Matrix4(), B = new THREE.Matrix4(), N3 = new THREE.Matrix3();
+  root.traverse(o => {
+    if (!o.isMesh || Array.isArray(o.material) || o.geometry.morphAttributes.position) return;
+    let bone = null;
+    for (let p = o.parent; p && !bone; p = p.parent) if (p.isBone) bone = p;
+    if (!o.isSkinnedMesh && !bone) return;
+    const geo = o.geometry, pos = geo.attributes.position, nor = geo.attributes.normal;
+    if (!pos || !nor) return;
+    const count = pos.count, P = new Float32Array(count * 3), Nn = new Float32Array(count * 3), SI = new Uint16Array(count * 4), SW = new Float32Array(count * 4);
+    if (!o.isSkinnedMesh) M.multiplyMatrices(hostInverse, o.matrixWorld), N3.getNormalMatrix(M);
+    for (let i = 0; i < count; i++) {
+      v.fromBufferAttribute(pos, i); n.fromBufferAttribute(nor, i);
+      if (o.isSkinnedMesh) {
+        // Pose de repos de la main : somme pondérée des matrices de ses os, comme le fait le shader.
+        const si = geo.attributes.skinIndex, sw = geo.attributes.skinWeight, e = S.elements.fill(0);
+        for (let c = 0; c < 4; c++) {
+          const w = sw.getComponent(i, c);
+          if (!w) continue;
+          const j = si.getComponent(i, c), b = o.skeleton.bones[j];
+          B.multiplyMatrices(b.matrixWorld, o.skeleton.boneInverses[j]);
+          for (let k = 0; k < 16; k++) e[k] += w * B.elements[k];
+          SI[i * 4 + c] = boneIndex.get(b) ?? 0; SW[i * 4 + c] = w;
+        }
+        M.multiplyMatrices(hostInverse, o.matrixWorld).multiply(o.bindMatrixInverse).multiply(S).multiply(o.bindMatrix);
+        N3.getNormalMatrix(M);
+      } else { SI[i * 4] = boneIndex.get(bone); SW[i * 4] = 1; }
+      v.applyMatrix4(M); n.applyMatrix3(N3).normalize();
+      P.set([v.x, v.y, v.z], i * 3); Nn.set([n.x, n.y, n.z], i * 3);
+    }
+    const index = geo.index ? Array.from(geo.index.array) : Array.from({ length: count }, (_, i) => i);
+    if (!groups.has(o.material)) groups.set(o.material, []);
+    groups.get(o.material).push({ P, Nn, SI, SW, index });
+    done.push(o);
+  });
+  const skeleton = new THREE.Skeleton(bones);
+  for (const [material, parts] of groups) {
+    const total = parts.reduce((t, q) => t + q.P.length / 3, 0);
+    const P = new Float32Array(total * 3), Nn = new Float32Array(total * 3), SI = new Uint16Array(total * 4), SW = new Float32Array(total * 4), index = [];
+    let at = 0;
+    for (const q of parts) {
+      P.set(q.P, at * 3); Nn.set(q.Nn, at * 3); SI.set(q.SI, at * 4); SW.set(q.SW, at * 4);
+      for (const k of q.index) index.push(k + at);
+      at += q.P.length / 3;
+    }
+    const geometry = new THREE.BufferGeometry();
+    geometry.setAttribute("position", new THREE.BufferAttribute(P, 3));
+    geometry.setAttribute("normal", new THREE.BufferAttribute(Nn, 3));
+    geometry.setAttribute("skinIndex", new THREE.Uint16BufferAttribute(SI, 4));
+    geometry.setAttribute("skinWeight", new THREE.BufferAttribute(SW, 4));
+    geometry.setIndex(index);
+    const mesh = new THREE.SkinnedMesh(geometry, material);
+    mesh.name = "Corps." + material.name;
+    mesh.userData.robotBody = true;
+    host.add(mesh);
+    mesh.bind(skeleton);
+  }
+  for (const o of done) {
+    const parent = o.parent;
+    o.removeFromParent();
+    if (parent && !parent.isBone && parent !== host && !parent.children.length) parent.removeFromParent(); // nœud de pièce vidé
+  }
 }
 
 // Passe d'une animation à l'autre en fondu.
@@ -3825,12 +3920,14 @@ function makeAgent(key, s) {
     return p;
   });
   const cup = cyl(g, 0.06, 0.13, mat("#e9e2d4"), 0.3, 0.95, 0.15, 10);
+  // Zone de clic invisible : le rayon de la souris teste une boîte, pas chaque triangle du robot déformé.
+  const hit = box(g, 0.75, 1.75, 0.75, hitMaterial, 0, 0.88, 0);
   const el = document.createElement("div");
   el.className = "bubble3d";
   const bubble = new CSS2DObject(el);
   bubble.position.set(0, 2.1, 0);
   g.add(bubble);
-  Object.assign(g.userData, { key, ring, orb, puffs, cup, bubble, path: [], floor: null, place: null, slot: null, dir: 0, wait: 0, seed: (hash(key) % 1000) / 1000 });
+  Object.assign(g.userData, { key, ring, orb, puffs, cup, bubble, hit, path: [], floor: null, place: null, slot: null, dir: 0, wait: 0, seed: (hash(key) % 1000) / 1000 });
   return g;
 }
 
@@ -3869,7 +3966,7 @@ function syncFloors(list) {
   }
   for (const d of SHARED) if (!floors.has(d.id)) floors.set(d.id, buildShared(d));
   for (const [k, f] of floors) if (!order.includes(k)) {
-    f.group.traverse(o => (o.isCSS2DObject || o.isCSS3DObject) && o.element.remove());
+    disposeFloor(f);
     scene.remove(f.group);
     floors.delete(k);
   }
@@ -3952,8 +4049,11 @@ function update(now) {
     const T = TOOLS[w.s.src] ?? { name: w.s.src }, grade = staffOf(w.a, w.s.src)?.grade?.icon;
     const text = st === "travaille" ? w.s.action : st === "autorisation" ? "Autorise-moi ?" : st === "erreur" ? "Erreur"
       : `${grade ? grade + " " : ""}${w.a.name} · ${T.name}`;
-    u.bubble.element.textContent = text;
-    u.bubble.element.className = "bubble3d" + (st === "autorisation" ? " auth" : "") + (st === "travaille" || st === "autorisation" || st === "erreur" ? "" : " who");
+    // Tâche livrée : le texte de la célébration reste affiché quelques secondes au-dessus du robot.
+    if (u.cheerTextUntil > clock.elapsedTime && st !== "autorisation") continue;
+    const cls = "bubble3d" + (st === "autorisation" ? " auth" : "") + (st === "travaille" || st === "autorisation" || st === "erreur" ? "" : " who");
+    if (u.bubble.element.textContent !== text) u.bubble.element.textContent = text;
+    if (u.bubble.element.className !== cls) u.bubble.element.className = cls;
   }
   for (const [key, g] of agents) if (!want.has(key)) {
     const u = g.userData, materials = new Set([u.ring.material, ...u.puffs.map(p => p.material)]), skeletons = new Set();
@@ -3987,6 +4087,8 @@ function update(now) {
 }
 
 // ---------- animation ----------
+const coveringDialogs = ["#sportDlg", "#economyDlg"].map(id => $(id));
+const tourCovered = () => { for (const d of coveringDialogs) if (d?.open) return true; return false; };
 const clock = new THREE.Clock();
 const tmp = new THREE.Vector3();
 let lastFrameAt = 0;
@@ -4000,6 +4102,9 @@ function animate(frameTime = performance.now()) {
   if (frameTime - lastFrameAt < 1000 / 60) return;
   lastFrameAt = frameTime - (frameTime - lastFrameAt) % (1000 / 60);
   const dt = Math.min(clock.getDelta(), 0.05), t = clock.elapsedTime;
+  // Mini-jeux (tennis, golf) ou dialogue Entreprise ouverts : ils couvrent la tour et ont leur propre animation. La 3D
+  // s'arrête (ni calcul, ni dessin, ni étiquettes) et reprend à leur fermeture là où elle en était.
+  if (tourCovered()) return;
   adaptResolution(frameTime);
   animateOutside(t);
   syncOutside();
@@ -4038,8 +4143,266 @@ function animate(frameTime = performance.now()) {
   labels.render(scene, camera);
 }
 
-// Travail en 3D sur l'étage d'un résident regardé (célébrations, tableau de bord) : voir plus bas.
-function tickWorkFloor(f, dt, t) {}
+// ---------- le travail en 3D : célébrations et tableau de bord ----------
+// Le serveur compte le travail (economy.work) ; la tour le fête. Un nouvel exploit dans work.events d'un résident (id
+// jamais vu, ceux du premier chargement ignorés) : une tâche livrée fait sauter de joie le robot qui l'a livrée, une
+// gerbe de confettis partant de son bureau ; un objectif, une série ou un badge fête tout l'étage (pluie de confettis,
+// enseigne au nom du résident qui s'illumine d'or). Rien n'est animé si le visiteur demande moins de mouvement, ni
+// sur un étage qu'on ne regarde pas : aucune célébration ne tourne en tâche de fond.
+const workSeen = new Map(); // slug du résident -> plus grand id d'événement déjà vu
+const eventTime = t => (Number(t) > 1e12 ? Number(t) / 1000 : Number(t));
+function trackWorkEvents(list, now) {
+  for (const a of list) {
+    const events = a.economy?.work?.events;
+    if (!Array.isArray(events)) continue;
+    let top = 0;
+    for (const e of events) if (Number(e?.id) > top) top = Number(e.id);
+    const seen = workSeen.get(a.slug);
+    workSeen.set(a.slug, Math.max(top, seen ?? 0));
+    if (seen === undefined) continue; // premier chargement : l'historique n'est pas rejoué
+    // Les plus anciens d'abord ; au retour d'un onglet en arrière-plan, seulement les trois derniers et pas les vieux.
+    const fresh = events.filter(e => Number(e?.id) > seen && !(now - eventTime(e.t) > 180)).sort((x, y) => x.id - y.id).slice(-3);
+    for (const e of fresh) celebrateWork(a, e);
+  }
+}
+function celebrateWork(a, e) {
+  if (reducedMotion.matches || document.hidden) return;
+  const f = floors.get(order[focus]);
+  if (!f || f.kind !== "resident" || f.residentSlug !== a.slug) return; // l'étage de ce résident n'est pas regardé
+  const t = clock.elapsedTime;
+  if (e.kind === "delivery") {
+    // Le robot qui a livré : même outil, sur cet étage ; de préférence celui qui vient de passer en pause, sinon au poste.
+    let robot = null;
+    for (const g of agents.values()) {
+      const u = g.userData;
+      if (u.floor !== f.key || u.apt?.slug !== a.slug || u.s?.src !== e.src || !g.visible) continue;
+      const rank = (u.state === "travaille" ? 0 : 1e10) + (u.s.updated ?? 0);
+      if (!robot || rank > robot.rank) robot = { g, rank };
+    }
+    if (!robot) return;
+    const u = robot.g.userData;
+    u.cheer = Number(e.id) % 2 ? "Yes" : "Jump";
+    u.cheerUntil = t + 1.9;
+    u.cheerText = workEventText(e, { tool: false });
+    u.cheerTextUntil = t + 3.5;
+    u.bubble.element.textContent = u.cheerText;
+    u.bubble.element.className = "bubble3d";
+    const p = robot.g.position;
+    burstConfetti(f, p.x, 1.15, p.z, 70, 2.3);
+    return;
+  }
+  // Objectif, série, badge : tout l'étage. L'enseigne au nom du résident s'illumine d'or, des confettis tombent du
+  // plafond sur tout l'étage et jaillissent du tableau de bord ; un bandeau dit pourquoi.
+  if (f.wingId !== "work") return;
+  endCelebration(f);
+  f.celebration = { start: t, duration: 3.6, banner: label(f.group, esc(workEventText(e)), "owner-tag", 0, 2.45, -6.1) };
+  if (f.nameSign && !f.nameFlash) {
+    f.nameFlash = new THREE.Mesh(f.nameSign.geometry, new THREE.MeshBasicMaterial({ map: textTexture(f.nameText, { ...f.nameOpts, color: "#ffd76a" }),
+      transparent: true, opacity: 0, depthWrite: false, blending: THREE.AdditiveBlending, toneMapped: false }));
+    f.nameFlash.position.copy(f.nameSign.position); f.nameFlash.position.z += 0.012;
+    f.group.add(f.nameFlash);
+  }
+  if (f.nameFlash) f.nameFlash.visible = true;
+  for (let k = 0; k < 6; k++) showerConfetti(f, -8.5 + k * 3.4, 40);
+  if (f.workBoard) burstConfetti(f, f.workBoard.mesh.position.x, 2.9, f.workBoard.mesh.position.z + 0.3, 50, 2.6);
+}
+function endCelebration(f) {
+  const c = f.celebration;
+  if (!c) return;
+  f.celebration = null;
+  c.banner?.element.remove(); c.banner?.removeFromParent();
+  if (f.nameFlash) { f.nameFlash.visible = false; f.nameFlash.material.opacity = 0; }
+  if (f.accentGlow && f.accentMaterial) f.accentGlow.material = f.accentMaterial;
+  if (f.workFlash) f.workFlash.intensity = 0;
+}
+const ACCENT_FLASH = glow("#ffd76a", 3.2);
+// Étage de résident regardé : célébration en cours et confettis.
+function tickWorkFloor(f, dt, t) {
+  const c = f.celebration;
+  if (c) {
+    const age = t - c.start;
+    if (age >= c.duration || reducedMotion.matches) endCelebration(f);
+    else {
+      // Trois pulsations dorées qui s'éteignent.
+      const env = Math.max(0, 1 - age / c.duration) * (0.55 + 0.45 * Math.cos(age * Math.PI * 2 * 0.85));
+      if (f.nameFlash) f.nameFlash.material.opacity = Math.min(1, env * 1.3);
+      f.accentMaterial ??= f.accentGlow.material;
+      f.accentGlow.material = env > 0.3 ? ACCENT_FLASH : f.accentMaterial;
+      if (f.workFlash) f.workFlash.intensity = 9 * env;
+    }
+  }
+  if (confetti.mesh.parent === f.group && confetti.alive) stepConfetti(dt, t);
+}
+
+// Confettis : une seule série d'instances (un appel de dessin), prêtée à l'étage qui fait la fête ; chaque morceau
+// vole, tournoie, se pose au sol puis disparaît. Rien n'est calculé quand aucun ne vole.
+const CONFETTI_COUNT = 320;
+const confetti = (() => {
+  const mesh = new THREE.InstancedMesh(new THREE.PlaneGeometry(0.075, 0.045), new THREE.MeshBasicMaterial({ side: THREE.DoubleSide, toneMapped: false }), CONFETTI_COUNT);
+  mesh.frustumCulled = false;
+  mesh.visible = false;
+  live(mesh);
+  const tints = ["#ffd76a", "#ff6fd8", "#7ec3f0", "#4ade80", "#ffffff", "#ff9a3c"].map(c => new THREE.Color(c));
+  const hidden = new THREE.Matrix4().makeScale(0, 0, 0);
+  for (let i = 0; i < CONFETTI_COUNT; i++) { mesh.setMatrixAt(i, hidden); mesh.setColorAt(i, tints[i % tints.length]); }
+  return { mesh, tints, hidden, next: 0, alive: 0, pos: new Float32Array(CONFETTI_COUNT * 3), vel: new Float32Array(CONFETTI_COUNT * 3),
+    rot: new Float32Array(CONFETTI_COUNT * 3), spin: new Float32Array(CONFETTI_COUNT * 3), end: new Float32Array(CONFETTI_COUNT), dummy: new THREE.Object3D() };
+})();
+function confettiOn(f) {
+  const c = confetti;
+  if (c.mesh.parent !== f.group) {
+    f.group.add(c.mesh);
+    c.end.fill(0); c.alive = 0;
+    for (let i = 0; i < CONFETTI_COUNT; i++) c.mesh.setMatrixAt(i, c.hidden);
+  }
+  c.mesh.visible = true;
+}
+function addConfetto(x, y, z, vx, vy, vz, life) {
+  const c = confetti, i = c.next, t = clock.elapsedTime;
+  c.next = (c.next + 1) % CONFETTI_COUNT;
+  if (c.end[i] <= t) c.alive++;
+  c.pos.set([x, y, z], i * 3); c.vel.set([vx, vy, vz], i * 3);
+  c.rot.set([Math.random() * 6.3, Math.random() * 6.3, Math.random() * 6.3], i * 3);
+  c.spin.set([(Math.random() - 0.5) * 16, (Math.random() - 0.5) * 10, (Math.random() - 0.5) * 16], i * 3);
+  c.end[i] = t + life;
+  c.mesh.setColorAt(i, c.tints[Math.floor(Math.random() * c.tints.length)]);
+}
+// Gerbe : jaillit d'un point (un bureau, le tableau de bord) en cône vers le haut.
+function burstConfetti(f, x, y, z, count, speed) {
+  confettiOn(f);
+  for (let k = 0; k < count; k++) {
+    const a = Math.random() * Math.PI * 2, up = 0.55 + Math.random() * 0.45, v = speed * (0.6 + Math.random() * 0.5);
+    addConfetto(x, y, z, Math.cos(a) * v * (1 - up * 0.6), up * v * 1.25, Math.sin(a) * v * (1 - up * 0.6), 3 + Math.random() * 1.5);
+  }
+  confetti.mesh.instanceColor.needsUpdate = true;
+}
+// Pluie : tombe du plafond sur une bande de l'étage.
+function showerConfetti(f, x, count) {
+  confettiOn(f);
+  for (let k = 0; k < count; k++)
+    addConfetto(x + (Math.random() - 0.5) * 3.2, 4.3 + Math.random() * 0.6, (Math.random() - 0.5) * 11, (Math.random() - 0.5) * 0.6, -Math.random() * 0.5, (Math.random() - 0.5) * 0.6, 3.6 + Math.random() * 1.2);
+  confetti.mesh.instanceColor.needsUpdate = true;
+}
+function stepConfetti(dt, t) {
+  const c = confetti, d = c.dummy;
+  let alive = 0;
+  for (let i = 0; i < CONFETTI_COUNT; i++) {
+    if (c.end[i] <= t) {
+      if (c.end[i] > 0) { c.end[i] = 0; c.mesh.setMatrixAt(i, c.hidden); }
+      continue;
+    }
+    alive++;
+    const k = i * 3, grounded = c.pos[k + 1] <= 0.08;
+    if (!grounded) {
+      // Chute freinée et flottement de papier : la vitesse verticale plafonne, un léger vent latéral les fait danser.
+      c.vel[k] *= 1 - Math.min(1, dt * 1.6); c.vel[k + 2] *= 1 - Math.min(1, dt * 1.6);
+      c.vel[k + 1] = Math.max(-1.1, c.vel[k + 1] - 7 * dt);
+      c.pos[k] += (c.vel[k] + Math.sin(t * 5 + i) * 0.35) * dt; c.pos[k + 1] += c.vel[k + 1] * dt; c.pos[k + 2] += c.vel[k + 2] * dt;
+      for (let a = 0; a < 3; a++) c.rot[k + a] += c.spin[k + a] * dt;
+      if (c.pos[k + 1] <= 0.08) { c.pos[k + 1] = 0.075; c.rot[k] = -Math.PI / 2; c.rot[k + 2] = 0; } // posé à plat
+    }
+    const fade = Math.min(1, (c.end[i] - t) / 0.5);
+    d.position.set(c.pos[k], c.pos[k + 1], c.pos[k + 2]);
+    d.rotation.set(c.rot[k], c.rot[k + 1], c.rot[k + 2]);
+    d.scale.setScalar(fade);
+    d.updateMatrix();
+    c.mesh.setMatrixAt(i, d.matrix);
+  }
+  c.alive = alive;
+  c.mesh.instanceMatrix.needsUpdate = true;
+  if (!alive) c.mesh.visible = false;
+}
+
+// Tableau de bord du travail, dans le bureau du résident : sur la vitre du fond, au-dessus du frigo, entre l'enseigne
+// au nom du résident et le néon (s'il est acheté). Objectif en cours et sa barre, tâches livrées, agents au travail
+// et prime d'équipe, série de jours. La texture n'est redessinée que si une valeur affichée change.
+function buildWorkBoard(f, g) {
+  const x = 6.5, y = 3.56, z = -6.36;
+  box(g, 1.56, 1.12, 0.05, mat("#0d1018", { metalness: 0.5, roughness: 0.4 }), x, y, z - 0.04);
+  box(g, 1.44, 0.022, 0.03, glow("#f1cd85", 0.9), x, y - 0.6, z - 0.01);
+  f.workBoard = canvasPanel(g, 1.48, 1.04, 1024, 720, x, y, z);
+  f.workFlash = new LightSpot("#ffd76a", 0, 13, 1.4, 1); // lumière dorée des célébrations (éteinte sinon)
+  f.workFlash.position.set(0, 3.3, -4.6);
+  g.add(f.workFlash);
+  drawWorkBoard(f.workBoard, null);
+}
+function drawFlame(x, cx, cy, s, color) {
+  x.fillStyle = color;
+  x.beginPath(); x.moveTo(cx, cy - s);
+  x.bezierCurveTo(cx + s * 0.9, cy - s * 0.2, cx + s * 0.75, cy + s * 0.75, cx, cy + s * 0.8);
+  x.bezierCurveTo(cx - s * 0.75, cy + s * 0.75, cx - s * 0.9, cy - s * 0.1, cx - s * 0.15, cy - s * 0.45);
+  x.bezierCurveTo(cx - s * 0.1, cy - s * 0.1, cx + s * 0.05, cy - s * 0.4, cx, cy - s);
+  x.fill();
+}
+function drawWorkBoard(p, apt) {
+  const w = apt?.economy?.work ?? null, full = Array.isArray(w?.objectives);
+  const today = w?.today ?? {}, team = w?.team ?? {}, streak = w?.streak ?? {};
+  const goal = full ? currentObjective(w.objectives) : null;
+  const minutes = Math.round(Number(today.minutes) || 0), deliveries = Number(today.deliveries) || 0;
+  const active = Number(team.active) || 0, bonus = Number(team.bonus) || 0, days = Number(streak.days) || 0;
+  const key = JSON.stringify([!!w, full, goal && [goal.id, goal.title, objectiveProgressText(goal), objectivePct(goal)], full && w.objectives.every(o => o.done),
+    minutes, deliveries, active, bonus, days, !!streak.today, Number(streak.bonus) || 0]);
+  if (key === p.key) return;
+  p.key = key;
+  const x = p.ctx, W = p.w, H = p.h, gold = "#f1cd85";
+  const bg = x.createLinearGradient(0, 0, 0, H);
+  bg.addColorStop(0, "#111a2c"); bg.addColorStop(1, "#0a0f1b");
+  x.fillStyle = bg; x.fillRect(0, 0, W, H);
+  x.strokeStyle = gold; x.lineWidth = 6; x.strokeRect(10, 10, W - 20, H - 20);
+  x.textBaseline = "middle"; x.textAlign = "left";
+  x.fillStyle = gold; x.font = "700 46px Sora, sans-serif"; x.fillText("TRAVAIL DU JOUR", 50, 72);
+  // Série en haut à droite : flamme vive si la journée compte déjà, terne sinon.
+  const lit = days > 0 && (streak.today || !full);
+  drawFlame(x, W - 210, 72, 30, lit ? "#ff9a3c" : "#4a3a2a");
+  x.textAlign = "right"; x.fillStyle = lit ? "#ffd2a0" : "#8a93a6"; x.font = "800 50px Sora, sans-serif";
+  x.fillText(`${days} j`, W - 50, 74);
+  x.fillStyle = "#26324a"; x.fillRect(50, 120, W - 100, 3);
+  x.textAlign = "left";
+  if (!w) {
+    x.fillStyle = "#c9d3e6"; x.font = "500 40px Sora, sans-serif"; x.fillText("En attente des premières minutes…", 50, 300, W - 100);
+  } else if (full) {
+    x.fillStyle = "#8f9bb8"; x.font = "600 28px Sora, sans-serif"; x.fillText(goal ? "OBJECTIF EN COURS" : "OBJECTIFS DU JOUR", 50, 170);
+    x.fillStyle = "#f4f6fb"; x.font = "700 50px Sora, sans-serif";
+    x.fillText(goal ? String(goal.title ?? "") : "Tous atteints !", 50, 232, W - 100);
+    const pct = goal ? objectivePct(goal) / 100 : 1, bw = W - 100;
+    x.fillStyle = "#1c2740"; x.beginPath(); x.roundRect(50, 280, bw, 44, 22); x.fill();
+    if (pct > 0) {
+      const gr = x.createLinearGradient(50, 0, 50 + bw, 0); gr.addColorStop(0, "#c99a3e"); gr.addColorStop(1, "#ffe08a");
+      x.fillStyle = gr; x.beginPath(); x.roundRect(50, 280, Math.max(44, bw * pct), 44, 22); x.fill();
+    }
+    x.textAlign = "right"; x.fillStyle = "#dfe5f2"; x.font = "600 32px Sora, sans-serif";
+    x.fillText(goal ? objectiveProgressText(goal) : `${workDuration(minutes)} de travail`, W - 50, 360);
+    x.textAlign = "left"; x.fillStyle = "#8f9bb8"; x.font = "500 30px Sora, sans-serif";
+    x.fillText(goal?.metric === "minutes" ? `${workDuration(minutes)} aujourd'hui` : `${workDuration(minutes)} de travail aujourd'hui`, 50, 360, W / 2);
+  } else {
+    x.fillStyle = "#8f9bb8"; x.font = "600 28px Sora, sans-serif"; x.fillText("TEMPS DE TRAVAIL", 50, 170);
+    x.fillStyle = "#f4f6fb"; x.font = "800 96px Sora, sans-serif"; x.fillText(workDuration(minutes), 50, 280, W - 100);
+  }
+  // Trois tuiles : tâches livrées, agents au travail (et prime d'équipe), série.
+  const tiles = [
+    ["TÂCHES LIVRÉES", String(deliveries), deliveries ? "aujourd'hui" : "pas encore", "#7ee0b0"],
+    ["AU TRAVAIL", String(active), bonus > 0 ? `prime ${bonusText(bonus)}` : active === 1 ? "agent" : active ? "agents" : "personne", bonus > 0 ? "#ffd76a" : "#7ec3f0"],
+    ["SÉRIE", `${days} j`, Number(streak.bonus) > 0 ? `salaire ${bonusText(streak.bonus)}` : streak.today ? "jour compté" : "≥ 1 h par jour", "#ff9a3c"],
+  ];
+  const tw = (W - 100 - 40) / 3;
+  tiles.forEach(([title, value, sub, color], k) => {
+    const tx = 50 + k * (tw + 20), ty = 420;
+    x.fillStyle = "#141e33"; x.beginPath(); x.roundRect(tx, ty, tw, 250, 18); x.fill();
+    x.fillStyle = color; x.fillRect(tx, ty + 18, 6, 214);
+    x.textAlign = "center";
+    x.fillStyle = "#8f9bb8"; x.font = "600 26px Sora, sans-serif"; x.fillText(title, tx + tw / 2, ty + 42, tw - 30);
+    x.fillStyle = "#f4f6fb"; x.font = "800 92px Sora, sans-serif"; x.fillText(value, tx + tw / 2, ty + 132, tw - 30);
+    x.fillStyle = color; x.font = "600 28px Sora, sans-serif"; x.fillText(sub, tx + tw / 2, ty + 210, tw - 30);
+  });
+  x.textAlign = "left";
+  p.tex.needsUpdate = true;
+}
+function updateWorkBoards(list) {
+  for (const a of list) {
+    const f = floors.get(`${a.slug}:work`);
+    if (f?.workBoard) drawWorkBoard(f.workBoard, a);
+  }
+}
 
 // Un étage affiché : ses décors animés, son robot de résident, ses ticks (casino, tennis, golf, cyberpunk…).
 function animateFloor(f, key, near, dt, t) {
@@ -4119,8 +4482,10 @@ function animateAgents(dt, t, focusKey) {
     const u = g.userData;
     u.bubble.visible = u.floor === focusKey;
     let walking = false, walkY = u.stepY ?? 0;
+    // Célébration d'une tâche livrée (« Yes » ou « Jump ») : le robot s'arrête, debout, le temps du geste.
+    const cheering = u.cheerUntil > t;
     if (u.wait > 0) { u.wait -= dt; g.visible = u.wait <= 0; }
-    else if (u.path.length) {
+    else if (u.path.length && !cheering) {
       const next = u.path[0];
       // (« toFloor » et non « floor » : les vecteurs de Three.js ont déjà une méthode floor())
       if (next.toFloor) {
@@ -4147,12 +4512,10 @@ function animateAgents(dt, t, focusKey) {
     }
     const settled = !walking && !u.path.length;
     // Chaque assise fournit sa hauteur ; pendant la marche, celle du sol ou de la marche de gradin.
-    g.position.y += ((settled ? u.slot.y : walkY) - g.position.y) * Math.min(1, dt * 8);
+    g.position.y += ((cheering ? u.stepY ?? 0 : settled ? u.slot.y : walkY) - g.position.y) * Math.min(1, dt * 8);
     const facing = !settled ? (u.dir ?? 0) : u.slotAnim === "Dance" ? Math.PI + Math.sin(t * 3 + u.seed * 6) * 0.6 : (u.slotFacing ?? 0);
     const turn = ((facing - g.rotation.y + Math.PI * 3) % (Math.PI * 2)) - Math.PI;
     g.rotation.y += turn * Math.min(1, dt * 8);
-    // Célébration d'une tâche livrée (« Yes » ou « Jump ») : elle passe avant l'animation du lieu, le temps du geste.
-    const cheering = u.cheerUntil > t && settled;
     // Animation selon le lieu : marche, assis au poste / au salon / aux toilettes, danse au Club, signe chez le résident.
     play(g, cheering ? u.cheer : !settled ? "Walking" : SLOT_MOTION[u.slotAnim]?.(t, u.seed) ?? u.slotAnim ?? "Idle");
     // Raquette à une place de joueur du court, putter au green, fer au practice ; rien en chemin ni ailleurs.
@@ -4314,7 +4677,7 @@ addEventListener("keydown", e => {
 });
 
 // Clic sur un agent : sa fiche.
-const onFocus = () => [...agents.values()].filter(g => g.userData.floor === order[focus] && g.visible);
+const onFocus = () => [...agents.values()].filter(g => g.userData.floor === order[focus] && g.visible).map(g => g.userData.hit);
 const onGiantTv = () => { const t = floors.get(order[focus])?.tv; return t && ray.intersectObject(t.frame).length ? t : null; };
 const onByte = () => { const c = floors.get(order[focus])?.cyber; return c && ray.intersectObject(c.hit, true).length ? c : null; };
 const onTv = () => order[focus] === "lounge" && tvFrame && ray.intersectObject(tvFrame).length > 0;
@@ -4334,7 +4697,7 @@ renderer.domElement.addEventListener("pointerup", e => {
   mouse.set((e.clientX / innerWidth) * 2 - 1, -(e.clientY / innerHeight) * 2 + 1);
   ray.setFromCamera(mouse, camera);
 
-  let o = ray.intersectObjects(onFocus(), true)[0]?.object;
+  let o = ray.intersectObjects(onFocus(), false)[0]?.object;
   while (o && !o.userData.key) o = o.parent;
   if (o) return showAgent(o.userData.apt, o.userData.s);
   const byte = onByte(), giant = onGiantTv();
@@ -4355,7 +4718,7 @@ renderer.domElement.addEventListener("pointermove", e => {
   if (e.buttons) return;
   mouse.set((e.clientX / innerWidth) * 2 - 1, -(e.clientY / innerHeight) * 2 + 1);
   ray.setFromCamera(mouse, camera);
-  renderer.domElement.style.cursor = ray.intersectObjects(onFocus(), true).length || onTv() || onByte() || onGiantTv() || onPlayTarget() ? "pointer" : "";
+  renderer.domElement.style.cursor = ray.intersectObjects(onFocus(), false).length || onTv() || onByte() || onGiantTv() || onPlayTarget() ? "pointer" : "";
 });
 
 // ---------- interface ----------
@@ -4438,6 +4801,9 @@ function render() {
   updateCasinoState(data);
   if (first) focus = me && order.includes(`${me}:work`) ? order.indexOf(`${me}:work`) : Math.min(1, order.length - 1);
   update(now);
+  // Le travail en 3D : nouveaux exploits fêtés sur l'étage regardé, tableaux de bord redessinés s'ils ont changé.
+  trackWorkEvents(list, now);
+  updateWorkBoards(list);
   order.forEach((key, i) => {
     const f = floors.get(key), apt = list.find(x => x.slug === f.residentSlug);
     const lvl = apt?.game?.level && f.residentSlug === me && f.wingId === "work" ? `<span class="lvl-game">· ${apt.game.level}</span>` : "";
@@ -4480,7 +4846,8 @@ function render() {
     const wingHint = mine && (a.game?.wings?.length ?? 1) < 4 ? `<p class="extras-muted">Monte de niveau pour débloquer Labo (4), Ops (7), Studio (12).</p>` : "";
     const officeBlock = f.wingId === "work" && a.game?.office ? officePanelHtml(a.game.office, esc) : "";
     const ecoLine = residentEconomyLine(a.economy, esc);
-    setPanel(`${wingLine}<p class="kicker">${a.slug === list[0].slug && f.wingId === "work" ? "Penthouse" : esc(f.name)}${mine ? " · chez toi" : ""}</p><h2>${esc(a.name)}</h2>${tagline}${ecoLine}${officeBlock}${wingHint}${wingPlay}
+    const workBlock = f.wingId === "work" ? workPanelHtml(a, now, esc, { mine }) : "";
+    setPanel(`${wingLine}<p class="kicker">${a.slug === list[0].slug && f.wingId === "work" ? "Penthouse" : esc(f.name)}${mine ? " · chez toi" : ""}</p><h2>${esc(a.name)}</h2>${tagline}${ecoLine}${workBlock}${officeBlock}${wingHint}${wingPlay}
       <div class="apt-c"><span><i class="d" style="background:var(--work)"></i><b>${by(a.sessions, "travaille")}</b> au travail</span>
       <span><i class="d" style="background:var(--auth)"></i><b>${by(a.sessions, "autorisation")}</b> ${spectator ? "attend un accord" : "attend ton accord"}</span>
       <span><i class="d" style="background:var(--wait)"></i><b>${by(a.sessions, "attend")}</b> sur le toit, attend la suite</span>
@@ -4522,10 +4889,10 @@ function render() {
 
   const all = list.flatMap(x => x.sessions);
   const board = activityLeaderboard(list);
-  const lb = $("#leaderboardDlg"), rich = fortuneLeaders(list);
-  if ((board.length || rich.length) && !spectator) {
+  const lb = $("#leaderboardDlg"), rich = fortuneLeaders(list), workers = spectator ? "" : workLeadersHtml(list, esc, { me });
+  if ((board.length || rich.length || workers) && !spectator) {
     lb.hidden = false;
-    setHtml(lb, (board.length ? `<h4>Activité du jour</h4><ol>${board.map((r, i) => `<li><b>${esc(r.name)}</b> · ${r.actions} act. / ${r.sessions} sess.</li>`).join("")}</ol>` : "")
+    setHtml(lb, workers + (board.length ? `<h4>Activité du jour</h4><ol>${board.map((r, i) => `<li><b>${esc(r.name)}</b> · ${r.actions} act. / ${r.sessions} sess.</li>`).join("")}</ol>` : "")
       + (rich.length ? `<h4>Fortune</h4><ol>${rich.map(a => `<li><b>${esc(a.name)}</b> · ${esc(a.economy.title?.icon ?? "")} ${esc(money(a.slug === me ? economyUi.shownWallet(a.economy) : a.economy.wallet))}</li>`).join("")}</ol>` : ""));
   } else lb.hidden = true;
   // Libellés masquables : sur un écran moyen, l'en-tête ne garde que les pastilles et les nombres.
@@ -4982,8 +5349,9 @@ async function loadModels() {
     } catch { /* La canette garde sa couleur si le visuel n'est pas disponible. */ }
   })]);
   const robot = await loader.loadAsync("assets/robot.glb");
-  const h = new THREE.Box3().setFromObject(robot.scene).getSize(new THREE.Vector3()).y;
-  MODELS.robot = { scene: robot.scene, animations: robot.animations, scale: 1.45 / h };
+  const robotHeight = new THREE.Box3().setFromObject(robot.scene).getSize(new THREE.Vector3()).y;
+  try { mergeRobotParts(robot.scene); } catch (error) { console.warn("3D : robot gardé en pièces détachées", error); }
+  MODELS.robot = { scene: robot.scene, animations: robot.animations, scale: 1.45 / robotHeight };
 }
 
 var modelsReady = false; // var : lu par ensureStream, défini plus haut, avant la fin du chargement
