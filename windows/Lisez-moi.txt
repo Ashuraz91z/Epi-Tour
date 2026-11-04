@@ -1,0 +1,30 @@
+﻿Penthouse pour Windows
+======================
+
+Penthouse relie ce PC à ton étage du penthouse et lance tes outils d'IA (Claude, Claude Code, Codex,
+ChatGPT, Cursor, Windsurf...) à chaque ouverture de session, pour que tes agents apparaissent dans la tour.
+
+Installation en 3 étapes
+------------------------
+1. Extrais le zip : clic droit sur Penthouse-Windows.zip, puis « Extraire tout ».
+
+2. Dans le dossier extrait, double-clique sur « Installer Penthouse.cmd ».
+   Rien n'est signé, Windows peut donc se méfier :
+   - « Windows a protégé votre ordinateur » (SmartScreen) : clique sur « Informations complémentaires »,
+     puis sur « Exécuter quand même » ;
+   - « Voulez-vous exécuter ce fichier ? » : clique sur « Exécuter ».
+
+3. Colle la clé de ton étage (sur le site : « Relier mes agents » ; ce n'est pas le code d'entrée),
+   puis coche les outils à lancer. C'est tout : Penthouse se relance seul à chaque ouverture de session.
+
+Bon à savoir
+------------
+- Python 3 est nécessaire : il lit les journaux de Claude Code et Codex. S'il manque, Penthouse propose
+  de l'installer (winget ou Microsoft Store).
+- Seules des métadonnées partent vers le site (outil, état, projet, quotas), jamais tes conversations.
+- Ta clé est rangée dans %USERPROFILE%\.config\tour\secret, lisible par ton seul compte Windows.
+- Le suivi tourne chaque minute dans la tâche planifiée « Penthouse - suivi ».
+- Pour rouvrir Penthouse : menu Démarrer > Penthouse (lancer maintenant, changer les outils, vérifier
+  la connexion, relier avec une autre clé).
+- Pour désinstaller : menu Démarrer > Penthouse > Réglages... > Désinstaller Penthouse.
+- Sans app, en une commande (PowerShell) : la commande Windows affichée dans « Relier mes agents ».
