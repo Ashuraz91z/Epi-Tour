@@ -113,6 +113,10 @@ Chaque outil relié est un employé de l'étage. Tout est calculé par le serveu
 - **Mini-jeux jouables** aux étages Tennis et Golf (« 🎮 Jouer ») : match en 3 jeux contre le robot du club (3 niveaux) et
   mini-golf de 3 trous (`public/sports-games.js`). Score vérifié par le serveur (`POST /api/game/sport`), 5 parties récompensées
   par sport et par jour. Les robots y tiennent raquettes et clubs.
+- **Ambiances d'étage** (« Mon étage ») : classique, cyberpunk, ou **Prestige** — parquet à chevrons et marbre, boiseries
+  et lustres, douze bureaux de ministre (noyer, cuir, lampe de banquier, canette Red Bull, balle de golf), bureau présidentiel,
+  vitrine à trophées, green de putting, affiches rétro de Grand Prix et un spider italien rouge des années 60 (sans marque)
+  sur plateau tournant.
 - **Événement du jour**, commun à tous et tiré d'après la date : double paie, Black Friday, nuit blanche, jackpot progressif…
 - Les missions du jour rapportent aussi des P$ ; la mission « Jour de paie » demande 100 P$ de salaires.
 - Les spectateurs voient fortune, titre, paie du jour et rôles, jamais le relevé ni les abonnements.

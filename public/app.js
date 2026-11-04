@@ -2050,7 +2050,7 @@ function prestigeMaterials() {
     can: new THREE.CylinderGeometry(0.033, 0.033, 0.165, 16), canTop: new THREE.CylinderGeometry(0.0335, 0.0335, 0.008, 16), canFace: new THREE.PlaneGeometry(0.06, 0.155),
     cup: new THREE.LatheGeometry([[0, 0], [0.07, 0], [0.07, 0.025], [0.02, 0.04], [0.016, 0.11], [0.03, 0.13], [0.085, 0.17], [0.1, 0.26], [0.094, 0.262], [0.08, 0.18], [0, 0.16]].map(([r, y]) => new THREE.Vector2(r, y)), 20),
     dualScreen: mergeGeometries([new THREE.PlaneGeometry(0.54, 0.32).translate(-0.29, 0, 0), new THREE.PlaneGeometry(0.54, 0.32).translate(0.29, 0, 0)]),
-    chesterSeat: new RoundedBoxGeometry(0.6, 0.12, 0.56, 2, 0.04), chesterBack: new RoundedBoxGeometry(0.84, 0.85, 0.18, 2, 0.06),
+    chesterSeat: new RoundedBoxGeometry(0.6, 0.12, 0.36, 2, 0.04), chesterBack: new RoundedBoxGeometry(0.84, 0.85, 0.18, 2, 0.06),
   };
   return prestigeKit;
 }
@@ -2101,15 +2101,16 @@ function prestigeDesk(g, M, d, k, cans) {
     cyl(g, 0.026, 0.012, M.gold, dc.x + 0.45, 0.787, zc - 0.25, 12);
     const ball = new THREE.Mesh(ballGeometry, M.ball); ball.scale.setScalar(0.022); ball.position.set(dc.x + 0.45, 0.814, zc - 0.25); g.add(ball);
   }
-  // Fauteuil Chesterfield : assise à 0,47 m, haut dossier capitonné, accoudoirs roulés, pieds boule.
+  // Fauteuil Chesterfield : assise à 0,47 m, haut dossier capitonné, accoudoirs roulés, pieds boule. Le bassin du robot
+  // est au-dessus du centre du fauteuil et ses genoux 0,16 m devant : l'assise s'arrête juste derrière ses mollets.
   const tuft = M.tuft;
-  box(g, 0.8, 0.29, 0.64, tuft, ch.x, 0.2, ch.z + 0.04);
-  const seat = new THREE.Mesh(M.chesterSeat, tuft); seat.position.set(ch.x, 0.41, ch.z + 0.06); g.add(seat);
+  box(g, 0.8, 0.29, 0.42, tuft, ch.x, 0.2, ch.z - 0.11);
+  const seat = new THREE.Mesh(M.chesterSeat, tuft); seat.position.set(ch.x, 0.41, ch.z - 0.08); g.add(seat);
   const back = new THREE.Mesh(M.chesterBack, tuft); back.position.set(ch.x, 0.75, ch.z - 0.33); g.add(back);
   for (const s of [-1, 1]) {
-    box(g, 0.13, 0.3, 0.64, tuft, ch.x + s * 0.37, 0.47, ch.z + 0.03);
-    cyl(g, 0.08, 0.68, tuft, ch.x + s * 0.38, 0.64, ch.z + 0.02, 14).rotation.x = Math.PI / 2;
-    for (const dz of [-0.26, 0.32]) cyl(g, 0.035, 0.06, M.walnutDark, ch.x + s * 0.33, 0.03, ch.z + dz, 8);
+    box(g, 0.13, 0.3, 0.5, tuft, ch.x + s * 0.37, 0.47, ch.z - 0.1);
+    cyl(g, 0.08, 0.52, tuft, ch.x + s * 0.38, 0.64, ch.z - 0.1, 14).rotation.x = Math.PI / 2;
+    for (const dz of [-0.28, 0.06]) cyl(g, 0.035, 0.06, M.walnutDark, ch.x + s * 0.33, 0.03, ch.z + dz, 8);
   }
   const screen = new THREE.Mesh(M.dualScreen, mat("#1d2433"));
   screen.position.set(dc.x, 1.07, zc + 0.183);
