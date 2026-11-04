@@ -1597,3 +1597,10 @@ test("travail : série de jours travaillés, plafond d'XP, vue spectateur rédui
   assert.equal(publicEconomy(busy, CALM_MORNING + 18000).work.xpToday, 400);
   assert.ok(busy.game.badges.includes("marathon"));
 });
+
+test("thème Prestige : choisi dans « Mon étage », gardé, et un thème inconnu est refusé", () => {
+  const prestige = sanitizeProfile({ theme: "prestige" }, { accent: "#e8c27a", tagline: "" });
+  assert.equal(prestige.theme, "prestige");
+  assert.equal(sanitizeProfile({ tagline: "Golf & GT" }, prestige).theme, "prestige", "un autre réglage ne change pas le thème");
+  assert.equal(sanitizeProfile({ theme: "ferrari" }, prestige).theme, "prestige", "valeur inconnue : thème précédent gardé");
+});

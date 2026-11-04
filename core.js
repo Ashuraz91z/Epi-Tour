@@ -11,7 +11,7 @@ export function createStore() {
 }
 
 const ACCENT = /^#[0-9a-fA-F]{6}$/;
-export const THEMES = ["classique", "cyberpunk"];
+export const THEMES = ["classique", "cyberpunk", "prestige"];
 export function sanitizeProfile(raw, previous = {}) {
   const accent = typeof raw?.accent === "string" && ACCENT.test(raw.accent) ? raw.accent.toLowerCase() : (previous.accent ?? "#e8c27a");
   const tagline = typeof raw?.tagline === "string" ? raw.tagline.trim().slice(0, 80) : (previous.tagline ?? "");
