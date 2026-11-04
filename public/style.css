@@ -94,6 +94,9 @@ i.d { display: inline-block; width: 8px; height: 8px; border-radius: 50%; margin
 .bubble3d.auth { background: var(--auth); color: #fff; font-weight: 600; animation: blink .8s steps(2) infinite; }
 .room-tag { font: 600 12px "Sora", sans-serif; color: #dfe3f0; background: #0b0e18cc; border: 1px solid #ffffff1a; border-radius: 6px; padding: 2px 8px; white-space: nowrap; transform: translate(50%, 0); }
 .owner-tag { font: 12px "Sora", sans-serif; color: #1a1305; background: var(--gold); border-radius: 6px; padding: 1px 8px; white-space: nowrap; }
+/* Bulles de BYTE (drone) et de Pixel (chat) sur l'étage cyberpunk. */
+.drone-bubble { font: 600 12px "Sora", sans-serif; color: #fff; background: #0b0716e6; border: 1px solid #ff2bd6; border-radius: 10px; padding: 4px 10px; white-space: nowrap; box-shadow: 0 0 14px #ff2bd680; transform: translateY(-50%); }
+.drone-bubble.cat { border-color: #00e5ff; box-shadow: 0 0 14px #00e5ff80; }
 .floor-tag { font: 600 13px "Sora", sans-serif; color: var(--fg); background: #0b0e18dd; border: 1px solid #e8c27a66; border-radius: 8px; padding: 4px 10px; white-space: nowrap; transform: translate(50%, -50%); }
 .floor-tag span { font: 700 12px var(--mono); color: var(--gold); margin-right: 6px; }
 @keyframes blink { 50% { opacity: .35; } }
