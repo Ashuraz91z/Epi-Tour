@@ -20,8 +20,12 @@ export function sanitizeProfile(raw, previous = {}) {
   const list = typeof raw?.screens === "string" ? raw.screens.split("/") : Array.isArray(raw?.screens) ? raw.screens : null;
   const screens = list ? list.filter(s => typeof s === "string").map(s => s.trim().slice(0, 24)).filter(Boolean).slice(0, 3)
     : Array.isArray(previous.screens) ? previous.screens : [];
-  return { accent, tagline, theme, screens };
+  // Télé géante de l'étage : déjà normalisée par le serveur (parseTvLink) ; null l'éteint.
+  const tv = raw && "tv" in raw ? cleanTv(raw.tv) : cleanTv(previous.tv);
+  return { accent, tagline, theme, screens, tv };
 }
+const cleanTv = tv => tv?.kind === "youtube" && /^[A-Za-z0-9_-]{11}$/.test(tv.id ?? "") ? { kind: "youtube", id: tv.id }
+  : tv?.kind === "twitch" && /^[a-z0-9_]{3,25}$/.test(tv.channel ?? "") ? { kind: "twitch", channel: tv.channel } : null;
 
 export function short(v, n = 140) {
   const s = (typeof v === "string" ? v : JSON.stringify(v) ?? "").split(/\s+/).filter(Boolean).join(" ");

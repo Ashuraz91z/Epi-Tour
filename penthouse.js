@@ -290,7 +290,13 @@ export function createApp({ code, db }) {
         if (isSpectator || !same(cookie, pass)) return json(401, { error: "entrée requise" });
         const apt = byToken(req.headers["x-tour-token"]);
         if (!apt) return json(403, { error: "Clé de ton étage requise." });
-        db.change(apt.slug, store => { store.profile = sanitizeProfile(p.profile, store.profile); });
+        // Le lien de la télé géante suit la règle de la télé du Salon : une vidéo YouTube ou une chaîne Twitch, sinon refus.
+        const profile = { ...p.profile };
+        if (typeof profile.tv === "string") {
+          profile.tv = profile.tv.trim() ? parseTvLink(profile.tv) : null;
+          if (profile.tv === null && p.profile.tv.trim()) return json(400, { error: "Télé géante : colle un lien YouTube (vidéo ou live) ou une chaîne Twitch." });
+        }
+        db.change(apt.slug, store => { store.profile = sanitizeProfile(profile, store.profile); });
         return json(200, { slug: apt.slug, profile: sanitizeProfile(db.get(apt.slug).store.profile) });
       }
       // Actions de jeu d'un résident : cookie d'entrée et clé de son étage. Le serveur décide seul du résultat.

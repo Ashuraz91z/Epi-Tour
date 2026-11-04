@@ -635,7 +635,7 @@ function walls(g, r, doors) {
 function removeFloor(k) {
   const f = floors.get(k);
   if (!f) return;
-  f.group.traverse(o => o.isCSS2DObject && o.element.remove());
+  f.group.traverse(o => (o.isCSS2DObject || o.isCSS3DObject) && o.element.remove());
   scene.remove(f.group);
   floors.delete(k);
 }
@@ -986,6 +986,7 @@ function buildResident(apt, wing, officeTier) {
   f.alarmLight.position.set(bd.x, 2.4, bd.z);
   g.add(f.alarmLight);
   if (wingId === "work") placeDecor(g, f, apt);
+  if (wingId === "work" && apt.profile?.tv) giantTv(f, apt.profile.tv);
   if (cyber) cyberpunk(f, apt);
   return f;
 }
@@ -1145,10 +1146,32 @@ function drawArcade(arcade, frame) {
   tex.needsUpdate = true;
 }
 
+// ---------- télé géante ----------
+// Liens normalisés par le serveur : identifiant YouTube ou chaîne Twitch, jamais une URL saisie.
+function tvLinks(tv) {
+  if (tv.kind === "youtube") return { url: `https://www.youtube-nocookie.com/embed/${encodeURIComponent(tv.id)}?autoplay=1&mute=1&rel=0&loop=1&playlist=${encodeURIComponent(tv.id)}`, page: `https://www.youtube.com/watch?v=${encodeURIComponent(tv.id)}` };
+  return { url: streamUrl(tv.channel), page: `https://www.twitch.tv/${encodeURIComponent(tv.channel)}` };
+}
+// Écran 16:9 de 4,9 m sur la vitre ouest, côté nord de l'ascenseur, cadre néon ; muet, un clic l'ouvre avec le son.
+function giantTv(f, tv) {
+  const g = f.group, w = 4.9, h = w * 9 / 16, y = 2.9, z = -3.42, x = -10.28, edge = glow("#ff2bd6", 1.8);
+  const frame = box(g, 0.12, h + 0.24, w + 0.24, mat("#0b0d14", { metalness: 0.6, roughness: 0.3 }), x, y, z);
+  box(g, 0.04, 0.04, w + 0.3, edge, x + 0.08, y + h / 2 + 0.14, z);
+  box(g, 0.04, 0.04, w + 0.3, edge, x + 0.08, y - h / 2 - 0.14, z);
+  for (const dz of [-1, 1]) box(g, 0.04, h + 0.32, 0.04, glow("#00e5ff", 1.8), x + 0.08, y, z + dz * (w / 2 + 0.14));
+  sign(g, "ON AIR", 0.9, 0.22, { color: "#ff3b5c", font: "800 72px Sora, sans-serif", blur: 16 }, x + 0.1, y + h / 2 + 0.38, z, Math.PI / 2);
+  const iframe = Object.assign(document.createElement("iframe"), { title: "Télé géante", allow: "autoplay; fullscreen; encrypted-media; picture-in-picture" });
+  Object.assign(iframe.style, { width: "1280px", height: "720px", border: "0", background: "#000", backfaceVisibility: "hidden" });
+  const view = new CSS3DObject(iframe);
+  view.position.set(x + 0.07, y, z); view.rotation.y = Math.PI / 2; view.scale.setScalar(w / 1280);
+  g.add(view);
+  f.tv = { frame, iframe, view, shown: "", ...tvLinks(tv) };
+}
+
 // ---------- ambiance cyberpunk ----------
 // Néons magenta et cyan, sol à grille, salle serveurs, borne d'arcade et hologramme ; les écrans affichent les textes du résident.
 const CYBER = { floor: "#07060f", open: "#0d0b1c", boss: "#150c24", pink: "#ff2bd6", cyan: "#00e5ff", violet: "#8b5cff" };
-const themeKey = a => JSON.stringify([a.profile?.theme ?? "classique", a.profile?.screens ?? []]);
+const themeKey = a => JSON.stringify([a.profile?.theme ?? "classique", a.profile?.screens ?? [], a.profile?.tv ?? null]);
 const screenTexts = a => {
   const own = a.profile?.screens?.length ? a.profile.screens : [a.name];
   return [0, 1, 2].map(k => own[k % own.length]);
@@ -1305,7 +1328,7 @@ function cyberpunk(f, apt) {
   // Pluie de données sur la vitre ouest, de part et d'autre de l'ascenseur.
   const rain = canvasTexture(128, 256), drops = Array.from({ length: 16 }, () => Math.random() * -32);
   const rainM = new THREE.MeshBasicMaterial({ map: rain.texture, transparent: true, opacity: 0.6, blending: THREE.AdditiveBlending, depthWrite: false, toneMapped: false });
-  for (const z of [-3.4, 3.4]) {
+  for (const z of f.tv ? [3.4] : [-3.4, 3.4]) {
     const panel = new THREE.Mesh(new THREE.PlaneGeometry(2.4, 3.8), rainM);
     panel.position.set(-10.3, 2.3, z); panel.rotation.y = Math.PI / 2; g.add(panel);
   }
@@ -1317,7 +1340,7 @@ function cyberpunk(f, apt) {
 
   // Baies serveurs contre la cloison ouest : leurs diodes clignotent plus vite quand les agents travaillent.
   const leds = [];
-  for (const [y, k] of [[200, 0], [440, 1]]) {
+  for (const [y, k] of [[520, 0], [440, 1]]) {
     const p = P(48, y);
     box(g, 0.6, 2.1, 0.9, mat("#0e0d1a", { metalness: 0.6, roughness: 0.4 }), p.x, 1.05, p.z);
     box(g, 0.02, 1.9, 0.8, mat("#16142b"), p.x + 0.31, 1.05, p.z);
@@ -1329,7 +1352,7 @@ function cyberpunk(f, apt) {
 
   // Pixel, le chat néon, assis sur la première baie : il suit BYTE des yeux et remue la queue.
   const cat = new THREE.Group(), fur = mat("#1b1630", { roughness: 0.7 });
-  cat.position.copy(P(48, 200, 2.1)); cat.rotation.y = Math.PI / 2; g.add(cat);
+  cat.position.copy(P(48, 520, 2.1)); cat.rotation.y = Math.PI / 2; g.add(cat);
   box(cat, 0.22, 0.2, 0.34, fur, 0, 0.1, 0);
   box(cat, 0.23, 0.04, 0.05, glow(pink, 1.4), 0, 0.2, 0.1);
   const head = new THREE.Group(); head.position.set(0, 0.27, 0.13); cat.add(head);
@@ -2392,7 +2415,7 @@ function syncFloors(list) {
   }
   for (const d of SHARED) if (!floors.has(d.id)) floors.set(d.id, buildShared(d));
   for (const [k, f] of floors) if (!order.includes(k)) {
-    f.group.traverse(o => o.isCSS2DObject && o.element.remove());
+    f.group.traverse(o => (o.isCSS2DObject || o.isCSS3DObject) && o.element.remove());
     scene.remove(f.group);
     floors.delete(k);
   }
@@ -2550,6 +2573,7 @@ function animate(frameTime = performance.now()) {
     const decorTime = reducedMotion.matches ? 0 : t;
     f.records?.forEach(d => { d.rotation.y = decorTime * 1.8; });
     f.cyber?.tick(dt, near);
+    if (f.tv) { f.tv.view.visible = near; const want = near ? f.tv.url : "about:blank"; if (f.tv.shown !== want) { f.tv.shown = want; f.tv.iframe.src = want; } }
     f.flames?.forEach((flame, k) => {
       flame.scale.set(1, 0.8 + Math.sin(decorTime * 5 + k * 2) * 0.3, 1);
     });
@@ -2853,6 +2877,7 @@ addEventListener("keydown", e => {
 
 // Clic sur un agent : sa fiche.
 const onFocus = () => [...agents.values()].filter(g => g.userData.floor === order[focus] && g.visible);
+const onGiantTv = () => { const t = floors.get(order[focus])?.tv; return t && ray.intersectObject(t.frame).length ? t : null; };
 const onByte = () => { const c = floors.get(order[focus])?.cyber; return c && ray.intersectObject(c.hit, true).length ? c : null; };
 const onTv = () => order[focus] === "lounge" && tvFrame && ray.intersectObject(tvFrame).length > 0;
 // Le pincement du pavé tactile ne zoome jamais la page entière (seulement la caméra, sur la 3D).
@@ -2867,7 +2892,8 @@ renderer.domElement.addEventListener("pointerup", e => {
   let o = ray.intersectObjects(onFocus(), true)[0]?.object;
   while (o && !o.userData.key) o = o.parent;
   if (o) return showAgent(o.userData.apt, o.userData.s);
-  const byte = onByte();
+  const byte = onByte(), giant = onGiantTv();
+  if (giant) return open(giant.page, "_blank", "noopener");
   if (byte) return byte.poke();
   if (onTv()) open(tvPageUrl(), "_blank", "noopener");
 });
@@ -2875,7 +2901,7 @@ renderer.domElement.addEventListener("pointermove", e => {
   if (e.buttons) return;
   mouse.set((e.clientX / innerWidth) * 2 - 1, -(e.clientY / innerHeight) * 2 + 1);
   ray.setFromCamera(mouse, camera);
-  renderer.domElement.style.cursor = ray.intersectObjects(onFocus(), true).length || onTv() || onByte() ? "pointer" : "";
+  renderer.domElement.style.cursor = ray.intersectObjects(onFocus(), true).length || onTv() || onByte() || onGiantTv() ? "pointer" : "";
 });
 
 // ---------- interface ----------
@@ -3287,6 +3313,7 @@ function showCustomize() {
   form.tagline.value = apt.profile?.tagline ?? "";
   form.theme.value = apt.profile?.theme ?? "classique";
   form.screens.value = (apt.profile?.screens ?? []).join(" / ");
+  form.tv.value = apt.profile?.tv ? tvLinks(apt.profile.tv).page : "";
   $("#customizeDlg").showModal();
 }
 $("#customizeBtn").addEventListener("click", showCustomize);
@@ -3297,7 +3324,7 @@ $("#customizeForm").addEventListener("submit", async e => {
   const fields = Object.fromEntries(new FormData(e.currentTarget));
   $("#customizeErr").textContent = "";
   try {
-    await saveProfile(token, { accent: fields.accent, tagline: fields.tagline, theme: fields.theme, screens: fields.screens });
+    await saveProfile(token, { accent: fields.accent, tagline: fields.tagline, theme: fields.theme, screens: fields.screens, tv: fields.tv });
     $("#customizeDlg").close();
     await tick();
   } catch (error) { $("#customizeErr").textContent = error.message; }
