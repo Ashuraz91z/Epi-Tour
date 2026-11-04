@@ -145,6 +145,7 @@ const SHARED_SLOTS = {
   club: [0, 1, 2, 3].flatMap(r => [0, 1, 2, 3, 4, 5, 6].map(c => [325 + c * 55, 200 + r * 60, Math.PI, "Dance"]))
     .filter(([x, y]) => CLUB_NPCS.every(([nx, ny]) => Math.hypot(nx - x, ny - y) >= 48)),
   smoke: [...ASHTRAYS.flatMap(([x, y]) => around(x, y, 42, 3, Math.PI / 6)), ...[440, 600].map(x => [x, 560, 0])],
+  // Casino : tables de jeu (blackjack, roulette), bar, zone d'entrée
   casino: CASINO_SLOTS,
 };
 function slotOf(list, k) {
@@ -1643,6 +1644,7 @@ function tvPageUrl() {
 const stream = Object.assign(document.createElement("iframe"), { title: "Télé du salon", allow: "autoplay; fullscreen; encrypted-media; picture-in-picture" });
 Object.assign(stream.style, { width: "1280px", height: "720px", border: "0", background: "#000", backfaceVisibility: "hidden" });
 let shownUrl = "", tvFrame = null;
+
 // Petits nuages en un seul appel de dessin ; le dégradé évite les particules carrées.
 function ambientSmoke(parent, origin, color, count, spread, rise) {
   const canvas = document.createElement("canvas");
@@ -1894,10 +1896,10 @@ function buildShared(def) {
     }
     // Grand écran mural : le direct d'OTPLOL sur Twitch, muet
     const tv = at(570, 24);
-    tvFrame = box(g, 3.24, 1.9, 0.08, mat("#0b0d14", { metalness: 0.6, roughness: 0.3 }), tv.x, 1.75, tv.z);
+    tvFrame = box(g, 4.8, 2.7, 0.08, mat("#0b0d14", { metalness: 0.6, roughness: 0.3 }), tv.x, 1.85, tv.z);
     const view = new CSS3DObject(stream);
-    view.position.set(tv.x, 1.75, tv.z + 0.05);
-    view.scale.setScalar(3.0 / 1280);
+    view.position.set(tv.x, 1.85, tv.z + 0.05);
+    view.scale.setScalar(4.5 / 1280);
     g.add(view);
     sign(g, "REPOS", 2.6, 0.7, { color: "#c7a8ff", font: "700 80px Sora, sans-serif" }, at(570, 20).x, 3.2, back + 0.05);
 
@@ -2047,7 +2049,7 @@ function buildShared(def) {
     zone(40, 380, 240, 590, "#4a1830");
     for (const [x, y] of [[240, 380], [240, 485], [240, 590]]) cyl(g, 0.04, 0.9, mat("#c9a86a", { metalness: 0.8, roughness: 0.3 }), at(x, y).x, 0.45, at(x, y).z, 8);
     box(g, 0.03, 0.03, 4.2, mat("#a3203a"), at(240, 485).x, 0.8, at(240, 485).z);
-    for (const y of [420, 530]) put(g, "loungeDesignSofa", at(70, y).x, at(70, y).z, Math.PI / 2, 2.2);
+    for (const y of [420, 530]) put(g, "loungeDesignSofa", at(70, y).x, at(70, y).z, 0, 2.2);
     put(g, "tableCoffee", at(160, 475).x, at(160, 475).z, 0, 2);
     sign(g, "VIP", 1.4, 0.5, { color: "#f1cd85", font: "700 90px Sora, sans-serif", w: 256 }, at(140, 380).x, 2.2, at(0, 380).z);
     // Platines du DJ : disques qui tournent et petite console à faders.
@@ -2095,15 +2097,20 @@ function buildShared(def) {
     tag("VIP", 800, 300);
   
     // Tables de jeu (Blackjack, Roulette, Poker)
+    f.tables = [];
     const tablePositions = [
-      [150, 120, "Blackjack"], [350, 120, "Roulette"], [550, 120, "Poker"],
-      [150, 350, "Blackjack"], [350, 350, "Baccarat"], [550, 350, "Poker"]
+      [150, 120, "Blackjack"], [350, 120, "Roulette"], [550, 120, "Blackjack"],
+      [150, 350, "Blackjack"], [350, 350, "Blackjack"], [550, 350, "Blackjack"]
     ];
-  
+    // Décalage des croupiers pour éviter le chevauchement avec les machines
+    const dealerOffset = { "Blackjack": 80, "Roulette": 80, "Baccarat": 80 };
+
     for (const [x, y, type] of tablePositions) {
       const t = at(x, y);
       // Table - base en bois
-      box(g, 1.8, 0.9, 1.2, mat("#1a3a2e"), t.x, 0.45, t.z);
+      const tableBase = box(g, 1.8, 0.9, 1.2, mat("#1a3a2e"), t.x, 0.45, t.z);
+      tableBase.userData.casinoTable = { type, x, y };
+      f.tables.push(tableBase);
       // Contour doré du tapis (sous le tapis, pas glow)
       box(g, 1.85, 0.04, 1.25, mat("#b8860b", { metalness: 0.7, roughness: 0.3 }), t.x, 0.92, t.z);
       // Tapis de jeu vert (surface principale)
@@ -2273,7 +2280,7 @@ function buildShared(def) {
     }
   
     // Zone VIP - au fond, sans séparation (décalée pour éviter les machines)
-    for (const y of [360, 520]) put(g, "loungeDesignSofa", at(960, y).x, at(960, y).z, 0, 2.2);
+    for (const y of [360, 520]) put(g, "loungeDesignSofa", at(960, y).x, at(960, y).z, Math.PI, 2.2);
     put(g, "tableCoffee", at(960, 440).x, at(960, 440).z, 0, 2);
     sign(g, "VIP", 1.4, 0.5, { color: "#ffd700", font: "700 90px Sora, sans-serif", w: 256 }, at(970, 300).x, 2.2, at(0, 300).z);
   
@@ -2287,11 +2294,12 @@ function buildShared(def) {
     }
   
     // Cocktails sur le bar
-    for (const y of [80, 180, 280, 380, 480]) {
-      const p = at(880, y);
-      cyl(g, 0.06, 0.18, mat("#b8dce8", { transparent: true, opacity: 0.6 }), p.x, 1.24, p.z, 12);
-      cyl(g, 0.05, 0.09, glow(y % 2 === 0 ? "#ee966e" : "#9fd67b", 0.4), p.x, 1.22, p.z, 12);
-      box(g, 0.015, 0.2, 0.015, mat("#f3e5c4"), p.x + 0.025, 1.35, p.z).rotation.z = 0.25;
+    // Posés sur le comptoir (dessus à 1,16 m), le long du bar, au lieu de flotter devant.
+    for (const [k, x] of [858, 872, 888, 902].entries()) {
+      const p = at(x, 150);
+      cyl(g, 0.06, 0.18, mat("#b8dce8", { transparent: true, opacity: 0.6 }), p.x, 1.25, p.z, 12);
+      cyl(g, 0.05, 0.09, glow(k % 2 === 0 ? "#ee966e" : "#9fd67b", 0.4), p.x, 1.23, p.z, 12);
+      box(g, 0.015, 0.2, 0.015, mat("#f3e5c4"), p.x + 0.025, 1.36, p.z).rotation.z = 0.25;
     }
   
     // Lumières d'ambiance néon
@@ -2321,7 +2329,7 @@ function buildShared(def) {
   return f;
 }
 
-// ---------- les personnages : le robot animé de Quaternius (CC0), recoloré selon l'outil ----------
+
 const ONCE = new Set(["Sitting", "Standing", "Death"]);
 function makeRobot(color) {
   const t = MODELS.robot;
@@ -2891,6 +2899,17 @@ renderer.domElement.addEventListener("pointerup", e => {
   if (Math.hypot(e.clientX - x, e.clientY - y) > 6) return; // c'était un glisser, pas un clic
   mouse.set((e.clientX / innerWidth) * 2 - 1, -(e.clientY / innerHeight) * 2 + 1);
   ray.setFromCamera(mouse, camera);
+
+  // Vérifier si le clic touche une table de casino
+  const casinoFloor = floors.get("casino");
+  if (casinoFloor && order[focus] === "casino") {
+    const tableHit = ray.intersectObjects(casinoFloor.tables, true)[0]?.object;
+    if (tableHit && tableHit.userData.casinoTable) {
+      playCasinoTable(tableHit.userData.casinoTable.type);
+      return;
+    }
+  }
+
   let o = ray.intersectObjects(onFocus(), true)[0]?.object;
   while (o && !o.userData.key) o = o.parent;
   if (o) return showAgent(o.userData.apt, o.userData.s);
@@ -2910,6 +2929,339 @@ renderer.domElement.addEventListener("pointermove", e => {
   ray.setFromCamera(mouse, camera);
   renderer.domElement.style.cursor = ray.intersectObjects(onFocus(), true).length || onTv() || onByte() || onGiantTv() ? "pointer" : "";
 });
+
+// ---------- Jeu de casino interactif ----------
+function playCasinoTable(type) {
+  const dlg = $("#casinoDlg");
+  const body = $("#casinoBody");
+  body.innerHTML = `<h3>${type}</h3><div id="casinoGame"></div>`;
+  if (type === "Blackjack") initBlackjack(body);
+  else if (type === "Roulette") initRoulette(body);
+  else body.innerHTML += '<p>Type de table non implémenté.</p>';
+  dlg.showModal();
+}
+
+// ========== BLACKJACK ==========
+function initBlackjack(container) {
+  const suits = ["♠", "♥", "♦", "♣"];
+  const ranks = ["A", "2", "3", "4", "5", "6", "7", "8", "9", "10", "J", "Q", "K"];
+  let deck = [], playerHand = [], dealerHand = [], gameOver = false, balance = 100, bet = 10;
+
+  function createDeck() {
+    deck = [];
+    for (const suit of suits) for (const rank of ranks) deck.push({ suit, rank });
+    deck.sort(() => Math.random() - 0.5);
+  }
+
+  function drawCard() { return deck.pop(); }
+
+  function handValue(hand) {
+    let value = 0, aces = 0;
+    for (const card of hand) {
+      if (card.rank === "A") { value += 11; aces++; }
+      else if (["K", "Q", "J"].includes(card.rank)) value += 10;
+      else value += parseInt(card.rank);
+    }
+    while (value > 21 && aces > 0) { value -= 10; aces--; }
+    return value;
+  }
+
+  function cardHTML(card) {
+    const color = (card.suit === "♥" || card.suit === "♦") ? "#e74c3c" : "#ecf0f1";
+    return `<span style="color:${color};font-weight:700;font-size:28px">${card.rank}${card.suit}</span>`;
+  }
+
+  function render() {
+    const playerVal = handValue(playerHand);
+    let dealerCards = gameOver ? dealerHand.map(cardHTML).join(" ") : cardHTML(dealerHand[0]) + ' <span style="color:#aaa;font-size:28px">🂠</span>';
+    let result = "";
+    let winAmount = 0;
+    if (gameOver) {
+      const dVal = handValue(dealerHand);
+      if (playerVal > 21) { result = '<p style="color:#e74c3c;font-size:18px">Éclaté ! Tu perds.</p>'; balance -= bet; }
+      else if (dVal > 21 || playerVal > dVal) { result = '<p style="color:#2ecc71;font-size:18px">Tu gagnes !</p>'; winAmount = playerVal === 21 && playerHand.length === 2 ? bet * 15 : bet * 10; balance += winAmount; }
+      else if (playerVal < dVal) { result = '<p style="color:#e74c3c;font-size:18px">Tu perds.</p>'; balance -= bet; }
+      else { result = '<p style="color:#f39c12;font-size:18px">Égalité !</p>'; }
+    }
+    container.querySelector("#casinoGame").innerHTML = `
+      <div style="background:#1a1a2e;padding:20px;border-radius:12px">
+        <div style="text-align:center;margin-bottom:16px"><b style="color:#ffd700;font-size:20px">Blackjack</b><br><span style="color:#aaa">Balance: ${balance}€ | Mise: ${bet}€</span></div>
+        <div style="background:#0f0f1a;padding:16px;border-radius:8px;margin:12px 0">
+          <b style="color:#fff">Croupier:</b><div style="font-size:32px;margin:8px 0">${dealerCards}</div>
+        </div>
+        <div style="background:#0f0f1a;padding:16px;border-radius:8px;margin:12px 0">
+          <b style="color:#fff">Toi: (${playerVal})</b><div style="font-size:32px;margin:8px 0">${playerHand.map(cardHTML).join(" ")}</div>
+        </div>
+        <div style="text-align:center;margin:12px 0">${result}${winAmount ? `<p style="color:#2ecc71">${winAmount}€ gagnés !</p>` : ''}</div>
+        <div style="display:flex;gap:8px;flex-wrap:wrap;justify-content:center">
+          ${gameOver ? `<button onclick="initBlackjack(document.querySelector('#casinoBody'))" style="padding:12px 24px;background:#2ecc71;border:none;border-radius:8px;font-weight:700">Nouvelle partie</button>
+                       <button onclick="handleNewRound()" style="padding:12px 24px;background:#3498db;border:none;border-radius:8px;font-weight:700;color:white">Rejouer</button>` : `
+                       <button onclick="handleHit()" style="padding:12px 24px;background:#f39c12;border:none;border-radius:8px;font-weight:700">Tirer</button>
+                       <button onclick="handleStand()" style="padding:12px 24px;background:#e74c3c;border:none;border-radius:8px;font-weight:700;color:white">Rester</button>`}
+        </div>
+      </div>`;
+  }
+
+  window.handleHit = function() {
+    if (gameOver) return;
+    playerHand.push(drawCard());
+    if (handValue(playerHand) > 21) gameOver = true;
+    render();
+  };
+  window.handleStand = function() {
+    if (gameOver) return;
+    gameOver = true;
+    while (handValue(dealerHand) < 17) dealerHand.push(drawCard());
+    render();
+  };
+
+  window.handleNewRound = function() {
+    gameOver = false;
+    deck = [];
+    playerHand = [];
+    dealerHand = [];
+    createDeck();
+    playerHand = [drawCard(), drawCard()];
+    dealerHand = [drawCard(), drawCard()];
+    render();
+  };
+
+  createDeck();
+  playerHand = [drawCard(), drawCard()];
+  dealerHand = [drawCard(), drawCard()];
+  render();
+}
+
+// ========== ROULETTE ==========
+function initRoulette(container) {
+  const numbers = [0,32,15,19,4,21,2,25,17,34,6,27,13,36,11,30,8,23,10,5,24,16,33,1,20,14,31,9,22,18,29,7,28,12,35,3,26];
+  const reds = new Set([1,3,5,7,9,12,14,16,18,19,21,23,25,27,30,32,34,36]);
+  let spinning = false, balance = 100, bet = 10, betType = "red", betNumber = null;
+
+  function renderRoulette() {
+    container.querySelector("#casinoGame").innerHTML = `
+      <div style="background:#1a1a2e;padding:20px;border-radius:12px">
+        <div style="text-align:center;margin-bottom:16px"><b style="color:#ffd700;font-size:20px">Roulette</b><br><span style="color:#aaa">Balance: ${balance}€ | Mise: ${bet}€</span></div>
+        <div style="display:flex;gap:8px;margin:12px 0">
+          <button onclick="setBetType('red')" style="flex:1;padding:10px;background:${betType==='red'?'#e74c3c':'#2c3e50'};color:white;border:none;border-radius:6px">Rouge</button>
+          <button onclick="setBetType('black')" style="flex:1;padding:10px;background:${betType==='black'?'#000':'#2c3e50'};color:white;border:none;border-radius:6px">Noir</button>
+          <button onclick="setBetType('odd')" style="flex:1;padding:10px;background:${betType==='odd'?'#3498db':'#2c3e50'};color:white;border:none;border-radius:6px">Impair</button>
+          <button onclick="setBetType('even')" style="flex:1;padding:10px;background:${betType==='even'?'#3498db':'#2c3e50'};color:white;border:none;border-radius:6px">Pair</button>
+        </div>
+        <div style="display:grid;grid-template-columns:repeat(12,1fr);gap:4px;margin:16px 0">
+          ${numbers.map((n,i) => {
+            const isGreen = n===0;
+            const isRed = reds.has(n);
+            const bg = isGreen ? '#27ae60' : isRed ? '#e74c3c' : '#000';
+            return `<button onclick="setNumberBet(${n})" style="background:${bg};color:white;border:none;padding:12px;border-radius:4px;font-weight:700">${n}</button>`;
+          }).join('')}
+        </div>
+        <button onclick="spin()" style="width:100%;padding:16px;background:#f39c12;border:none;border-radius:8px;font-weight:700;font-size:18px;margin-top:12px">Tourner la roue !</button>
+      </div>`;
+  }
+
+  function spin() {
+    if (spinning) return;
+    spinning = true;
+    let spins = 0;
+    const totalSpins = 60;
+    const interval = setInterval(() => {
+      const current = numbers[Math.floor(Math.random() * numbers.length)];
+      const isGreen = current === 0;
+      const isRed = reds.has(current);
+      const bg = isGreen ? '#27ae60' : isRed ? '#e74c3c' : '#000';
+      container.querySelector("#casinoGame").innerHTML = `
+        <div style="background:#1a1a2e;padding:20px;border-radius:12px;text-align:center">
+          <div style="font-size:72px;margin:20px 0;padding:30px;background:${bg};color:white;border-radius:50%;width:150px;height:150px;display:inline-flex;align-items:center;justify-content:center">${current}</div>
+          <p style="color:#aaa">La roue tourne...</p>
+        </div>`;
+      spins++;
+      if (spins > totalSpins) {
+        clearInterval(interval);
+        spinning = false;
+        const result = numbers[Math.floor(Math.random() * numbers.length)];
+        const isGreenResult = result === 0;
+        const isRedResult = reds.has(result);
+        let won = false, payout = 0;
+        if (betNumber !== null) { won = result === betNumber; payout = won ? bet * 35 : 0; }
+        else if (betType === 'red') { won = isRedResult; payout = won ? bet * 2 : 0; }
+        else if (betType === 'black') { won = !isRedResult && !isGreenResult; payout = won ? bet * 2 : 0; }
+        else if (betType === 'odd') { won = result % 2 === 1; payout = won ? bet * 2 : 0; }
+        else if (betType === 'even') { won = result % 2 === 0 && result !== 0; payout = won ? bet * 2 : 0; }
+        if (won) balance += payout; else balance -= bet;
+        const color = won ? '#2ecc71' : '#e74c3c';
+        renderRoulette();
+        setTimeout(() => {
+          container.querySelector("#casinoGame").innerHTML += `<div style="text-align:center;margin-top:16px;padding:12px;background:#0f0f1a;border-radius:8px">
+            <p style="color:${color};font-size:20px">${won ? '🎉 Gagné !' : 'Perdu...'}</p>
+            <p>Numéro: <b>${result}</b></p>
+            <p>Balance: <b>${balance}€</b></p>
+          </div>`;
+        }, 500);
+      }
+    }, 80);
+  }
+
+  window.setBetType = function(type) {
+    betType = type;
+    betNumber = null;
+    renderRoulette();
+  };
+  window.setNumberBet = function(n) {
+    betNumber = n;
+    betType = null;
+    renderRoulette();
+  };
+  window.spin = spin;
+  renderRoulette();
+}
+
+// ========== VIDEO POKER ==========
+function initVideoPoker(container) {
+  const suits = ["♠", "♥", "♦", "♣"];
+  const ranks = ["A", "2", "3", "4", "5", "6", "7", "8", "9", "10", "J", "Q", "K"];
+  let deck = [], hand = [], held = [false, false, false, false, false], gameOver = false;
+
+  function createDeck() {
+    deck = [];
+    for (const s of suits) for (const r of ranks) deck.push({ suit: s, rank: r });
+    deck.sort(() => Math.random() - 0.5);
+  }
+
+  function drawCard() { return deck.pop(); }
+
+  function cardHTML(card, index) {
+    const color = (card.suit === "♥" || card.suit === "♦") ? "#e74c3c" : "#ecf0f1";
+    const heldClass = held[index] ? "held" : "";
+    return `<span class="${heldClass}" onclick="toggleHold(${index})" style="cursor:pointer;font-size:28px;color:${color};font-weight:700;margin:0 8px">${card.rank}${card.suit}</span>`;
+  }
+
+  function evaluateHand(h) {
+    const values = h.map(c => ["A","2","3","4","5","6","7","8","9","10","J","Q","K"].indexOf(c.rank) + 1);
+    const suitCounts = {};
+    for (const c of h) suitCounts[c.suit] = (suitCounts[c.suit] || 0) + 1;
+    const isFlush = Object.values(suitCounts).some(v => v === 5);
+    const sorted = [...values].sort((a, b) => a - b);
+    const isStraight = sorted.every((v, i) => i === 0 || v === sorted[i-1] + 1);
+    const counts = {};
+    for (const v of values) counts[v] = (counts[v] || 0) + 1;
+    const countVals = Object.values(counts);
+    if (isFlush && isStraight && sorted[0] === 10) return { name: "Royal Flush", multiplier: 250 };
+    if (isFlush && isStraight) return { name: "Straight Flush", multiplier: 50 };
+    if (countVals.includes(4)) return { name: "Quadruple", multiplier: 25 };
+    if (countVals.includes(3) && countVals.includes(2)) return { name: "Full", multiplier: 9 };
+    if (isFlush) return { name: "Flush", multiplier: 6 };
+    if (isStraight) return { name: "Suite", multiplier: 4 };
+    if (countVals.includes(3)) return { name: "Brelan", multiplier: 3 };
+    if (countVals.filter(v => v === 2).length === 2) return { name: "Deux paires", multiplier: 2 };
+    if (countVals.includes(2)) return { name: "Paire", multiplier: 1 };
+    return { name: "Rien", multiplier: 0 };
+  }
+
+  function render() {
+    const handValue = evaluateHand(hand);
+    container.querySelector("#casinoGame").innerHTML = `
+      <div style="font-size:24px;text-align:center;margin:20px 0">${hand.map((c, i) => cardHTML(c, i)).join("")}</div>
+      <p style="text-align:center">${gameOver ? `<b>${handValue.name}</b> - Multiplicateur x${handValue.multiplier}` : "Clique sur une carte pour la garder"}</p>
+      <button onclick="this.closest('#casinoBody').querySelector('#casinoGame') && doDraw()" style="width:100%;padding:12px;background:#f39c12;border:none;border-radius:8px;font-weight:700">${gameOver ? "Nouvelle main" : "Échanger"}</button>`;
+  }
+
+  window.toggleHold = function(index) {
+    if (gameOver) return;
+    held[index] = !held[index];
+    render();
+  };
+  window.doDraw = function() {
+    if (gameOver) {
+      createDeck();
+      hand = [];
+      held = [false, false, false, false, false];
+    }
+    for (let i = 0; i < 5; i++) if (!held[i]) hand[i] = drawCard();
+    gameOver = true;
+    render();
+  };
+
+  createDeck();
+  hand = [drawCard(), drawCard(), drawCard(), drawCard(), drawCard()];
+  render();
+}
+
+// ========== BACCARAT ==========
+function initBaccarat(container) {
+  const suits = ["♠", "♥", "♦", "♣"];
+  const ranks = ["A", "2", "3", "4", "5", "6", "7", "8", "9", "10", "J", "Q", "K"];
+  let deck = [], playerHand = [], bankerHand = [], gameOver = false, balance = 100;
+
+  function createDeck() {
+    deck = [];
+    for (const s of suits) for (const r of ranks) deck.push({ suit: s, rank: r });
+    for (let i = 0; i < 6; i++) deck.sort(() => Math.random() - 0.5);
+  }
+
+  function cardValue(card) {
+    if (["J", "Q", "K", "10"].includes(card.rank)) return 0;
+    if (card.rank === "A") return 1;
+    return parseInt(card.rank);
+  }
+
+  function handValue(hand) { return hand.reduce((sum, c) => sum + cardValue(c), 0) % 10; }
+
+  function cardHTML(card) {
+    const color = (card.suit === "♥" || card.suit === "♦") ? "#e74c3c" : "#ecf0f1";
+    return `<span style="color:${color};font-size:20px;margin:0 4px">${card.rank}${card.suit}</span>`;
+  }
+
+  function deal() {
+    if (gameOver) { createDeck(); playerHand = []; bankerHand = []; }
+    gameOver = false;
+    playerHand.push(drawCard(), drawCard());
+    bankerHand.push(drawCard(), drawCard());
+    render();
+    setTimeout(drawThird, 1000);
+  }
+
+  function drawThird() {
+    const pVal = handValue(playerHand);
+    if (pVal <= 5) playerHand.push(drawCard());
+    let bVal = handValue(bankerHand);
+    if (bankerHand.length === 2) {
+      const pThird = playerHand.length === 3 ? cardValue(playerHand[2]) : -1;
+      if (bVal <= 2) bankerHand.push(drawCard());
+      else if (bVal === 3 && pThird !== 8) bankerHand.push(drawCard());
+      else if (bVal === 4 && pThird >= 2 && pThird <= 7) bankerHand.push(drawCard());
+      else if (bVal === 5 && pThird >= 4 && pThird <= 7) bankerHand.push(drawCard());
+      else if (bVal === 6 && (pThird === 6 || pThird === 7)) bankerHand.push(drawCard());
+    }
+    gameOver = true;
+    render();
+  }
+
+  function drawCard() { return deck.pop(); }
+
+  function render() {
+    const pVal = handValue(playerHand);
+    const bVal = handValue(bankerHand);
+    let result = "";
+    if (gameOver) {
+      if (pVal > bVal) result = '<p style="color:#2ecc71">Joueur gagne !</p>';
+      else if (bVal > pVal) result = '<p style="color:#e74c3c">Banquier gagne !</p>';
+      else result = '<p style="color:#f39c12">Égalité !</p>';
+    }
+    container.querySelector("#casinoGame").innerHTML = `
+      <div style="display:flex;justify-content:space-around;margin:20px 0">
+        <div><b>Joueur (${pVal})</b><div>${playerHand.map(cardHTML).join("")}</div></div>
+        <div><b>Banquier (${bVal})</b><div>${bankerHand.map(cardHTML).join("")}</div></div>
+      </div>
+      ${result}
+      <button onclick="this.closest('#casinoBody').querySelector('#casinoGame') && deal()" style="width:100%;padding:12px;background:#f39c12;border:none;border-radius:8px;font-weight:700;margin-top:12px">${gameOver ? "Nouvelle main" : "Distribuer"}</button>`;
+  }
+
+  window.deal = deal;
+  createDeck();
+  render();
+  setTimeout(deal, 500);
+}
 
 // ---------- interface ----------
 function meter(label, w, color, now) {
