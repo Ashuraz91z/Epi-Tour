@@ -25,6 +25,12 @@ export const MIGRATIONS = [
       { alias: ["Linnix", "Arthur"] },
     ],
   },
+  {
+    // Le thème Prestige avait été choisi sur un étage fusionné depuis : la fusion n'avait gardé que le profil de l'autre.
+    // Seulement si l'étage est resté sur le thème de base (un autre choix du résident n'est pas écrasé).
+    id: "2026-11-04-prestige-paul-adrien",
+    steps: [{ theme: ["Paul-Adrien", "prestige"] }],
+  },
 ];
 
 export function runMigrations(db, log = console.log, migrations = MIGRATIONS) {
@@ -43,6 +49,14 @@ export function runMigrations(db, log = console.log, migrations = MIGRATIONS) {
         const [name, newName] = step.rename, slug = slugify(name), newSlug = slugify(newName);
         if (!db.get(slug)) { log(`migration ${m.id} : renommage de « ${name} » sauté (étage absent)`); continue; }
         log(`migration ${m.id} : ${db.rename(slug, newSlug, newName) ? `« ${name} » renommé « ${newName} »` : `renommage de « ${name} » impossible (nom pris)`}`);
+      } else if (step.theme) {
+        const [name, theme] = step.theme, slug = db.resolve(slugify(name));
+        const done = db.change(slug, store => {
+          if (store.profile?.theme && store.profile.theme !== "classique") return false;
+          store.profile = { ...store.profile, theme };
+          return true;
+        });
+        log(`migration ${m.id} : ${done ? `thème « ${theme} » posé sur « ${name} »` : `thème de « ${name} » laissé tel quel`}`);
       }
     }
     db.setSetting("migrations", [...new Set([...(db.setting("migrations") ?? []), m.id])]);
