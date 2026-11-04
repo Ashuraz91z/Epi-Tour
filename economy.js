@@ -9,9 +9,9 @@
 import { randomInt } from "node:crypto";
 import {
   CASINO, CHATGPT_PLANS, ECHELONS, ECHELON_BONUS, ECONOMY_BADGES, EVENTS, FREELANCE, GRADES, MAJORATIONS, MODEL_FACTORS,
-  MORALE, PRIMES, PROVIDERS, SHOP, SPECIALTIES, TIPS, TITLES, TOOL_PROVIDER, WORKDAY,
+  MORALE, PRIMES, PROVIDERS, SHOP, SPECIALTIES, SPORTS, TIPS, TITLES, TOOL_PROVIDER, WORKDAY,
 } from "./public/economy-data.js";
-import { createGame, grantXp, pushToast } from "./gamify.js";
+import { createGame, grantXp, markActive, pushToast } from "./gamify.js";
 
 const money = x => Math.round(x * 100) / 100;
 const sum = o => Object.values(o ?? {}).reduce((n, v) => n + (Number.isFinite(v) ? v : 0), 0);
@@ -457,6 +457,54 @@ export function playCasino(store, game, betRaw, choiceRaw, now = Date.now() / 10
   }
   out.economy = publicEconomy(store, now);
   return out;
+}
+
+// ---------- mini-jeux d'adresse (tennis, golf) ----------
+// Joués dans le navigateur : le score vient du joueur. On vérifie qu'il est possible (bornes, durée minimale) et on plafonne
+// les parties récompensées par jour ; au-delà, la partie compte pour le plaisir et l'activité, sans gain.
+const isInt = (v, min, max) => Number.isInteger(v) && v >= min && v <= max;
+export function playSport(store, sport, input, now = Date.now() / 1000) {
+  const eco = economyOf(store), day = ensureDay(eco, now), game = gameOf(store);
+  const duration = Number(input?.duration);
+  let money = 0, xp = 0, label = "", toast = "";
+  if (sport === "tennis") {
+    const rules = SPORTS.tennis, level = rules.levels.find(l => l.id === input?.level), games = input?.games;
+    if (!level) return { error: "Niveau inconnu." };
+    if (!Array.isArray(games) || games.length !== 2 || !games.every(g => isInt(g, 0, rules.gamesToWin))
+      || games.filter(g => g === rules.gamesToWin).length !== 1) return { error: "Score de match impossible." };
+    const won = games[0] === rules.gamesToWin;
+    if (input?.won !== won) return { error: "Score de match incohérent." };
+    if (!(duration >= (games[0] + games[1]) * rules.minSecondsPerGame && duration <= 3600)) return { error: "Durée de match impossible." };
+    [money, xp] = won ? [level.money, level.xp] : [0, rules.lossXp];
+    label = `Tennis · ${won ? "victoire" : "défaite"} ${games.join("-")} contre ${level.name}`;
+    toast = won ? `🎾 Victoire ${games.join("-")} contre ${level.name}` : `🎾 Défaite ${games.join("-")}, revanche ?`;
+    if (won && level.id === "legende") badge(store, "champion");
+  } else if (sport === "golf") {
+    const rules = SPORTS.golf, strokes = input?.strokes;
+    if (!Array.isArray(strokes) || strokes.length !== rules.par.length || !strokes.every(n => isInt(n, 1, rules.maxStrokes)))
+      return { error: "Carte de score impossible." };
+    if (!(duration >= rules.par.length * rules.minSecondsPerHole && duration <= 3600)) return { error: "Durée de parcours impossible." };
+    const total = strokes.reduce((a, b) => a + b, 0), par = rules.par.reduce((a, b) => a + b, 0), diff = total - par;
+    const aces = strokes.filter(n => n === 1).length;
+    if (diff < 0) [money, xp] = [rules.par0.money + rules.underPar.money * -diff, rules.par0.xp + rules.underPar.xp * -diff];
+    else if (diff === 0) [money, xp] = [rules.par0.money, rules.par0.xp];
+    else xp = rules.overXp;
+    money += aces * rules.ace;
+    if (aces) badge(store, "ace");
+    const vsPar = diff === 0 ? "au par" : diff < 0 ? `${diff} sous le par` : `+${diff}`;
+    label = `Golf · ${total} coups (${vsPar})${aces ? ` · ${aces} trou(s) en un` : ""}`;
+    toast = `⛳ ${total} coups, ${vsPar}${aces ? ` · trou en un !` : ""}`;
+  } else return { error: "Sport inconnu." };
+  markActive(game, now);
+  day.sports ??= {};
+  const played = day.sports[sport] ?? 0;
+  day.sports[sport] = played + 1;
+  const capped = played >= SPORTS.dailyRewards;
+  if (capped) [money, xp] = [0, 0];
+  if (money > 0) credit(store, money, "prime", label, now);
+  if (xp > 0) grantXp(game, xp, label);
+  pushToast(game, toast, capped ? "Limite du jour atteinte : partie pour le plaisir." : `${money ? `+${money} P$` : ""}${money && xp ? " · " : ""}${xp ? `+${xp} XP` : ""}`);
+  return { ok: true, reward: { money, xp, capped, left: Math.max(0, SPORTS.dailyRewards - played - 1) }, economy: publicEconomy(store, now) };
 }
 
 // Prime de collègue : d'un étage à un autre, dans la même transaction de base.

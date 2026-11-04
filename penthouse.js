@@ -9,7 +9,7 @@ import { gzipSync } from "node:zlib";
 import { ingest, sanitizeProfile } from "./core.js";
 import { CASINO } from "./public/economy-data.js";
 import { DAILY_QUESTS, claimQuest, onIngestGame, performSpaceAction, pullToasts, publicGame, visitWing } from "./gamify.js";
-import { buyItem, onIngestEconomy, playCasino, questReward, setSubscription, spectatorEconomy, tip } from "./economy.js";
+import { buyItem, onIngestEconomy, playCasino, playSport, questReward, setSubscription, spectatorEconomy, tip } from "./economy.js";
 
 const ROOT = dirname(fileURLToPath(import.meta.url));
 const MAX_BODY = 256 * 1024;
@@ -27,6 +27,7 @@ const FILES = {
   "/wings-client.js": ["public/wings-client.js", "text/javascript"],
   "/economy-data.js": ["public/economy-data.js", "text/javascript"],
   "/economy-ui.js": ["public/economy-ui.js", "text/javascript"],
+  "/sports-games.js": ["public/sports-games.js", "text/javascript"],
   "/style.css": ["public/style.css", "text/css"],
   "/tour-hook": ["collecteurs/tour-hook", "text/plain"], "/install-hook.py": ["collecteurs/install-hook.py", "text/plain"],
   "/hermes-handler.py": ["collecteurs/hermes-hook/handler.py", "text/plain"],
@@ -340,6 +341,12 @@ export function createApp({ code, db }) {
           if (result.ok && quest) questReward(store, quest.xp, quest.title, now);
           return result;
         });
+      }
+      // Mini-jeux d'adresse des étages Tennis et Golf : score vérifié, gains plafonnés par jour.
+      if (url.pathname === "/api/game/sport") {
+        const apt = residentApt();
+        if (!apt) return;
+        return play(apt, (store, now) => playSport(store, String(p.sport ?? "").slice(0, 12), p, now));
       }
       // Économie : abonnements, boutique, casino, primes entre résidents. Le serveur décide de tout (y compris le hasard).
       if (url.pathname === "/api/economy/subscription") {

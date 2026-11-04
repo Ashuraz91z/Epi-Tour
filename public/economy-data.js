@@ -128,6 +128,31 @@ export const CASINO = {
   ] },
 };
 
+// Mini-jeux d'adresse des étages Tennis et Golf, joués dans le navigateur. Le résultat vient du joueur : la récompense
+// est donc vérifiée (durée, score possible) et plafonnée à quelques parties par jour et par sport.
+export const SPORTS = {
+  dailyRewards: 5,
+  tennis: {
+    gamesToWin: 3, // match en trois jeux gagnants ; un jeu se joue en points de tennis (15, 30, 40, jeu)
+    minSecondsPerGame: 6,
+    lossXp: 5,
+    levels: [
+      { id: "debutant", name: "Débutant du club", icon: "🙂", speed: 0.75, money: 15, xp: 20 },
+      { id: "pro", name: "Pro du club", icon: "😎", speed: 1, money: 35, xp: 40 },
+      { id: "legende", name: "Légende du court", icon: "🏆", speed: 1.3, money: 70, xp: 70 },
+    ],
+  },
+  golf: {
+    par: [2, 3, 4], // trois trous de mini-golf
+    maxStrokes: 10, // par trou ; au-delà, la balle est ramassée
+    minSecondsPerHole: 4,
+    par0: { money: 15, xp: 25 }, // parcours au par
+    underPar: { money: 15, xp: 10 }, // par coup sous le par
+    overXp: 10,
+    ace: 50, // trou en un : bonus par trou
+  },
+};
+
 // Virements entre résidents (« prime de collègue »).
 export const TIPS = { min: 10, dailyMax: 1000, message: 80 };
 
@@ -147,4 +172,5 @@ export const EVENTS = [
 export const ECONOMY_BADGES = {
   first_pay: "Premier salaire", promo: "Première promotion", rich: "Fortune à 5 chiffres", jackpot: "Jackpot !",
   generous: "Patron·ne généreux·se", night_shift: "Équipe de nuit", decorator: "Décorateur·rice", unicorn: "Licorne",
+  ace: "Trou en un", champion: "Champion du club",
 };

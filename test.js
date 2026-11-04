@@ -1445,3 +1445,49 @@ test("admin : la commande s'utilise sur la base du serveur (DATA_DIR)", async ()
     assert.deepEqual(openDb(join(dir, "penthouse.db")).all().map(a => a.slug), ["arthur"]);
   } finally { rmSync(dir, { recursive: true, force: true }); }
 });
+
+// ---------- Mini-jeux d'adresse : tennis et golf jouables ----------
+
+test("mini-jeux : score vérifié, gains selon le niveau ou le par, plafond du jour", async () => {
+  const { playSport } = await import("./economy.js");
+  const store = createStore();
+  const tennis = (o) => playSport(store, "tennis", { level: "pro", won: true, games: [3, 1], duration: 90, ...o }, CALM_MORNING);
+  const won = tennis();
+  assert.deepEqual(won.reward, { money: 35, xp: 40, capped: false, left: 4 });
+  assert.equal(store.economy.wallet, 35);
+  assert.equal(store.game.xp, 40);
+  assert.deepEqual(tennis({ won: false, games: [2, 3] }).reward.money, 0);
+  assert.equal(store.game.xp, 45, "une défaite rapporte un peu d'XP");
+  for (const bad of [{ games: [4, 1] }, { games: [3, 3] }, { games: [1, 2] }, { won: false }, { duration: 5 }, { level: "dieu" }, { games: "3-1" }])
+    assert.ok(tennis(bad).error, JSON.stringify(bad));
+  playSport(store, "tennis", { level: "legende", won: true, games: [3, 0], duration: 40 }, CALM_MORNING);
+  assert.ok(store.game.badges.includes("champion"));
+  const golf = (strokes, duration = 60) => playSport(store, "golf", { strokes, duration }, CALM_MORNING);
+  assert.deepEqual(golf([2, 3, 4]).reward, { money: 15, xp: 25, capped: false, left: 4 }, "le plafond se compte par sport");
+  const fresh = createStore();
+  const g = (strokes, duration = 60) => playSport(fresh, "golf", { strokes, duration }, CALM_MORNING).reward;
+  assert.deepEqual(g([2, 3, 4]), { money: 15, xp: 25, capped: false, left: 4 }, "au par");
+  assert.deepEqual(g([1, 3, 3]), { money: 15 + 15 * 2 + 50, xp: 25 + 20, capped: false, left: 3 }, "deux sous le par et un trou en un");
+  assert.ok(fresh.game.badges.includes("ace"));
+  assert.deepEqual(g([5, 5, 5]), { money: 0, xp: 10, capped: false, left: 2 });
+  for (const bad of [[2, 3], [0, 3, 4], [2, 3, 11], [2, 3, 4.5]]) assert.ok(playSport(fresh, "golf", { strokes: bad, duration: 60 }, CALM_MORNING).error);
+  assert.ok(playSport(fresh, "golf", { strokes: [2, 3, 4], duration: 3 }, CALM_MORNING).error, "trop rapide");
+  g([3, 3, 4]); g([3, 3, 4]);
+  assert.deepEqual(g([2, 3, 4]), { money: 0, xp: 0, capped: true, left: 0 }, "au-delà de 5 parties : pour le plaisir");
+  assert.ok(playSport(fresh, "bowling", {}, CALM_MORNING).error);
+});
+
+test("mini-jeux par HTTP : clé requise, réponse avec jeu et économie à jour", async () => {
+  const { app, call } = await open();
+  try {
+    const join = await call("/api/join", { name: "Joueuse", code: "porte" }, { "X-Forwarded-For": "10.5.0.1" });
+    const { token } = await join.json(), cookie = join.headers.get("set-cookie").split(";")[0];
+    assert.equal((await call("/api/game/sport", { sport: "golf", strokes: [2, 3, 4], duration: 60 }, { Cookie: cookie })).status, 403);
+    const r = await call("/api/game/sport", { sport: "golf", strokes: [2, 2, 4], duration: 60 }, { Cookie: cookie, "X-Tour-Token": token });
+    const body = await r.json();
+    assert.equal(r.status, 200);
+    assert.deepEqual([body.reward.money, body.economy.wallet, body.game.xp], [30, 30, 35]);
+    assert.ok(body.toasts.some(t => t.title.startsWith("⛳")));
+    assert.equal((await call("/api/game/sport", { sport: "tennis", level: "pro", won: true, games: [3, 0], duration: 1 }, { Cookie: cookie, "X-Tour-Token": token })).status, 400);
+  } finally { app.close(); }
+});
