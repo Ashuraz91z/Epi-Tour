@@ -1666,6 +1666,12 @@ test("accès : anciens noms vers l'étage gardé, entrée par clé, version, app
     assert.equal(state.viewer.role, "resident");
     assert.match(state.version, /^\d{4}-\d{2}-\d{2}/);
     assert.deepEqual((await (await fetch(url + "/api/version")).json()).migrations, ["2026-11-04-doublons", "2026-11-04-anciens-noms"]);
+    // Onglet resté sur un ancien nom : le site retrouve l'étage actuel (résidents seulement).
+    const resident = { Cookie: entered.headers.get("set-cookie").split(";")[0] };
+    assert.equal((await fetch(url + "/api/resolve?slug=paul")).status, 401);
+    assert.deepEqual(await (await fetch(url + "/api/resolve?slug=paul", { headers: resident })).json(), { slug: "paul-adrien", name: "Paul-Adrien" });
+    assert.deepEqual(await (await fetch(url + "/api/resolve?slug=linnix", { headers: resident })).json(), { slug: "arthur", name: "Arthur" });
+    assert.equal((await fetch(url + "/api/resolve?slug=inconnu", { headers: resident })).status, 404);
     // L'app Mac en .zip : le script reste exécutable une fois décompressé.
     const zip = await fetch(url + "/Penthouse.zip");
     assert.equal(zip.headers.get("content-type"), "application/zip");

@@ -5543,6 +5543,20 @@ function installBlock(token) {
     <p>La clé reste dans cet onglet (ou sur cet appareil si tu as coché « se souvenir de moi ») et dans <code>~/.config/tour/secret</code> sur tes machines. Garde-la privée : elle suffit pour entrer chez toi (« J’ai déjà ma clé d’étage » à l’accueil).</p>
     <p>Le suivi lit les journaux locaux de Claude Code et Codex (nom du projet, modèle, état), jamais le contenu des conversations. Les hooks existants restent compatibles.</p></details>`;
 }
+// Onglet sans clé (navigation privée, autre navigateur, entrée avec le nom) : la clé fait apparaître les commandes.
+function keyNeededBlock() {
+  const mac = `cat ~/.config/tour/secret`, win = `Get-Content "$HOME\\.config\\tour\\secret"`;
+  const copy = cmd => `<div class="code"><span>${esc(cmd)}</span><button type="button" data-copy="${esc(cmd)}">Copier</button></div>`;
+  return `<div class="key-needed"><p class="connect-intro"><strong>Colle ta clé d’étage pour afficher la commande à lancer sur ta machine.</strong>
+    Cet onglet ne l’a pas (navigation privée, autre navigateur ou entrée avec ton nom). Ce n’est pas le code du penthouse.</p>
+    <form class="reuse-key"><label>Clé de ton étage<input name="token" type="password" required autocomplete="off" placeholder="ex. 3f9a…"></label>
+    <label class="remember"><input type="checkbox" name="remember" checked> Se souvenir de moi sur cet appareil</label>
+    <button type="submit">Afficher mes commandes</button><p class="err" role="alert"></p></form>
+    <details class="os-install"><summary>Où trouver ma clé ?</summary>
+    <p><b>Mac ou Linux déjà relié</b> : ouvre Terminal, colle, Entrée, puis copie la ligne affichée.</p>${copy(mac)}
+    <p><b>Windows déjà relié</b> : dans PowerShell.</p>${copy(win)}
+    <p>Sinon, elle était dans la fenêtre « Relier mes agents » le jour où tu as créé ton étage (ou dans ton gestionnaire de mots de passe). Perdue partout ? Demande à l’admin du penthouse une nouvelle clé.</p></details></div>`;
+}
 function refreshConnectionStatus() {
   const target = $("#connectionStatus");
   if (!target) return;
@@ -5576,9 +5590,7 @@ function showLink() {
   const me = JSON.parse(localStorage.getItem(ME) ?? "null");
   const fresh = sessionStorage.getItem("penthouse.cle");
   $("#linkBody").innerHTML = `<p class="connect-intro">Ton étage : <b>${esc(me?.name ?? "")}</b>. Une commande par machine suffit. La réception s’affiche ci-dessous.</p>` +
-    (fresh ? installBlock(fresh) : `<form class="reuse-key"><label>Clé de ton étage<input name="token" type="password" required autocomplete="off"></label>
-    <button type="submit">Préparer la connexion</button><p class="err" role="alert"></p></form>
-    <p>Sur une machine déjà reliée, retrouve ta clé dans <code>~/.config/tour/secret</code> ou dans ton gestionnaire de mots de passe. Réutilise-la pour ajouter une machine.</p>`)
+    (fresh ? installBlock(fresh) : keyNeededBlock())
     + `<section id="connectionStatus" aria-live="polite"></section>
     <details><summary>Grok Bot</summary><p>Grok Bot travaille sur son ordinateur cloud. Copie ces instructions dans Grok Bot pour ajouter le connecteur MCP ; il te demandera la clé de ton étage dans une saisie sécurisée.</p>
     <div class="code"><span>Instructions de connexion pour Grok Bot</span><button type="button" data-copy="${esc(grokSetupPrompt())}">Copier</button></div>
@@ -5602,10 +5614,10 @@ function showLink() {
     e.preventDefault();
     const form = e.currentTarget, token = new FormData(form).get("token").trim();
     try {
-      const r = await fetch("/api/connection", { headers: { "X-Tour-Token": token } }), j = await r.json();
-      if (!r.ok) throw new Error(j.error ?? "Clé refusée.");
-      if (j.slug !== me?.slug) throw new Error("Cette clé appartient à un autre étage.");
-      sessionStorage.setItem("penthouse.cle", token); showLink();
+      // La clé fait foi : un onglet resté sur un ancien nom (« Paul ») passe sur l'étage de la clé.
+      await enterWithKey(token, !!form.remember?.checked);
+      showLink();
+      await tick();
     } catch (error) { form.querySelector(".err").textContent = error.message; }
   });
   $("#linkBody .key").addEventListener("submit", async e => {
@@ -5874,12 +5886,27 @@ async function checkIdentity() {
     }
   } catch { /* nouvel essai au prochain chargement */ }
 }
+// Sans clé dans l'onglet : un nom d'étage fusionné ou renommé depuis (« Paul ») est remplacé par l'étage actuel.
+let staleNameChecked = "";
+async function fixStaleName() {
+  const me = JSON.parse(localStorage.getItem(ME) ?? "null");
+  if (!me?.slug || staleNameChecked === me.slug || data?.apartments.some(a => a.slug === me.slug)) return;
+  staleNameChecked = me.slug;
+  try {
+    const r = await fetch("/api/resolve?slug=" + encodeURIComponent(me.slug));
+    if (!r.ok) return;
+    const j = await r.json();
+    localStorage.setItem(ME, JSON.stringify({ slug: j.slug, name: j.name }));
+    order = [];
+    if (data) applyLoadedState();
+  } catch { /* nouvel essai au prochain chargement */ }
+}
 
 let tickPending = false, lastStreamAt = 0;
 function applyLoadedState() {
   if (!data) return;
   const spectator = data.viewer?.role === "spectator";
-  if (!spectator) checkIdentity();
+  if (!spectator) { checkIdentity(); fixStaleName(); }
   // Version du site, pour vérifier qu'il a bien repris la dernière mise à jour ; bouton pour oublier la clé retenue.
   const versionText = data.version ? `Version ${data.version}` : "";
   if ($("#versionLine").textContent !== versionText) $("#versionLine").textContent = versionText;

@@ -13,7 +13,7 @@ import { buyItem, onIngestEconomy, playCasino, playSport, questReward, setSubscr
 
 const ROOT = dirname(fileURLToPath(import.meta.url));
 // Version affichée dans le menu « ⋯ » : permet de vérifier que le site a bien repris la dernière version.
-export const VERSION = "2026-11-04.5";
+export const VERSION = "2026-11-04.6";
 const MAX_BODY = 256 * 1024;
 const MAX_APARTMENTS = 50;
 const acceptsGzip = req => /(?:^|,)\s*gzip\s*(?:,|$)/i.test(req.headers["accept-encoding"] ?? "");
@@ -276,6 +276,12 @@ export function createApp({ code, db }) {
     if (req.method === "GET" && url.pathname === "/api/live") {
       if (!canView) return json(401, { error: "entrée requise" });
       return liveChannels().then(v => json(200, v));
+    }
+    // Ancien nom gardé par un onglet (étage fusionné ou renommé depuis) : le nom actuel de l'étage.
+    if (req.method === "GET" && url.pathname === "/api/resolve") {
+      if (!same(cookie, pass)) return json(401, { error: "entrée requise" });
+      const apt = db.get(db.resolve(slugify(url.searchParams.get("slug") ?? "")));
+      return apt ? json(200, { slug: apt.slug, name: apt.name }) : json(404, { error: "Étage inconnu." });
     }
     if (req.method === "GET" && url.pathname === "/api/state") {
       if (!canView) return json(401, { error: "entrée requise" });
