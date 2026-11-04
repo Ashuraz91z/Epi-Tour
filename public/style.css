@@ -687,6 +687,8 @@ body.kiosk-mode #moreWrap { display: none !important; }
 
 /* ---------- Mini-jeux d'adresse : Tennis et Golf (sports-games.js) ---------- */
 #sportDlg { width: min(880px, calc(100vw - 32px)); max-height: calc(100dvh - 32px); overflow: auto; padding: 16px 18px 14px; }
+/* Pas de flou derrière le jeu : sans accélération graphique, il serait recalculé à chaque image (12 i/s au lieu de 60). */
+#sportDlg::backdrop { backdrop-filter: none; background: #000000c8; }
 .sport-head { display: flex; flex-wrap: wrap; align-items: center; gap: 8px 14px; margin: 0 44px 10px 0; }
 .sport-head h3 { margin: 0; font-size: 16px; flex: 1 1 auto; }
 .sport-switch { display: inline-flex; gap: 4px; padding: 3px; border-radius: 999px; background: #0a0d15; border: 1px solid var(--line); }

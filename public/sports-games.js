@@ -275,9 +275,9 @@ function tennisGame(ui) {
   function finish(won) {
     phase = "over";
     const payload = { sport: "tennis", level: lv.id, won, games: [...games], duration: Math.max(1, Math.round(playTime)) };
-    result = { won, games: [...games], payload, reward: null };
-    ui.overlay(resultHtml());
-    ui.send(payload).then(r => { result.reward = r; if (phase === "over") ui.overlay(resultHtml()); ui.refresh(); });
+    // Le résultat part tout de suite ; la carte s'affiche une fois la célébration jouée.
+    const mine = result = { won, games: [...games], payload, reward: null, shown: false, delay: 2 };
+    ui.send(payload).then(r => { mine.reward = r; if (phase === "over" && result === mine && mine.shown) ui.overlay(resultHtml()); ui.refresh(); });
   }
 
   // ----- frappes -----
@@ -464,6 +464,10 @@ function tennisGame(ui) {
     if (a.swing >= 0) { a.swing += dt; if (a.swing > 0.4) a.swing = -1; }
     if (p.swing) { p.swing.t += dt; p.swing.anim += dt; if (p.swing.pending && p.swing.t > 0.2) p.swing.pending = false; if (p.swing.anim > 0.36) p.swing = null; }
     if (p.cool > 0) p.cool -= dt;
+    if (phase === "over" && result && !result.shown) {
+      result.delay -= dt;
+      if (result.delay <= 0) { result.shown = true; ui.overlay(resultHtml()); }
+    }
     if (phase === "setup" || phase === "over") { a.x = Math.sin(time * 0.7) * 1.2; return; }
     playTime += dt;
     movePlayer(dt, keys);
@@ -894,7 +898,7 @@ function golfGame(ui) {
       const bvx = -m.w * (cy - m.y), bvy = m.w * (cx - m.x);
       const rvx = ball.vx - bvx, rvy = ball.vy - bvy, vn = rvx * nx + rvy * ny;
       if (vn < 0) { ball.vx = rvx - 1.6 * vn * nx + bvx; ball.vy = rvy - 1.6 * vn * ny + bvy; }
-      if (phase === "aim") { phase = "roll"; slow = 0; }
+      if (phase === "aim") { phase = "roll"; slow = 0; last = { x: ball.x, y: ball.y }; } // balle au repos poussée par une aile
     }
   }
   function splash() {
@@ -937,11 +941,11 @@ function golfGame(ui) {
     if (h + 1 < HOLES.length) { startHole(h + 1); return; }
     phase = "over";
     const payload = { sport: "golf", strokes: [...strokes], duration: Math.max(1, Math.round(playTime)) };
-    result = { payload, reward: null };
+    const mine = result = { payload, reward: null };
     ui.say(`Parcours terminé en ${total()} coups, ${vsPar(total() - parSoFar())}.`);
     ui.overlay(resultHtml());
     ui.refresh();
-    ui.send(payload).then(r => { result.reward = r; if (phase === "over") ui.overlay(resultHtml()); ui.refresh(); });
+    ui.send(payload).then(r => { mine.reward = r; if (phase === "over" && result === mine) ui.overlay(resultHtml()); ui.refresh(); });
   }
   // ----- boucle -----
   function update(dt, keys) {
