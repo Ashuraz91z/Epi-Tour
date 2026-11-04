@@ -35,18 +35,27 @@
 </main>
 
 <div id="app" hidden>
-  <header class="top">
+  <header class="top" id="topBar">
     <div class="brandline"><span class="brand small">PENTHOUSE</span><span class="clock" id="clock"></span></div>
+    <div class="status-chips"><div id="xpHost"></div><div id="ecoHost" class="eco-host"></div></div>
     <div class="totals" id="totals"></div>
-    <button class="ghost" type="button" id="spectatorBtn" data-spectate>Mode spectateur</button>
-    <button class="ghost" id="tourPause" type="button" hidden aria-pressed="false">Pause visite</button>
-    <span id="viewerBadge" class="viewer-badge" hidden>Spectateur</span>
-    <button class="ghost" id="exitSpectator" type="button" hidden>Quitter le mode spectateur</button>
-    <button class="ghost" id="missionsBtn" type="button" hidden>Missions</button>
-    <button class="ghost" id="historyBtn" type="button" hidden>Historique</button>
-    <button class="ghost" id="customizeBtn" type="button" hidden>Mon étage</button>
-    <button class="ghost" id="notifyBtn" type="button" hidden>Alertes navigateur</button>
-    <button class="ghost" id="linkBtn" type="button">Relier mes agents</button>
+    <div class="top-actions">
+      <button class="ghost" id="tourPause" type="button" hidden aria-pressed="false">Pause visite</button>
+      <span id="viewerBadge" class="viewer-badge" hidden>Spectateur</span>
+      <button class="ghost" id="exitSpectator" type="button" hidden>Quitter le mode spectateur</button>
+      <button class="ghost icon-btn" id="missionsBtn" type="button" hidden aria-label="Missions" title="Missions"><span aria-hidden="true">🎯</span><span class="lbl">Missions</span></button>
+      <button class="ghost icon-btn" id="ecoBtn" type="button" hidden aria-label="Entreprise" title="Entreprise : équipe, boutique, casino, banque"><span aria-hidden="true">💼</span><span class="lbl">Entreprise</span></button>
+      <button class="ghost icon-btn" id="linkBtn" type="button" aria-label="Relier mes agents" title="Relier mes agents"><span aria-hidden="true">🔗</span><span class="lbl">Relier<span class="lbl-long"> mes agents</span></span></button>
+      <div class="more" id="moreWrap">
+        <button class="ghost more-btn" id="moreBtn" type="button" aria-expanded="false" aria-controls="moreMenu" aria-label="Plus d’options" title="Plus d’options">⋯</button>
+        <div class="more-menu" id="moreMenu" hidden>
+          <button type="button" id="historyBtn" hidden>🕘 Historique</button>
+          <button type="button" id="customizeBtn" hidden>🎨 Mon étage</button>
+          <button type="button" id="notifyBtn" hidden>🔔 Alertes navigateur</button>
+          <button type="button" id="spectatorBtn" data-spectate>👁️ Mode spectateur</button>
+        </div>
+      </div>
+    </div>
   </header>
   <section id="quotaBanner" class="quota-banner" hidden role="status"></section>
   <section id="spectatorDashboard" class="spectator-dashboard" hidden aria-label="Usages de tous les résidents"></section>
@@ -104,6 +113,12 @@
     <button type="submit">Enregistrer</button>
     <p class="err" id="customizeErr" role="alert"></p>
   </form>
+</dialog>
+
+<dialog id="economyDlg" class="dlg wide eco-dlg" aria-labelledby="economyTitle">
+  <form method="dialog"><button class="x" aria-label="Fermer">×</button></form>
+  <h3 id="economyTitle">💼 Entreprise</h3>
+  <div id="economyBody"></div>
 </dialog>
 
 <div id="leaderboardDlg" class="leaderboard-floating" hidden aria-label="Classement du jour"></div>

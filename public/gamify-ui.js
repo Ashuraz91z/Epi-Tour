@@ -1,4 +1,5 @@
 // Interface de gamification : barre XP, missions, activités communes, célébrations.
+import { CURRENCY, ECONOMY_BADGES } from "./economy-data.js";
 
 export const BADGE_LABELS = {
   rookie: "Rookie",
@@ -9,6 +10,8 @@ export const BADGE_LABELS = {
   social: "Social",
   architect: "Architecte",
   night: "Noctambule",
+  // Badges gagnés par l'économie (salaires, casino, primes, décor).
+  ...ECONOMY_BADGES,
 };
 
 export function xpBarHtml(game, esc) {
@@ -25,7 +28,7 @@ export function missionsHtml(game, esc) {
   return `<div class="quest-grid">${game.quests.map(q => {
     const pct = q.target ? Math.min(100, Math.round((q.progress / q.target) * 100)) : 0;
     const state = q.claimed ? "claimed" : q.done ? "done" : "";
-    const btn = q.done && !q.claimed ? `<button type="button" class="quest-claim" data-quest="${esc(q.id)}">Récupérer +${q.xp} XP</button>` : "";
+    const btn = q.done && !q.claimed ? `<button type="button" class="quest-claim" data-quest="${esc(q.id)}">Récupérer +${q.xp} XP · ${q.xp} ${CURRENCY}</button>` : "";
     return `<article class="quest-card ${state}"><h4>${esc(q.title)}</h4><p>${esc(q.desc)}</p>
       <div class="quest-track"><i style="width:${pct}%"></i></div>
       <footer><span>${q.progress}/${q.target}</span>${btn || (q.claimed ? "<span class=\"quest-done\">✓</span>" : "")}</footer></article>`;

@@ -14,6 +14,9 @@ import {
 import { badgesHtml, missionsHtml, postGame, showCelebrations, spaceActionsHtml, wingActionsHtml, xpBarHtml } from "./gamify-ui.js";
 import { homeFloor, parseFloorKey, wingsOf } from "./wings-client.js";
 import { officePanelHtml, officeTierForLevel } from "./upgrades-client.js";
+import {
+  agentRoleText, createEconomyUi, decorKeyOf, eventChipHtml, fortuneLeaders, freshTipsIn, money, residentEconomyLine, staffOf, walletChipHtml,
+} from "./economy-ui.js";
 import { OrbitControls } from "three/addons/controls/OrbitControls.js";
 import { CSS2DObject, CSS2DRenderer } from "three/addons/renderers/CSS2DRenderer.js";
 import { CSS3DObject, CSS3DRenderer } from "three/addons/renderers/CSS3DRenderer.js";
@@ -978,7 +981,163 @@ function buildResident(apt, wing, officeTier) {
   f.alarmLight = new THREE.PointLight("#ff3b3b", 0, 10, 1.6);
   f.alarmLight.position.set(bd.x, 2.4, bd.z);
   g.add(f.alarmLight);
+  if (wingId === "work") placeDecor(g, f, apt);
   return f;
+}
+
+// Décor acheté à la boutique (economy.decor), posé dans les coins libres du bureau du résident :
+// mur est (borne d'arcade, trophée, aquarium, plante), côté ouest (statue au nord, piano au sud de l'allée), néon sur la vitre du fond.
+function placeDecor(g, f, apt) {
+  f.decorKey = decorKeyOf(apt);
+  const owned = new Set(apt.economy?.decor ?? []);
+  if (!owned.size) return;
+  const gold = mat("#d4af37", { metalness: 0.9, roughness: 0.22 });
+  const steel = mat("#9aa3ad", { metalness: 0.8, roughness: 0.3 });
+  if (owned.has("plante_xl")) {
+    const p = P(958, 418);
+    put(g, "pottedPlant", p.x, p.z, 0.7, 3.6);
+    put(g, "pottedPlant", p.x - 0.55, p.z + 0.05, 2.1, 2.2); // une plus petite au pied, pour le coin de jungle
+  }
+  if (owned.has("arcade")) {
+    // Borne d'arcade contre le mur est, écran tourné vers la pièce.
+    const a = new THREE.Group(); a.position.copy(P(956, 215)); a.rotation.y = -Math.PI / 2; g.add(a);
+    const body = mat("#2a1745", { roughness: 0.5 }), dark = mat("#120a1e");
+    box(a, 0.72, 1.0, 0.62, body, 0, 0.5, 0);
+    box(a, 0.72, 0.8, 0.38, body, 0, 1.4, -0.12);
+    box(a, 0.76, 0.28, 0.5, body, 0, 1.94, -0.06);
+    sign(a, "ARCADE", 0.68, 0.22, { color: "#ffd84a", font: "900 90px Sora, sans-serif", blur: 16 }, 0, 1.94, 0.195);
+    const panel = box(a, 0.72, 0.07, 0.3, dark, 0, 1.03, 0.24); panel.rotation.x = 0.2;
+    cyl(a, 0.012, 0.09, steel, -0.16, 1.11, 0.25, 8);
+    const knob = new THREE.Mesh(orbGeometry, glow("#ff3b6b", 1.2)); knob.scale.setScalar(0.45); knob.position.set(-0.16, 1.16, 0.25); a.add(knob);
+    ["#3ee6ff", "#ffd84a", "#ff4fd8"].forEach((c, k) => cyl(a, 0.028, 0.02, glow(c, 1.3), 0.04 + k * 0.09, 1.07, 0.24, 12));
+    for (const x of [-0.37, 0.37]) box(a, 0.02, 1.95, 0.02, glow(x < 0 ? "#ff4fd8" : "#3ee6ff", 1.3), x, 1.0, 0.31);
+    box(a, 0.22, 0.26, 0.01, mat("#3b2a10", { metalness: 0.6 }), 0, 0.5, 0.315);
+    box(a, 0.04, 0.012, 0.012, glow("#ff9a3c", 1.5), 0, 0.55, 0.322);
+    const canvas = document.createElement("canvas"); canvas.width = 256; canvas.height = 200;
+    const tex = new THREE.CanvasTexture(canvas); tex.colorSpace = THREE.SRGBColorSpace;
+    const screen = new THREE.Mesh(new THREE.PlaneGeometry(0.6, 0.47), new THREE.MeshBasicMaterial({ map: tex, toneMapped: false }));
+    screen.position.set(0, 1.42, 0.075); screen.rotation.x = -0.12; a.add(screen);
+    f.arcade = { ctx: canvas.getContext("2d"), tex, frame: -1 };
+    drawArcade(f.arcade, 0);
+  }
+  if (owned.has("trophee")) {
+    // Trophée doré sur une colonne de pierre, plaque tournée vers la pièce.
+    const t = P(958, 263), stone = mat("#1d2228", { roughness: 0.3 });
+    box(g, 0.46, 0.9, 0.46, stone, t.x, 0.45, t.z);
+    box(g, 0.52, 0.05, 0.52, gold, t.x, 0.925, t.z);
+    cyl(g, 0.15, 0.06, gold, t.x, 0.98, t.z, 24);
+    cyl(g, 0.045, 0.3, gold, t.x, 1.16, t.z, 16);
+    const cup = new THREE.Mesh(new THREE.CylinderGeometry(0.27, 0.08, 0.4, 32, 1, true), mat("#d4af37", { metalness: 0.9, roughness: 0.22, side: THREE.DoubleSide }));
+    cup.position.set(t.x, 1.5, t.z); g.add(cup);
+    for (const dz of [-0.29, 0.29]) {
+      const handle = new THREE.Mesh(new THREE.TorusGeometry(0.11, 0.02, 8, 24), gold);
+      handle.position.set(t.x, 1.52, t.z + dz); handle.rotation.y = Math.PI / 2; g.add(handle);
+    }
+    const star = new THREE.Mesh(new THREE.OctahedronGeometry(0.08), glow("#ffe9a8", 1.4));
+    star.position.set(t.x, 1.82, t.z); g.add(star);
+    sign(g, "N° 1", 0.3, 0.12, { color: "#e6ca91", font: "700 72px Sora, sans-serif", blur: 2 }, t.x - 0.235, 0.66, t.z, -Math.PI / 2);
+  }
+  if (owned.has("aquarium")) {
+    // Aquarium sur son meuble, dans la longueur du mur est ; les poissons nagent d'un bout à l'autre.
+    const q = new THREE.Group(); q.position.copy(P(957, 330)); g.add(q);
+    box(q, 0.52, 0.72, 1.52, mat("#2b1d16", { roughness: 0.6 }), 0, 0.36, 0);
+    box(q, 0.54, 0.04, 1.54, steel, 0, 0.74, 0);
+    box(q, 0.44, 0.05, 1.44, mat("#d8c38f"), 0, 0.79, 0);
+    for (const [x, z, r] of [[0.08, -0.45, 0.07], [-0.1, 0.2, 0.05], [0.05, 0.5, 0.06]]) {
+      const rock = new THREE.Mesh(new THREE.IcosahedronGeometry(r, 0), mat("#6b6f78")); rock.position.set(x, 0.84, z); q.add(rock);
+    }
+    for (const [x, z, h] of [[-0.12, -0.55, 0.4], [0.1, -0.2, 0.3], [-0.08, 0.35, 0.45], [0.12, 0.6, 0.28]]) cyl(q, 0.015, h, glow("#3fae5a", 0.5), x, 0.82 + h / 2, z, 6);
+    const water = new THREE.MeshStandardMaterial({ color: "#1d6fa5", emissive: "#0d4a7a", emissiveIntensity: 0.7, transparent: true, opacity: 0.4, depthWrite: false });
+    box(q, 0.44, 0.54, 1.44, water, 0, 1.08, 0);
+    const glass = new THREE.MeshPhysicalMaterial({ color: "#bfe6ff", transparent: true, opacity: 0.16, roughness: 0.05, depthWrite: false, side: THREE.DoubleSide });
+    box(q, 0.5, 0.64, 1.5, glass, 0, 1.08, 0);
+    box(q, 0.52, 0.05, 1.52, mat("#1a1d24"), 0, 1.42, 0);
+    box(q, 0.06, 0.012, 1.3, glow("#bfe9ff", 1.4), 0, 1.39, 0);
+    f.fish = ["#ff8a3c", "#ffd84a", "#4fc3ff", "#ff5d8f", "#9dff7a"].map((c, k) => {
+      const fish = new THREE.Group(), m = glow(c, 0.5);
+      const body = new THREE.Mesh(orbGeometry, m); body.scale.set(0.35, 0.55, 1.0); fish.add(body);
+      const tail = new THREE.Mesh(new THREE.ConeGeometry(0.035, 0.06, 4), m); tail.rotation.x = Math.PI / 2; tail.position.z = -0.085; fish.add(tail);
+      q.add(fish);
+      return { fish, x: -0.12 + (k % 3) * 0.12, y: 0.92 + k * 0.08, phase: k * 1.7, speed: 0.35 + k * 0.07 };
+    });
+  }
+  if (owned.has("statue")) {
+    // Statue du meilleur agent : le robot en or, figé dans un salut, sur un socle de marbre.
+    const s = P(694, 135);
+    box(g, 0.62, 0.5, 0.62, mat("#e8e2d4", { roughness: 0.35 }), s.x, 0.25, s.z);
+    box(g, 0.68, 0.05, 0.68, gold, s.x, 0.525, s.z);
+    sign(g, "MEILLEUR AGENT", 0.52, 0.08, { color: "#8a6a2a", font: "700 56px Sora, sans-serif", blur: 0, w: 512, h: 80 }, s.x, 0.3, s.z + 0.315);
+    if (MODELS.robot) {
+      const r = makeRobot("#d4af37"), u = r.userData;
+      r.traverse(o => { if (o.isMesh) o.material = gold; });
+      u.mixer.stopAllAction();
+      (u.actions.Wave ?? u.actions.ThumbsUp ?? u.actions.Idle)?.reset().play();
+      u.mixer.update(0.9); // pose figée : ce mélangeur n'est plus jamais avancé
+      r.scale.setScalar(0.85); r.position.set(s.x, 0.55, s.z); r.rotation.y = 0.35;
+      g.add(r);
+    }
+  }
+  if (owned.has("piano")) {
+    // Piano à queue au sud de l'allée, clavier vers la caméra, couvercle levé côté pièce.
+    const pg = new THREE.Group(); pg.position.copy(P(707, 395)); g.add(pg);
+    const lacquer = mat("#0b0b0e", { roughness: 0.18, metalness: 0.3 });
+    // Contour vu de dessus (x, -z) : côté gauche droit, éclisse courbe à droite, queue arrondie.
+    const outline = new THREE.Shape();
+    outline.moveTo(-0.6, -0.35); outline.lineTo(0.6, -0.35); outline.lineTo(0.6, -0.05);
+    outline.bezierCurveTo(0.6, 0.35, 0.1, 0.3, 0.02, 0.62);
+    outline.bezierCurveTo(-0.05, 0.95, -0.6, 1.05, -0.6, 0.8);
+    outline.lineTo(-0.6, -0.35);
+    const caseMesh = new THREE.Mesh(new THREE.ExtrudeGeometry(outline, { depth: 0.3, bevelEnabled: true, bevelSize: 0.015, bevelThickness: 0.015, bevelSegments: 2, curveSegments: 24 }), lacquer);
+    caseMesh.rotation.x = -Math.PI / 2; caseMesh.position.y = 0.62; pg.add(caseMesh);
+    const lidPivot = new THREE.Group(); lidPivot.position.set(-0.6, 0.95, 0); lidPivot.rotation.z = 0.5; pg.add(lidPivot);
+    const lid = new THREE.Mesh(new THREE.ExtrudeGeometry(outline, { depth: 0.02, bevelEnabled: false, curveSegments: 24 }).translate(0.6, 0, 0), lacquer);
+    lid.rotation.x = -Math.PI / 2; lidPivot.add(lid);
+    const prop = cyl(pg, 0.01, 0.62, steel, 0.25, 1.2, -0.25, 6); prop.rotation.z = 0.35;
+    box(pg, 1.22, 0.08, 0.26, lacquer, 0, 0.8, 0.47);
+    box(pg, 1.12, 0.03, 0.17, mat("#f4f1e8", { roughness: 0.4 }), 0, 0.855, 0.48);
+    const blackKeys = new THREE.InstancedMesh(boxGeometry, mat("#111114"), 36), keyMatrix = new THREE.Matrix4();
+    for (let k = 0, n = 0; k < 52 && n < 36; k++) if ([0, 1, 3, 4, 5].includes(k % 7)) {
+      keyMatrix.makeScale(0.012, 0.02, 0.1).setPosition(-0.56 + (k + 1) * (1.12 / 52), 0.875, 0.45);
+      blackKeys.setMatrixAt(n++, keyMatrix);
+    }
+    pg.add(blackKeys);
+    const stand = box(pg, 0.9, 0.24, 0.02, lacquer, 0, 1.08, 0.3); stand.rotation.x = -0.25;
+    const sheet = box(pg, 0.36, 0.2, 0.005, mat("#f4f1e8"), 0, 1.09, 0.315); sheet.rotation.x = -0.25;
+    for (const [x, z] of [[-0.5, 0.25], [0.5, 0.25], [-0.35, -0.75]]) {
+      cyl(pg, 0.05, 0.62, lacquer, x, 0.31, z, 12);
+      cyl(pg, 0.06, 0.04, gold, x, 0.02, z, 12);
+    }
+    box(pg, 0.14, 0.45, 0.06, lacquer, 0, 0.3, 0.22);
+    for (const x of [-0.05, 0, 0.05]) box(pg, 0.03, 0.015, 0.08, gold, x, 0.06, 0.27);
+    box(pg, 0.75, 0.07, 0.34, lacquer, 0, 0.48, 0.85);
+    box(pg, 0.72, 0.05, 0.31, mat("#2b1d16", { roughness: 0.8 }), 0, 0.535, 0.85);
+    for (const x of [-0.32, 0.32]) for (const z of [0.72, 0.98]) box(pg, 0.04, 0.45, 0.04, lacquer, x, 0.225, z);
+  }
+  if (owned.has("neon")) {
+    // Néon au nom du résident, à sa couleur, sur la vitre du fond au-dessus de la console des récompenses.
+    const accent = apt.profile?.accent ?? "#ff6fd8", x = 8.6, y = 2.95, z = -6.36, line = glow(accent, 2.2);
+    box(g, 2.5, 0.78, 0.04, mat("#0c0e16", { roughness: 0.4 }), x, y, z - 0.03);
+    for (const dy of [-0.37, 0.37]) box(g, 2.46, 0.025, 0.025, line, x, y + dy, z);
+    for (const dx of [-1.23, 1.23]) box(g, 0.025, 0.76, 0.025, line, x + dx, y, z);
+    sign(g, apt.name, 2.3, 0.6, { color: accent, font: "italic 700 120px Sora, sans-serif", w: 768, h: 200, blur: 36 }, x, y, z + 0.01);
+  }
+}
+
+// Écran de la borne : des envahisseurs en pixels, redessinés deux fois par seconde.
+function drawArcade(arcade, frame) {
+  const { ctx, tex } = arcade;
+  ctx.fillStyle = "#05030c"; ctx.fillRect(0, 0, 256, 200);
+  const sprite = ["0011100", "0111110", "1101011", "1111111", "0101010", "1000001"];
+  const shift = (frame % 8) - 4;
+  ["#ff4fd8", "#3ee6ff", "#ffd84a"].forEach((c, row) => {
+    ctx.fillStyle = c;
+    for (let col = 0; col < 5; col++) sprite.forEach((line, sy) => [...line].forEach((bit, sx) => {
+      if (bit === "1") ctx.fillRect(28 + col * 42 + shift * 3 + sx * 4, 22 + row * 34 + sy * 4, 4, 4);
+    }));
+  });
+  ctx.fillStyle = "#4ade80"; ctx.fillRect(112 + Math.sin(frame) * 60, 172, 28, 10);
+  ctx.fillStyle = "#ffffff"; ctx.font = "bold 14px monospace"; ctx.fillText(`SCORE ${String(1200 + frame * 10).padStart(5, "0")}`, 10, 196);
+  tex.needsUpdate = true;
 }
 
 // ---------- étages communs ----------
@@ -986,9 +1145,29 @@ function buildResident(apt, wing, officeTier) {
 // La chaîne est commune à tout le penthouse : le serveur la garde, et chacun voit la même télé.
 const CHANNEL_NAMES = { otplol_: "OTPLOL", lec: "LEC", riotgames: "Riot Games", kamet0: "Kameto", caedrel: "Caedrel", zerator: "ZeratoR", eslcs: "ESL CS", lofigirl: "Lofi Girl · 24 h/24" };
 let liveNow = {}, tvChoice = "auto", tvBy = "", tvMine = 0; // tvMine : on ignore l'état du serveur 3 s après son propre clic
-const tvChannel = () => tvChoice !== "auto" ? tvChoice : Object.keys(liveNow).find(c => liveNow[c]) ?? "lofigirl";
+// Lien perso (idée de la branche de Quentin) : le serveur ne garde qu'une vidéo YouTube ou une chaîne Twitch normalisées.
+let tvCustom = null, tvLinkOpen = false, tvLinkDraft = "", tvLinkError = "";
+const tvChannel = () => tvChoice !== "auto" && tvChoice !== "custom" ? tvChoice : Object.keys(liveNow).find(c => liveNow[c]) ?? "lofigirl";
 const streamUrl = c => `https://player.twitch.tv/?channel=${encodeURIComponent(c)}&parent=${location.hostname}&muted=true&autoplay=true`;
-const stream = Object.assign(document.createElement("iframe"), { title: "OTPLOL en direct", allow: "autoplay; fullscreen" });
+// Lien perso valide : seulement les champs normalisés (identifiant YouTube, nom de chaîne Twitch), jamais une URL saisie.
+const tvCustomNow = () => {
+  if (tvChoice !== "custom") return null;
+  if (tvCustom?.kind === "youtube" && /^[A-Za-z0-9_-]{11}$/.test(tvCustom.id ?? "")) return tvCustom;
+  if (tvCustom?.kind === "twitch" && /^[a-z0-9_]{3,25}$/i.test(tvCustom.channel ?? "")) return tvCustom;
+  return null;
+};
+function tvUrl() {
+  const c = tvCustomNow();
+  if (c?.kind === "youtube") return `https://www.youtube-nocookie.com/embed/${encodeURIComponent(c.id)}?autoplay=1&mute=1&rel=0`;
+  return streamUrl(c?.kind === "twitch" ? c.channel : tvChannel());
+}
+// Page ouverte d'un clic sur l'écran, avec le son.
+function tvPageUrl() {
+  const c = tvCustomNow();
+  if (c?.kind === "youtube") return `https://www.youtube.com/watch?v=${encodeURIComponent(c.id)}`;
+  return `https://www.twitch.tv/${encodeURIComponent(c?.kind === "twitch" ? c.channel : tvChannel())}`;
+}
+const stream = Object.assign(document.createElement("iframe"), { title: "Télé du salon", allow: "autoplay; fullscreen; encrypted-media; picture-in-picture" });
 Object.assign(stream.style, { width: "1280px", height: "720px", border: "0", background: "#000", backfaceVisibility: "hidden" });
 let shownUrl = "", tvFrame = null;
 // Petits nuages en un seul appel de dessin ; le dégradé évite les particules carrées.
@@ -1753,10 +1932,12 @@ function syncFloors(list) {
       const prev = floors.get(k);
       if (!prev) {
         floors.set(k, buildResident(a, w, tier ?? undefined));
-      } else if (w.id === "work" && prev.officeTierId !== tier.id) {
+      } else if (w.id === "work" && (prev.officeTierId !== tier.id || prev.decorKey !== decorKeyOf(a))) {
+        // Palier d'aménagement ou décor acheté : l'étage est reconstruit, ses agents passent dans le nouveau.
         for (const [, g] of agents) if (g.userData.floor === k) prev.group.remove(g);
         removeFloor(k);
         floors.set(k, buildResident(a, w, tier));
+        floors.get(k).group.position.y = prev.group.position.y; // reste en place, sans glisser depuis le haut
         for (const [, g] of agents) if (g.userData.floor === k) floors.get(k).group.add(g);
       }
     }
@@ -1842,9 +2023,10 @@ function update(now) {
     Object.assign(u, { s: w.s, apt: w.a, state: st, place: w.place, pauseVisit: w.visit, slot: w.slot, slotFacing: w.facing, slotAnim: w.anim, way: w.way, index: w.index, target: w.floor });
     u.ring.material.color.set(STATE_COLOR[st] ?? "#8b93a7");
     // Bulle : l'action au poste, la demande d'accord chez le résident, sinon à qui appartient l'agent.
-    const T = TOOLS[w.s.src] ?? { name: w.s.src };
+    // Au repos, l'icône du grade de l'employé (économie du résident) précède son nom.
+    const T = TOOLS[w.s.src] ?? { name: w.s.src }, grade = staffOf(w.a, w.s.src)?.grade?.icon;
     const text = st === "travaille" ? w.s.action : st === "autorisation" ? "Autorise-moi ?" : st === "erreur" ? "Erreur"
-      : `${w.a.name} · ${T.name}`;
+      : `${grade ? grade + " " : ""}${w.a.name} · ${T.name}`;
     u.bubble.element.textContent = text;
     u.bubble.element.className = "bubble3d" + (st === "autorisation" ? " auth" : "") + (st === "travaille" || st === "autorisation" || st === "erreur" ? "" : " who");
   }
@@ -1934,6 +2116,13 @@ function animate(frameTime = performance.now()) {
       pos.needsUpdate = true;
     });
     f.discos?.forEach(d => { d.rotation.y += dt * 1.2; });
+    // Décor acheté : poissons de l'aquarium et écran de la borne d'arcade (immobiles si les animations sont réduites).
+    f.fish?.forEach(p => {
+      const k = decorTime * p.speed + p.phase;
+      p.fish.position.set(p.x + Math.sin(k * 1.3) * 0.04, p.y + Math.sin(k * 2.1) * 0.03, Math.sin(k) * 0.55);
+      p.fish.rotation.y = Math.cos(k) >= 0 ? 0 : Math.PI;
+    });
+    if (f.arcade && Math.floor(decorTime * 2) !== f.arcade.frame) { f.arcade.frame = Math.floor(decorTime * 2); drawArcade(f.arcade, f.arcade.frame); }
     f.steam?.forEach(p => {
       const k = (t * 0.35 + p.userData.phase) % 1;
       p.position.set(p.userData.x + Math.sin(k * 6) * 0.03, 0.86 + k * 0.45, p.userData.z);
@@ -2135,7 +2324,7 @@ function animate(frameTime = performance.now()) {
   controls.autoRotateSpeed = 0.4;
   controls.update();
   // Le direct ne se charge que quand on regarde le Salon.
-  const url = focusKey === "lounge" ? streamUrl(tvChannel()) : "about:blank";
+  const url = focusKey === "lounge" ? tvUrl() : "about:blank";
   if (url !== shownUrl) { shownUrl = url; stream.src = url; }
   renderer.render(scene, camera);
   screens.render(scene, camera);
@@ -2228,7 +2417,7 @@ renderer.domElement.addEventListener("pointerup", e => {
   let o = ray.intersectObjects(onFocus(), true)[0]?.object;
   while (o && !o.userData.key) o = o.parent;
   if (o) return showAgent(o.userData.apt, o.userData.s);
-  if (onTv()) open("https://www.twitch.tv/" + tvChannel(), "_blank", "noopener");
+  if (onTv()) open(tvPageUrl(), "_blank", "noopener");
 });
 renderer.domElement.addEventListener("pointermove", e => {
   if (e.buttons) return;
@@ -2270,6 +2459,28 @@ $("#showPermission").addEventListener("click", () => {
   setFocus(order.indexOf(`${apartment.slug}:work`) >= 0 ? order.indexOf(`${apartment.slug}:work`) : order.findIndex(k => k.startsWith(apartment.slug + ":"))); showAgent(apartment, session);
 });
 
+// Panneau latéral : pas de redessin sous les doigts de quelqu'un qui saisit (lien perso de la télé).
+function setPanel(html) {
+  const panel = $("#aptPanel"), typing = panel.contains(document.activeElement) && document.activeElement.matches("input, textarea");
+  if (!typing && panel.innerHTML !== html) panel.innerHTML = html;
+}
+
+// En-tête : portefeuille, titre et événement du jour ; bouton Entreprise ; primes reçues d'un autre résident.
+let ecoHeaderHtml = "", tipWatch = { slug: null, seen: null };
+function renderEconomyHeader(mine, spectator) {
+  const eco = spectator ? null : mine?.economy;
+  const html = eco ? walletChipHtml(eco, esc, economyUi.shownWallet(eco)) + eventChipHtml(eco.event, esc) : "";
+  // Comparé avant d'écrire : l'infobulle de l'événement reste ouverte sous la souris ou le focus.
+  if (html !== ecoHeaderHtml) { $("#ecoHost").innerHTML = html; ecoHeaderHtml = html; }
+  $("#ecoBtn").hidden = !eco;
+  if (!eco) return;
+  if (tipWatch.slug !== mine.slug) tipWatch = { slug: mine.slug, seen: null };
+  const { fresh, seen } = freshTipsIn(eco, tipWatch.seen);
+  tipWatch.seen = seen;
+  if (fresh.length) showCelebrations(fresh.map(e => ({ title: `💌 ${e.label}`, body: `+${money(e.amount)} sur ton compte` })));
+  economyUi.refresh();
+}
+
 function render() {
   updateBillboard(data.apartments, data.now);
   updateUsageBoard(data.apartments, data.now);
@@ -2295,6 +2506,7 @@ function render() {
   }
   const mine = me ? list.find(x => x.slug === me) : null;
   xpHost.innerHTML = mine?.game && !spectator ? xpBarHtml(mine.game, esc) : "";
+  renderEconomyHeader(mine, spectator);
 
   const by = (ss, st) => ss.filter(s => stateOf(s, now) === st).length;
   const present = key => [...agents.values()].filter(g => g.userData.target === key);
@@ -2321,7 +2533,8 @@ function render() {
     const wingPlay = mine && a.game ? wingActionsHtml(a.game, f.key, esc) : "";
     const wingHint = mine && (a.game?.wings?.length ?? 1) < 4 ? `<p class="extras-muted">Monte de niveau pour débloquer Labo (4), Ops (7), Studio (12).</p>` : "";
     const officeBlock = f.wingId === "work" && a.game?.office ? officePanelHtml(a.game.office, esc) : "";
-    $("#aptPanel").innerHTML = `${wingLine}<p class="kicker">${a.slug === list[0].slug && f.wingId === "work" ? "Penthouse" : esc(f.name)}${mine ? " · chez toi" : ""}</p><h2>${esc(a.name)}</h2>${tagline}${officeBlock}${wingHint}${wingPlay}
+    const ecoLine = residentEconomyLine(a.economy, esc);
+    setPanel(`${wingLine}<p class="kicker">${a.slug === list[0].slug && f.wingId === "work" ? "Penthouse" : esc(f.name)}${mine ? " · chez toi" : ""}</p><h2>${esc(a.name)}</h2>${tagline}${ecoLine}${officeBlock}${wingHint}${wingPlay}
       <div class="apt-c"><span><i class="d" style="background:var(--work)"></i><b>${by(a.sessions, "travaille")}</b> au travail</span>
       <span><i class="d" style="background:var(--auth)"></i><b>${by(a.sessions, "autorisation")}</b> ${spectator ? "attend un accord" : "attend ton accord"}</span>
       <span><i class="d" style="background:var(--wait)"></i><b>${by(a.sessions, "attend")}</b> sur le toit, attend la suite</span>
@@ -2332,30 +2545,35 @@ function render() {
       ${svcs.filter(s => !s.ok).map(s => `<span style="color:var(--auth)">${esc(s.label)} arrêté</span>`).join("")}
       ${machines.length ? `<span>Machines : ${machines.join(" · ")}</span>` : ""}</div>
       ${todayLine}${machineBlock}
-      ${a.sessions.length ? "" : '<p class="none">Aucun agent relié pour l\'instant.</p>'}`;
+      ${a.sessions.length ? "" : '<p class="none">Aucun agent relié pour l\'instant.</p>'}`);
   } else if (f?.kind === "shared") {
     const here = present(f.key), byRes = new Map();
     for (const g of here) { const n = g.userData.apt.name; byRes.set(n, [...(byRes.get(n) ?? []), g.userData]); }
     const myGame = myApt();
     const myAgentsHere = here.filter(g => g.userData.apt.slug === me).length;
     const spacePlay = me && myGame?.game && !spectator ? spaceActionsHtml(myGame.game, f.key, myAgentsHere, esc) : "";
-    $("#aptPanel").innerHTML = `<p class="kicker">${esc(f.def.kicker)}</p><h2>${f.def.icon} ${esc(f.name)}</h2>
-      ${f.key === "lounge" ? remote() : ""}
+    // Casino : les vrais jeux (en P$) s'ouvrent dans le dialogue Entreprise.
+    const casinoPlay = f.key === "casino" && !spectator && myGame?.economy
+      ? `<div class="space-actions"><h4>Tables de jeu</h4><button type="button" class="space-act eco-casino-btn" data-eco-open="casino"><strong>🎰 Jouer</strong><span>Machine à sous, roulette, course de robots · solde ${esc(money(economyUi.shownWallet(myGame.economy)))}</span></button></div>` : "";
+    setPanel(`<p class="kicker">${esc(f.def.kicker)}</p><h2>${f.def.icon} ${esc(f.name)}</h2>
+      ${f.key === "lounge" ? remote() : ""}${casinoPlay}
       <div class="apt-c"><span><b>${here.length}</b> agent(s) ici, de <b>${byRes.size}</b> résident(s)</span></div>
       ${spacePlay}
       ${[...byRes].map(([n, ss]) => `<div class="who-row"><b>${esc(n)}</b><span>${ss.map(u => `${esc(TOOLS[u.s.src]?.name ?? u.s.src)} · ${f.key === "lounge" ? esc(PLACE_FR[u.place]) : esc(u.s.project ?? "")}`).join("<br>")}</span></div>`).join("")
-        || '<p class="none">Personne pour l\'instant.</p>'}`;
+        || '<p class="none">Personne pour l\'instant.</p>'}`);
   }
 
   const all = list.flatMap(x => x.sessions);
   const board = activityLeaderboard(list);
-  const lb = $("#leaderboardDlg");
-  if (board.length && !spectator) {
+  const lb = $("#leaderboardDlg"), rich = fortuneLeaders(list);
+  if ((board.length || rich.length) && !spectator) {
     lb.hidden = false;
-    lb.innerHTML = `<h4>Activité du jour</h4><ol>${board.map((r, i) => `<li><b>${esc(r.name)}</b> · ${r.actions} act. / ${r.sessions} sess.</li>`).join("")}</ol>`;
+    lb.innerHTML = (board.length ? `<h4>Activité du jour</h4><ol>${board.map((r, i) => `<li><b>${esc(r.name)}</b> · ${r.actions} act. / ${r.sessions} sess.</li>`).join("")}</ol>` : "")
+      + (rich.length ? `<h4>Fortune</h4><ol>${rich.map(a => `<li><b>${esc(a.name)}</b> · ${esc(a.economy.title?.icon ?? "")} ${esc(money(a.slug === me ? economyUi.shownWallet(a.economy) : a.economy.wallet))}</li>`).join("")}</ol>` : "");
   } else lb.hidden = true;
-  $("#totals").innerHTML = `<span><b>${list.length}</b> résident(s)</span><span><i class="d" style="background:var(--work)"></i><b>${by(all, "travaille")}</b> au travail</span>`
-    + `<span><i class="d" style="background:var(--auth)"></i><b>${by(all, "autorisation")}</b> attendent un accord</span>`;
+  // Libellés masquables : sur un écran moyen, l'en-tête ne garde que les pastilles et les nombres.
+  $("#totals").innerHTML = `<span title="Résidents"><span aria-hidden="true" class="ico">🏢</span><b>${list.length}</b><span class="lbl"> résident(s)</span></span><span title="Au travail"><i class="d" style="background:var(--work)"></i><b>${by(all, "travaille")}</b><span class="lbl"> au travail</span></span>`
+    + `<span title="Attendent un accord"><i class="d" style="background:var(--auth)"></i><b>${by(all, "autorisation")}</b><span class="lbl"> attendent un accord</span></span>`;
   const feed = list.flatMap(x => x.feed.map(e => ({ ...e, who: x.name }))).sort((x, y) => y.t - x.t).slice(0, 14);
   $("#ticker").innerHTML = feed.map(e => `<span>${hm(e.t)} <b>${esc(e.who)}</b> · ${esc(TOOLS[e.src]?.name ?? e.src)}${e.project ? " · " + esc(e.project) : ""} — ${esc(e.action)}</span>`).join("")
     || "<span>En attente d'activité…</span>";
@@ -2364,16 +2582,36 @@ function render() {
   if (spectator && tourPaused && activeTourStep?.kind === "dashboard") updateSpectatorView(activeTourStep);
 }
 function remote() {
-  const now = tvChannel(), name = c => esc(CHANNEL_NAMES[c] ?? c);
-  return `<p class="kicker tv-k">Télé du salon</p><div class="tv">${["auto", ...Object.keys(liveNow)].map(c => `<button type="button" ${data?.viewer?.role === "spectator" ? "disabled" : ""} data-tv="${esc(c)}" class="${c === tvChoice ? "on" : ""}">${
-    c === "auto" ? "Auto" : `<i class="d" style="background:${liveNow[c] ? "var(--auth)" : "#3a3f52"}"></i>${name(c)}`}</button>`).join("")}</div>
-    <p class="tv-now">À l'écran : <b>${name(now)}</b>${liveNow[now] === false ? " · hors ligne" : ""}${tvBy ? ` · choisi par ${esc(tvBy)}` : ""}</p>`;
+  const now = tvChannel(), name = c => esc(CHANNEL_NAMES[c] ?? c), spectator = data?.viewer?.role === "spectator", custom = tvCustomNow();
+  const showing = custom ? (custom.kind === "youtube" ? "Lien perso · vidéo YouTube" : `Lien perso · Twitch ${esc(custom.channel)}`)
+    : `${name(now)}${liveNow[now] === false ? " · hors ligne" : ""}`;
+  const form = tvLinkOpen && !spectator ? `<form class="tv-link" id="tvLinkForm" autocomplete="off">
+      <label>Lien YouTube (vidéo ou live) ou chaîne Twitch<input name="url" type="url" inputmode="url" required maxlength="500" placeholder="https://www.youtube.com/watch?v=…" value="${esc(tvLinkDraft)}"></label>
+      <button type="submit">Mettre à l’écran</button><p class="err" role="alert">${esc(tvLinkError)}</p></form>` : "";
+  return `<p class="kicker tv-k">Télé du salon</p><div class="tv">${["auto", ...Object.keys(liveNow)].map(c => `<button type="button" ${spectator ? "disabled" : ""} data-tv="${esc(c)}" class="${c === tvChoice ? "on" : ""}">${
+    c === "auto" ? "Auto" : `<i class="d" style="background:${liveNow[c] ? "var(--auth)" : "#3a3f52"}"></i>${name(c)}`}</button>`).join("")}<button type="button" ${spectator ? "disabled" : ""} data-tv-link aria-expanded="${tvLinkOpen && !spectator}" aria-controls="tvLinkForm" class="${tvChoice === "custom" ? "on" : ""}">🔗 Lien perso</button></div>${form}
+    <p class="tv-now">À l'écran : <b>${showing}</b>${tvBy ? ` · choisi par ${esc(tvBy)}` : ""}</p>`;
+}
+// Choix de la télé : la clé de l'étage accompagne la demande quand elle est connue (le nom affiché vient alors du serveur).
+async function postTv(body) {
+  const token = sessionStorage.getItem("penthouse.cle");
+  const r = await fetch("/api/tv", { method: "POST", headers: { "Content-Type": "application/json", ...(token ? { "X-Tour-Token": token } : {}) }, body: JSON.stringify(body) });
+  let j = {};
+  try { j = await r.json(); } catch { /* réponse vide */ }
+  if (!r.ok) throw new Error(j.error ?? "Choix refusé.");
+  return j;
 }
 $("#aptPanel").addEventListener("click", e => {
   if (data?.viewer?.role === "spectator") return;
-  const act = e.target.closest(".space-act, .wing-act");
+  const act = e.target.closest(".space-act[data-action], .wing-act[data-action]"); // le bouton « Jouer » du casino ouvre le dialogue
   if (act && !act.disabled) {
     runGameAction(act.dataset.action, act.dataset.floor, Number(act.dataset.agents)).catch(err => alert(err.message));
+    return;
+  }
+  if (e.target.closest("[data-tv-link]")) {
+    tvLinkOpen = !tvLinkOpen; tvLinkError = "";
+    render();
+    if (tvLinkOpen) $("#tvLinkForm input")?.focus();
     return;
   }
   const b = e.target.closest("[data-tv]");
@@ -2382,8 +2620,27 @@ $("#aptPanel").addEventListener("click", e => {
   tvMine = Date.now() + 3000;
   tvBy = JSON.parse(localStorage.getItem(ME) ?? "null")?.name ?? "";
   render();
-  fetch("/api/tv", { method: "POST", body: JSON.stringify({ channel: tvChoice, by: tvBy }) });
+  postTv({ channel: tvChoice, by: tvBy }).catch(() => {});
   if (order[focus] === "lounge") runGameAction("lounge_tv", "lounge", 0).catch(() => {});
+});
+$("#aptPanel").addEventListener("input", e => { if (e.target.closest("#tvLinkForm")) tvLinkDraft = e.target.value; });
+$("#aptPanel").addEventListener("submit", async e => {
+  const form = e.target.closest("#tvLinkForm");
+  if (!form || data?.viewer?.role === "spectator") return;
+  e.preventDefault();
+  const button = form.querySelector("button");
+  button.disabled = true;
+  try {
+    const tv = await postTv({ channel: "custom", url: form.url.value.trim(), by: JSON.parse(localStorage.getItem(ME) ?? "null")?.name ?? "" });
+    tvChoice = "custom"; tvCustom = tv.custom ?? null; tvBy = tv.by ?? ""; tvMine = Date.now() + 3000;
+    tvLinkOpen = false; tvLinkDraft = ""; tvLinkError = "";
+    form.url.blur();
+    if (order[focus] === "lounge") runGameAction("lounge_tv", "lounge", 0).catch(() => {});
+  } catch (error) {
+    tvLinkError = error.message;
+    form.querySelector(".err").textContent = error.message; // affichée tout de suite, même champ actif
+  } finally { button.disabled = false; }
+  render();
 });
 $("#floorNav").addEventListener("click", e => { const b = e.target.closest("[data-floor]"); if (b) setFocus(Number(b.dataset.floor)); });
 
@@ -2392,7 +2649,7 @@ function showAgent(a, s) {
   const currentPlace = agents.get(keyOf(a.slug, s))?.userData.place ?? placeOf(s, now);
   const row = (l, v, mono) => v ? `<dt>${l}</dt><dd${mono ? ' class="m"' : ""}>${esc(v)}</dd>` : "";
   $("#agentBody").innerHTML = `<div class="who"><i class="d" style="width:12px;height:12px;background:${T.color}"></i>${esc(T.name)}</div>
-    <dl>${row("Résident", a.name)}${row("Machine", data.viewer?.role === "spectator" ? null : s.host)}${row("Projet", s.project)}${row("Modèle", s.model, true)}
+    <dl>${row("Résident", a.name)}${row("Rôle", agentRoleText(staffOf(a, s.src), data.viewer?.role === "spectator"))}${row("Machine", data.viewer?.role === "spectator" ? null : s.host)}${row("Projet", s.project)}${row("Modèle", s.model, true)}
     ${row("État", `${STATE_FR[stateOf(s, now)] ?? s.state} · ${PLACE_FR[currentPlace]}`)}${row("Demande", data.viewer?.role === "spectator" ? null : s.task || "(pas de demande connue)")}
     ${row("Action", s.action, true)}${row("Arrivé à", hm(s.started))}${row("Dernier signe", hm(s.updated))}</dl>`;
   $("#agentDlg").showModal();
@@ -2533,6 +2790,38 @@ $("#missionsBody").addEventListener("click", e => {
 
 $("#historyBtn").addEventListener("click", showHistory);
 
+// Entreprise : équipe et paie, boutique, casino, classements, banque (economy-ui.js).
+const economyUi = createEconomyUi({
+  dialog: $("#economyDlg"), body: $("#economyBody"), esc, tools: TOOLS,
+  getData: () => data, getMine: () => myApt(), getToken: () => sessionStorage.getItem("penthouse.cle"),
+  onEconomy: eco => { const me = myApt(); if (me && eco) me.economy = eco; if (data) render(); },
+  celebrate: showCelebrations,
+});
+$("#ecoBtn").addEventListener("click", () => economyUi.open());
+document.addEventListener("click", e => {
+  const b = e.target.closest("[data-eco-open]");
+  if (b && data?.viewer?.role !== "spectator") economyUi.open(b.dataset.ecoOpen);
+});
+
+// Menu « ⋯ » de l'en-tête : les actions moins fréquentes, pour un en-tête sur une ligne.
+function setMoreMenu(open) {
+  $("#moreMenu").hidden = !open;
+  $("#moreBtn").setAttribute("aria-expanded", String(open));
+}
+$("#moreBtn").addEventListener("click", () => {
+  setMoreMenu($("#moreMenu").hidden);
+  if (!$("#moreMenu").hidden) [...$("#moreMenu").children].find(b => !b.hidden)?.focus();
+});
+$("#moreMenu").addEventListener("click", e => { if (e.target.closest("button")) setMoreMenu(false); });
+document.addEventListener("click", e => { if (!e.target.closest("#moreWrap")) setMoreMenu(false); });
+document.addEventListener("keydown", e => {
+  if (e.key !== "Escape" || $("#moreMenu").hidden) return;
+  setMoreMenu(false); $("#moreBtn").focus();
+});
+$("#moreWrap").addEventListener("focusout", e => { if (!$("#moreWrap").contains(e.relatedTarget)) setMoreMenu(false); });
+// Hauteur réelle de l'en-tête (une ou deux lignes) : les panneaux se placent juste dessous.
+new ResizeObserver(() => document.documentElement.style.setProperty("--top-h", `${$("#topBar").offsetHeight}px`)).observe($("#topBar"));
+
 function showCustomize() {
   const me = JSON.parse(localStorage.getItem(ME) ?? "null");
   const apt = data?.apartments.find(a => a.slug === me?.slug);
@@ -2637,8 +2926,9 @@ function applyLoadedState() {
   $("#customizeBtn").hidden = !resident;
   $("#notifyBtn").hidden = !resident;
   $("#missionsBtn").hidden = !resident;
+  $("#moreWrap").hidden = [...$("#moreMenu").children].every(b => b.hidden);
   if (spectator && $("#linkDlg").open) $("#linkDlg").close();
-  if (Date.now() > tvMine) ({ channel: tvChoice, by: tvBy = "" } = data.tv);
+  if (Date.now() > tvMine) ({ channel: tvChoice = "auto", by: tvBy = "", custom: tvCustom = null } = data.tv ?? {});
   $("#lobby").hidden = true;
   $("#app").hidden = false;
   render();
