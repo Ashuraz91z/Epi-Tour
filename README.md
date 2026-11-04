@@ -103,6 +103,16 @@ Chaque outil relié est un employé de l'étage. Tout est calculé par le serveu
   alimenté par 2 % des mises à la machine à sous et remporté au 7️⃣7️⃣7️⃣.
 - **Tennis et Golf** : deux étages communs où les agents vont aussi en pause ; activités XP gratuites (échanges, tournoi,
   putting, neuf trous) et paris sportifs dans « Entreprise → Sport » (un set contre le pro du club, putts de 1 à 12 m).
+- **Le travail au centre** : chaque minute de travail d'un agent rapporte de l'XP (0,5/min, 5 par tâche livrée, 400 par jour
+  au plus) ; **prime d'équipe** de +10 % de salaire par agent en parallèle (+40 % max) ; **série** de jours travaillés (≥ 1 h)
+  à +2 % par jour (+20 % max) ; **objectifs du jour** payés à l'atteinte (1 h, 3 h, 6 h, 10 h de travail ; 5, 15, 30 tâches
+  livrées ; 3 agents en même temps) ; **projets** (dossier de travail) avec niveaux ; badges Marathon, Chef d'orchestre,
+  Livreur, Stakhanov, Polyglotte. Dans la tour : tableau de bord du travail dans le bureau, le robot saute et lance des
+  confettis à chaque tâche livrée, l'étage fête un objectif atteint ; « Travail du jour » dans le panneau, « Employé du jour »
+  au classement.
+- **Mini-jeux jouables** aux étages Tennis et Golf (« 🎮 Jouer ») : match en 3 jeux contre le robot du club (3 niveaux) et
+  mini-golf de 3 trous (`public/sports-games.js`). Score vérifié par le serveur (`POST /api/game/sport`), 5 parties récompensées
+  par sport et par jour. Les robots y tiennent raquettes et clubs.
 - **Événement du jour**, commun à tous et tiré d'après la date : double paie, Black Friday, nuit blanche, jackpot progressif…
 - Les missions du jour rapportent aussi des P$ ; la mission « Jour de paie » demande 100 P$ de salaires.
 - Les spectateurs voient fortune, titre, paie du jour et rôles, jamais le relevé ni les abonnements.
@@ -117,6 +127,15 @@ Ressources statiques conservées en mémoire avec gzip et ETag/revalidation 304 
 Géométries simples partagées, ressources propres aux agents libérées à leur départ, rendu plafonné à 60 images/s et suspendu en onglet masqué, requêtes masquées ou déjà en cours évitées. Calcul des cartes spectateur à environ 1 Hz plutôt qu’à chaque image. Mesures Twitch concurrentes partagées par processus serveur. Résolution 3D conservée.
 
 Le flux SSE calcule l'état une seule fois toutes les 2 s pour tous les onglets ouverts (résidents et spectateurs).
+
+Rendu 3D (mesures Chromium logiciel, 1440×900, 4 résidents, ~40 agents, étage regardé) : appels de dessin divisés par
+~3 (ex. 674 → 231 sur un étage résident, 802 → 322 au Casino), temps JS par image ÷ 4 à 8 (51 → 8 ms), 24 → 3 lumières,
+476 → 214 textures. Moyens : résolution plafonnée à ×1,5 et adaptative (descend si l'image dépasse ~20 ms), étages hors de
+la vue retirés de la scène, maillages immobiles fusionnés par matériau (`bakeStatic`), robots fusionnés au chargement,
+voitures/avions/oiseaux en instances, trois lampes partagées prêtées aux étages (aucune recompilation de shader),
+textures générées une fois, DOM écrit seulement s'il change, 3D en pause pendant les dialogues de jeu, aucun flou
+d'arrière-plan au-dessus du canvas. **Règle pour la suite** : tout objet de décor animé après la construction d'un étage
+doit être rangé dans un champ `f.*` de l'étage ou passé à `live(...)`, sinon il est fusionné et reste figé.
 
 Benchmark reproductible, local et sans contact avec les comptes/outils réels : `node benchmark.mjs`. Maquette 20 résidents/600 sessions, 40 lectures après échauffement. Le 3 novembre 2026 : ancien chemin SQLite simulé 2,59 ms/requête, nouveau 1,40 ms ; JS 40 936 octets gzip ; état 3,3 Ko gzip. Le 4 novembre 2026, sur une autre machine (environ 5 fois plus lente sur l'ancien chemin), avec la gamification et l'économie : 14,1 ms contre 11,5 ms ; état 8,4 Ko gzip ; app.js 60 Ko gzip (plus economy-ui.js, chargé à part). Mesures locales indicatives, pas une mesure des FPS sur les appareils des utilisateurs.
 
