@@ -36,7 +36,7 @@ export function eventOf(day) {
 
 export function createEconomy() {
   return { wallet: 0, earned: 0, subs: {}, staff: {}, day: null, history: [], ledger: [], perks: {}, decor: [],
-    records: { biggestWin: 0, jackpots: 0 }, counters: { tipsSent: 0 } };
+    records: { biggestWin: 0, jackpots: 0 }, counters: { tipsSent: 0 }, blackjack: null };
 }
 // Étages créés avant l'économie, ou sauvegardes partielles : on complète sans rien effacer.
 function economyOf(store) {
@@ -272,41 +272,29 @@ export function slotsMultiplier(reels, event = {}) {
   return a === b || b === c || a === c ? CASINO.slots.pair : 0;
 }
 const ROULETTE_BETS = ["rouge", "noir", "pair", "impair"];
+const GAME_NAMES = { slots: "Machine à sous", roulette: "Roulette", race: "Course de robots", blackjack: "Blackjack", tennis: "Match de tennis", golf: "Putt de golf" };
 
-export function playCasino(store, game, betRaw, choiceRaw, now = Date.now() / 1000, rng = randomInt) {
-  const eco = economyOf(store), day = ensureDay(eco, now), c = day.casino, event = eventOf(day.date);
-  const bet = Math.floor(Number(betRaw)), choice = String(choiceRaw ?? "").toLowerCase();
-  if (!["slots", "roulette", "race"].includes(game)) return { error: "Jeu inconnu." };
-  if (!Number.isFinite(bet) || bet < CASINO.minBet || bet > CASINO.maxBet) return { error: `Mise entre ${CASINO.minBet} et ${CASINO.maxBet} P$.` };
-  if (bet > eco.wallet) return { error: "Solde insuffisant pour cette mise." };
-  if (c.plays >= CASINO.dailyPlays) return { error: "Assez joué pour aujourd'hui : le casino rouvre demain." };
-  if (c.wagered - c.won + bet > CASINO.dailyLossLimit) return { error: "Limite de pertes du jour atteinte : le casino te raccompagne à la porte." };
-  let result, multiplier = 0;
-  if (game === "slots") {
-    const reels = [drawSlot(rng).s, drawSlot(rng).s, drawSlot(rng).s];
-    multiplier = slotsMultiplier(reels, event);
-    result = { reels };
-  } else if (game === "roulette") {
-    const number = /^\d{1,2}$/.test(choice) ? Number(choice) : null;
-    if (!ROULETTE_BETS.includes(choice) && !(number !== null && number <= 36)) return { error: "Mise sur rouge, noir, pair, impair ou un numéro de 0 à 36." };
-    const n = rng(0, 37), color = n === 0 ? "vert" : CASINO.roulette.red.includes(n) ? "rouge" : "noir";
-    const won = number !== null ? n === number : choice === "pair" ? n !== 0 && n % 2 === 0 : choice === "impair" ? n % 2 === 1 : choice === color;
-    multiplier = won ? (number !== null ? CASINO.roulette.number : CASINO.roulette.even) : 0;
-    result = { number: n, color };
-  } else {
-    if (!CASINO.race.runners.includes(choice)) return { error: "Choisis ton robot." };
-    const order = [...CASINO.race.runners];
-    for (let i = order.length - 1; i > 0; i--) { const j = rng(0, i + 1); [order[i], order[j]] = [order[j], order[i]]; }
-    multiplier = order[0] === choice ? CASINO.race.payout : 0;
-    result = { order, winner: order[0] };
-  }
-  const win = Math.floor(bet * multiplier), net = win - bet;
-  c.plays++; c.wagered += bet; c.won += win;
-  eco.wallet = money(eco.wallet - bet + win);
-  const names = { slots: "Machine à sous", roulette: "Roulette", race: "Course de robots" };
-  log(eco, { t: now, kind: "casino", label: `${names[game]}${game === "slots" ? " " + result.reels.join("") : game === "roulette" ? ` · ${result.number} ${result.color}` : ` · ${result.winner} gagne`}`, amount: net });
-  const toasts = gameOf(store);
-  if (net > 0) pushToast(toasts, game === "slots" && multiplier >= 20 ? "JACKPOT !" : "Gagné !", `+${net} P$ · ${names[game]}`);
+// Contrôles communs avant toute mise : bornes, solde, limites du jour.
+function betError(eco, day, bet) {
+  const c = day.casino;
+  if (!Number.isFinite(bet) || bet < CASINO.minBet || bet > CASINO.maxBet) return `Mise entre ${CASINO.minBet} et ${CASINO.maxBet} P$.`;
+  if (bet > eco.wallet) return "Solde insuffisant pour cette mise.";
+  if (c.plays >= CASINO.dailyPlays) return "Assez joué pour aujourd'hui : le casino rouvre demain.";
+  if (c.wagered - c.won + bet > CASINO.dailyLossLimit) return "Limite de pertes du jour atteinte : le casino te raccompagne à la porte.";
+  return null;
+}
+function stake(eco, day, bet, newPlay = true) {
+  if (newPlay) day.casino.plays++;
+  day.casino.wagered += bet;
+  eco.wallet = money(eco.wallet - bet);
+}
+// Règlement d'une partie : gain, relevé, toasts, assurance, records.
+function settle(store, game, bet, win, label, now, big = false) {
+  const eco = economyOf(store), day = ensureDay(eco, now), net = win - bet, toasts = gameOf(store);
+  day.casino.won += win;
+  eco.wallet = money(eco.wallet + win);
+  log(eco, { t: now, kind: "casino", label: `${GAME_NAMES[game]} · ${label}`, amount: net });
+  if (net > 0) pushToast(toasts, big ? "JACKPOT !" : "Gagné !", `+${net} P$ · ${GAME_NAMES[game]}`);
   if (net < 0 && eco.perks.assurance) {
     const refund = Math.min(500, money(-net / 2));
     delete eco.perks.assurance;
@@ -315,9 +303,160 @@ export function playCasino(store, game, betRaw, choiceRaw, now = Date.now() / 10
     pushToast(toasts, "Assurance casino", `+${refund} P$ remboursés`);
   }
   if (win > eco.records.biggestWin) eco.records.biggestWin = win;
-  if (game === "slots" && result.reels.every(r => r === "7️⃣")) { eco.records.jackpots++; badge(store, "jackpot"); }
   if (eco.wallet >= 10000) badge(store, "rich");
-  return { ok: true, result: { ...result, win, net }, economy: publicEconomy(store, now) };
+  return { win, net };
+}
+const shuffle = (list, rng) => {
+  for (let i = list.length - 1; i > 0; i--) { const j = rng(0, i + 1); [list[i], list[j]] = [list[j], list[i]]; }
+  return list;
+};
+const chance = (p, rng) => rng(0, 10000) < Math.round(p * 10000);
+
+// ---------- blackjack : une main à la fois, le sabot reste côté serveur ----------
+const RANKS = ["A", "2", "3", "4", "5", "6", "7", "8", "9", "10", "J", "Q", "K"], SUITS = ["♠", "♥", "♦", "♣"];
+export function handTotal(cards) {
+  let total = 0, aces = 0;
+  for (const card of cards) {
+    const rank = card.slice(0, -1);
+    if (rank === "A") { aces++; total += 11; } else total += ["J", "Q", "K"].includes(rank) ? 10 : Number(rank);
+  }
+  while (total > 21 && aces) { total -= 10; aces--; }
+  return total;
+}
+function handView(hand, status) {
+  const reveal = status !== "playing";
+  return { player: [...hand.player], dealer: reveal ? [...hand.dealer] : [hand.dealer[0], "??"], playerTotal: handTotal(hand.player),
+    dealerTotal: reveal ? handTotal(hand.dealer) : handTotal([hand.dealer[0]]), status, bet: hand.bet };
+}
+function finishHand(store, hand, status, now) {
+  const eco = economyOf(store);
+  eco.blackjack = null;
+  const win = status === "blackjack" ? Math.floor(hand.bet * CASINO.blackjack.natural) : status === "win" ? hand.bet * CASINO.blackjack.payout : status === "push" ? hand.bet : 0;
+  const view = handView(hand, status);
+  const { net } = settle(store, "blackjack", hand.bet, win, `${view.playerTotal} contre ${view.dealerTotal}${status === "blackjack" ? " (blackjack)" : ""}`, now);
+  return { hand: view, win, net };
+}
+function dealerPlays(store, hand, now) {
+  while (handTotal(hand.dealer) < CASINO.blackjack.dealerStands) hand.dealer.push(hand.deck.pop());
+  const me = handTotal(hand.player), bank = handTotal(hand.dealer);
+  return finishHand(store, hand, bank > 21 || me > bank ? "win" : me === bank ? "push" : "lose", now);
+}
+function playBlackjack(store, action, betRaw, now, rng) {
+  const eco = economyOf(store), day = ensureDay(eco, now), hand = eco.blackjack;
+  if (action === "deal") {
+    if (hand) return { error: "Termine d'abord ta main en cours." };
+    const bet = Math.floor(Number(betRaw)), error = betError(eco, day, bet);
+    if (error) return { error };
+    const deck = shuffle(SUITS.flatMap(s => RANKS.map(r => r + s)), rng);
+    const fresh = { bet, deck, player: [deck.pop()], dealer: [deck.pop()] };
+    fresh.player.push(deck.pop()); fresh.dealer.push(deck.pop());
+    stake(eco, day, bet);
+    const mine = handTotal(fresh.player) === 21, bank = handTotal(fresh.dealer) === 21;
+    if (mine || bank) return { ok: true, result: finishHand(store, fresh, mine && bank ? "push" : mine ? "blackjack" : "lose", now) };
+    eco.blackjack = fresh;
+    return { ok: true, result: { hand: handView(fresh, "playing"), win: 0, net: 0 } };
+  }
+  if (!hand) return { error: "Aucune main en cours : distribue d'abord." };
+  if (action === "hit") {
+    hand.player.push(hand.deck.pop());
+    const total = handTotal(hand.player);
+    if (total > 21) return { ok: true, result: finishHand(store, hand, "bust", now) };
+    if (total === 21) return { ok: true, result: dealerPlays(store, hand, now) };
+    return { ok: true, result: { hand: handView(hand, "playing"), win: 0, net: 0 } };
+  }
+  if (action === "stand") return { ok: true, result: dealerPlays(store, hand, now) };
+  if (action === "double") {
+    if (hand.player.length !== 2) return { error: "On ne double qu'avec ses deux premières cartes." };
+    if (hand.bet > eco.wallet) return { error: "Solde insuffisant pour doubler." };
+    if (day.casino.wagered - day.casino.won + hand.bet > CASINO.dailyLossLimit) return { error: "Limite de pertes du jour atteinte : impossible de doubler." };
+    stake(eco, day, hand.bet, false);
+    hand.bet *= 2;
+    hand.player.push(hand.deck.pop());
+    if (handTotal(hand.player) > 21) return { ok: true, result: finishHand(store, hand, "bust", now) };
+    return { ok: true, result: dealerPlays(store, hand, now) };
+  }
+  return { error: "Action inconnue : deal, hit, stand ou double." };
+}
+
+// Score d'un set gagné par `winner` : 6-0 à 6-4, ou 7-5 ; le gagnant marque le dernier jeu.
+function tennisSet(won, rng) {
+  const loserGames = rng(0, 6), winnerGames = loserGames === 5 ? 7 : 6;
+  const [w, l] = won ? ["toi", "pro"] : ["pro", "toi"];
+  const games = loserGames === 5
+    ? [...shuffle([...Array(5).fill(w), ...Array(5).fill(l)], rng), w, w]
+    : [...shuffle([...Array(winnerGames - 1).fill(w), ...Array(loserGames).fill(l)], rng), w];
+  return { games, score: won ? [winnerGames, loserGames] : [loserGames, winnerGames] };
+}
+
+// opts.pool : jackpot commun du penthouse au moment de la partie (lu par le serveur HTTP).
+// Le résultat peut contenir `jackpot` : { add } (part de la mise qui l'alimente) ou { won } (gagné, à remettre à zéro).
+export function playCasino(store, game, betRaw, choiceRaw, now = Date.now() / 1000, rng = randomInt, opts = {}) {
+  const eco = economyOf(store), day = ensureDay(eco, now), event = eventOf(day.date);
+  const choice = String(choiceRaw ?? "").toLowerCase();
+  if (game === "blackjack") {
+    const r = playBlackjack(store, String(opts.action ?? "deal"), betRaw, now, rng);
+    return r.error ? r : { ...r, economy: publicEconomy(store, now) };
+  }
+  if (!["slots", "roulette", "race", "tennis", "golf"].includes(game)) return { error: "Jeu inconnu." };
+  const bet = Math.floor(Number(betRaw)), error = betError(eco, day, bet);
+  if (error) return { error };
+  let result, multiplier = 0, label = "";
+  if (game === "slots") {
+    const reels = [drawSlot(rng).s, drawSlot(rng).s, drawSlot(rng).s];
+    multiplier = slotsMultiplier(reels, event);
+    result = { reels };
+    label = reels.join("");
+  } else if (game === "roulette") {
+    const number = /^\d{1,2}$/.test(choice) ? Number(choice) : null;
+    if (!ROULETTE_BETS.includes(choice) && !(number !== null && number <= 36)) return { error: "Mise sur rouge, noir, pair, impair ou un numéro de 0 à 36." };
+    const n = rng(0, 37), color = n === 0 ? "vert" : CASINO.roulette.red.includes(n) ? "rouge" : "noir";
+    const won = number !== null ? n === number : choice === "pair" ? n !== 0 && n % 2 === 0 : choice === "impair" ? n % 2 === 1 : choice === color;
+    multiplier = won ? (number !== null ? CASINO.roulette.number : CASINO.roulette.even) : 0;
+    result = { number: n, color };
+    label = `${n} ${color}`;
+  } else if (game === "race") {
+    if (!CASINO.race.runners.includes(choice)) return { error: "Choisis ton robot." };
+    const order = shuffle([...CASINO.race.runners], rng);
+    multiplier = order[0] === choice ? CASINO.race.payout : 0;
+    result = { order, winner: order[0] };
+    label = `${order[0]} gagne`;
+  } else if (game === "tennis") {
+    const style = CASINO.tennis.styles.find(s => s.id === choice);
+    if (!style) return { error: "Choisis ton style de jeu." };
+    const won = chance(style.chance, rng);
+    multiplier = won ? style.payout : 0;
+    result = { style: style.id, won, ...tennisSet(won, rng) };
+    label = `${result.score.join("-")} ${won ? "victoire" : "défaite"}`;
+  } else {
+    const shot = CASINO.golf.shots.find(s => s.id === choice);
+    if (!shot) return { error: "Choisis ton putt." };
+    const holed = chance(shot.chance, rng);
+    multiplier = holed ? shot.payout : 0;
+    result = { shot: shot.id, holed, miss: holed ? null : ["trop court", "trop long", "à gauche", "à droite"][rng(0, 4)] };
+    label = `${shot.name} ${holed ? "dans le trou" : result.miss}`;
+  }
+  stake(eco, day, bet);
+  const jackpot777 = game === "slots" && result.reels.every(r => r === "7️⃣");
+  const { win, net } = settle(store, game, bet, Math.floor(bet * multiplier), label, now, game === "slots" && multiplier >= 20);
+  const out = { ok: true, result: { ...result, win, net } };
+  if (game === "slots") {
+    const pool = Math.floor(Number(opts.pool) || 0);
+    if (jackpot777) {
+      eco.records.jackpots++;
+      badge(store, "jackpot");
+      if (pool > 0) {
+        eco.wallet = money(eco.wallet + pool);
+        log(eco, { t: now, kind: "casino", label: "💰 Jackpot commun du penthouse", amount: pool });
+        pushToast(gameOf(store), "JACKPOT COMMUN !", `+${pool} P$ pour toi`);
+        if (pool > eco.records.biggestWin) eco.records.biggestWin = pool;
+        out.result.progressive = pool;
+        out.jackpot = { won: pool };
+      }
+    }
+    out.jackpot ??= { add: money(bet * CASINO.jackpot.share) };
+  }
+  out.economy = publicEconomy(store, now);
+  return out;
 }
 
 // Prime de collègue : d'un étage à un autre, dans la même transaction de base.
@@ -393,6 +532,8 @@ export function publicEconomy(store, now = Date.now() / 1000) {
     casino: { plays: day.casino.plays, wagered: day.casino.wagered, won: day.casino.won,
       lossLeft: Math.max(0, CASINO.dailyLossLimit - (day.casino.wagered - day.casino.won)), playsLeft: Math.max(0, CASINO.dailyPlays - day.casino.plays) },
     shopFactor: event.shop ?? 1,
+    // Main de blackjack en cours (carte cachée de la banque masquée), pour la reprendre après un rechargement.
+    blackjack: eco.blackjack ? handView(eco.blackjack, "playing") : null,
   };
 }
 

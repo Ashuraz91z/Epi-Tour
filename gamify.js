@@ -11,6 +11,10 @@ export const SPACE_ACTIONS = {
   lounge_tabac: { floor: "lounge", title: "Bureau de tabac", blurb: "Passage discret côté allée.", xp: 18, cooldown: 7200 },
   club_dance: { floor: "club", title: "Session dancefloor", blurb: "Tes agents en pause viennent bouger.", xp: 35, cooldown: 3600 },
   club_vibe: { floor: "club", title: "Ambiance fumée", blurb: "Lumières basses, enceintes max.", xp: 28, daily: true },
+  tennis_rally: { floor: "tennis", title: "Échange au fond du court", blurb: "Vingt coups droits sans faute.", xp: 30, cooldown: 3600 },
+  tennis_tournoi: { floor: "tennis", title: "Tournoi du penthouse", blurb: "Un set contre les agents des voisins.", xp: 55, daily: true },
+  golf_putt: { floor: "golf", title: "Séance de putting", blurb: "Trois balles, trois trous.", xp: 25, cooldown: 2400 },
+  golf_parcours: { floor: "golf", title: "Neuf trous", blurb: "Le parcours complet, voiturette comprise.", xp: 50, daily: true },
   ...SHARED_EXTRAS,
 };
 

@@ -7,6 +7,7 @@ import { dirname, join } from "node:path";
 import { fileURLToPath } from "node:url";
 import { gzipSync } from "node:zlib";
 import { ingest, sanitizeProfile } from "./core.js";
+import { CASINO } from "./public/economy-data.js";
 import { DAILY_QUESTS, claimQuest, onIngestGame, performSpaceAction, pullToasts, publicGame, visitWing } from "./gamify.js";
 import { buyItem, onIngestEconomy, playCasino, questReward, setSubscription, spectatorEconomy, tip } from "./economy.js";
 
@@ -146,10 +147,13 @@ export function createApp({ code, db }) {
     const apartments = db.snapshots(now);
     const tv = db.setting("tv") ?? { channel: "auto" };
     const room = roomName();
+    // Jackpot commun du casino : visible de tous, résidents comme spectateurs.
+    const jackpot = db.setting("jackpot") ?? { pool: CASINO.jackpot.seed, lastWinner: null };
+    const casino = { jackpot: Math.floor(jackpot.pool), lastWinner: jackpot.lastWinner ?? null };
     let resident, spectator;
     return {
-      resident: () => resident ??= { now, viewer: { role: "resident", room }, tv, apartments },
-      spectator: () => spectator ??= { now, viewer: { role: "spectator", room }, tv: publicTv(tv), apartments: apartments.map(spectatorSnapshot) },
+      resident: () => resident ??= { now, viewer: { role: "resident", room }, tv, casino, apartments },
+      spectator: () => spectator ??= { now, viewer: { role: "spectator", room }, tv: publicTv(tv), casino, apartments: apartments.map(spectatorSnapshot) },
     };
   };
   // Flux SSE : un seul minuteur pour tous les onglets ouverts, l'état est calculé une fois toutes les 2 s.
@@ -345,7 +349,22 @@ export function createApp({ code, db }) {
       if (url.pathname === "/api/economy/casino") {
         const apt = residentApt();
         if (!apt) return;
-        return play(apt, (store, now) => playCasino(store, String(p.game ?? "").slice(0, 12), p.bet, String(p.choice ?? "").slice(0, 12), now));
+        const pool = (db.setting("jackpot") ?? { pool: CASINO.jackpot.seed }).pool;
+        let jackpot = null;
+        const game = String(p.game ?? "").slice(0, 12), action = String(p.action ?? "deal").slice(0, 8);
+        const answer = play(apt, (store, now) => {
+          const result = playCasino(store, game, p.bet, String(p.choice ?? "").slice(0, 12), now, undefined, { pool, action });
+          ({ jackpot = null } = result);
+          delete result.jackpot;
+          return result;
+        });
+        // Jackpot commun : chaque mise à la machine à sous l'alimente ; le 7️⃣7️⃣7️⃣ le remporte et il repart de zéro.
+        if (jackpot) db.updateSetting("jackpot", current => {
+          const base = current ?? { pool: CASINO.jackpot.seed, lastWinner: null };
+          return jackpot.won ? { pool: CASINO.jackpot.seed, lastWinner: { name: apt.name, amount: jackpot.won, at: Date.now() / 1000 } }
+            : { ...base, pool: Math.round((base.pool + jackpot.add) * 100) / 100 };
+        });
+        return answer;
       }
       if (url.pathname === "/api/economy/tip") {
         const apt = residentApt();
@@ -398,7 +417,7 @@ export function createApp({ code, db }) {
         if (!same(String(p.code ?? ""), code)) return json(403, { error: "Code du penthouse incorrect." });
         const name = String(p.name ?? "").trim().slice(0, 32), slug = slugify(name);
         if (!slug) return json(400, { error: "Choisis un nom." });
-        if (["roof", "lounge", "club", "casino"].includes(slug)) return json(400, { error: "Ce nom est réservé aux espaces communs. Choisis un autre nom." });
+        if (["roof", "lounge", "club", "casino", "tennis", "golf"].includes(slug)) return json(400, { error: "Ce nom est réservé aux espaces communs. Choisis un autre nom." });
         let apt = db.get(slug), token;
         if (!apt) {
           token = newToken();

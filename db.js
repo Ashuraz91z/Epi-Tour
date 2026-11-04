@@ -65,6 +65,13 @@ export function openDb(path) {
     // Réglages communs à tout le penthouse (la chaîne de la télé du Salon).
     setting: key => { const r = db.prepare("SELECT value FROM settings WHERE key = ?").get(key); return r ? JSON.parse(r.value) : undefined; },
     setSetting: (key, value) => db.prepare("INSERT OR REPLACE INTO settings VALUES (?, ?)").run(key, JSON.stringify(value)),
+    // Réglage commun modifié d'après sa valeur actuelle (jackpot du casino), sans perdre une mise concurrente.
+    updateSetting: (key, fn) => tx(() => {
+      const r = db.prepare("SELECT value FROM settings WHERE key = ?").get(key);
+      const next = fn(r ? JSON.parse(r.value) : undefined);
+      db.prepare("INSERT OR REPLACE INTO settings VALUES (?, ?)").run(key, JSON.stringify(next));
+      return next;
+    }),
     // Reprise de l'ancienne sauvegarde JSON (une seule fois, base vide).
     importJson: apartments => tx(() => {
       for (const [slug, a] of Object.entries(apartments))

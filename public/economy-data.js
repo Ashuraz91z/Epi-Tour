@@ -109,6 +109,23 @@ export const CASINO = {
   roulette: { red: [1, 3, 5, 7, 9, 12, 14, 16, 18, 19, 21, 23, 25, 27, 30, 32, 34, 36], even: 2, number: 36 },
   // Course de robots : un robot par outil, le gagnant paie × 5,5.
   race: { runners: ["claude", "codex", "cursor", "hermes", "grok", "n8n"], payout: 5.5 },
+  // Blackjack : un sabot de 52 cartes par main, la banque tire jusqu'à 17. Gagné × 2, blackjack × 2,5, égalité remboursée.
+  blackjack: { payout: 2, natural: 2.5, dealerStands: 17 },
+  // Jackpot commun à tout le penthouse : 2 % de chaque mise à la machine à sous l'alimentent (offerts par la maison),
+  // le 7️⃣7️⃣7️⃣ l'emporte en plus de son gain. Il repart de 1 000 P$.
+  jackpot: { seed: 1000, share: 0.02 },
+  // Étage Tennis : match en un set contre le pro du club. Plus le style est risqué, plus il rapporte.
+  tennis: { styles: [
+    { id: "attaque", name: "Attaque à outrance", icon: "⚡", chance: 0.35, payout: 2.6 },
+    { id: "equilibre", name: "Jeu équilibré", icon: "🎾", chance: 0.48, payout: 1.95 },
+    { id: "defense", name: "Mur du fond de court", icon: "🧱", chance: 0.6, payout: 1.55 },
+  ] },
+  // Étage Golf : un putt, du plus facile au plus long.
+  golf: { shots: [
+    { id: "court", name: "Putt de 1 m", icon: "⛳", chance: 0.72, payout: 1.3 },
+    { id: "moyen", name: "Putt de 4 m", icon: "🏌️", chance: 0.47, payout: 2 },
+    { id: "long", name: "Putt de 12 m", icon: "🦅", chance: 0.22, payout: 4.2 },
+  ] },
 };
 
 // Virements entre résidents (« prime de collègue »).

@@ -711,8 +711,8 @@ test("pauses : choix variés, stables au polling, café puis Club conservés", a
     assert.equal(breakVisit(seed, 899).place, 'club');
     assert.deepEqual(breakVisit(seed, 950), breakVisit(seed, 950));
     const visits = new Set();
-    for (let age = 900; age < 1800; age += 2) visits.add(breakVisit(seed, age).place);
-    assert.equal(visits.size, 6);
+    for (let age = 900; age < 2700; age += 2) visits.add(breakVisit(seed, age).place);
+    assert.ok(visits.size >= 6, "au moins café, repos, tabac, toilettes, club et casino");
   }
   assert.ok(new Set(Array.from({ length: 30 }, (_, seed) => breakVisit(seed, 1000).place)).size > 3);
 });
@@ -1222,5 +1222,121 @@ test("économie par HTTP : abonnement, casino, primes entre résidents, missions
     assert.deepEqual(Object.keys(view).sort(), ["decor", "earned", "records", "staff", "title", "today", "wallet"]);
     assert.deepEqual(Object.keys(view.staff[0]).sort(), ["echelon", "grade", "role", "src"]);
     assert.equal((await call("/api/economy/casino", { game: "slots", bet: 10 }, { Cookie: spectator, "X-Tour-Token": ana.token })).status, 401);
+  } finally { app.close(); }
+});
+
+// ---------- Blackjack, tennis, golf, jackpot commun ----------
+
+test("blackjack : distribution, tirer, rester, doubler, blackjack naturel", async () => {
+  const { playCasino, handTotal, publicEconomy } = await import("./economy.js");
+  assert.equal(handTotal(["A♠", "K♥"]), 21);
+  assert.equal(handTotal(["A♠", "A♥", "9♦"]), 21);
+  assert.equal(handTotal(["K♠", "Q♥", "5♦"]), 25);
+  const store = createStore();
+  store.economy.wallet = 1000;
+  const bj = (action, bet) => playCasino(store, "blackjack", bet, "", CALM_MORNING, undefined, { action });
+  assert.match(bj("hit").error, /Aucune main/);
+  const deal = bj("deal", 100);
+  assert.ok(deal.ok);
+  if (deal.result.hand.status === "playing") {
+    assert.equal(deal.result.hand.dealer[1], "??", "carte cachée de la banque");
+    assert.equal(publicEconomy(store, CALM_MORNING).blackjack.dealer[1], "??");
+    assert.equal(store.economy.wallet, 900, "mise débitée à la distribution");
+    assert.match(bj("deal", 100).error, /Termine/);
+    const end = bj("stand");
+    assert.ok(["win", "lose", "push"].includes(end.result.hand.status));
+    assert.ok(!end.result.hand.dealer.includes("??"));
+    assert.ok(end.result.hand.dealerTotal >= 17);
+  }
+  assert.equal(store.economy.blackjack, null);
+  // Mains préparées : on contrôle le sabot (on tire par la fin).
+  const preset = (player, dealer, deck, bet = 100) => {
+    store.economy.wallet = 1000 - bet;
+    store.economy.blackjack = { bet, player, dealer, deck };
+  };
+  preset(["10♠", "6♥"], ["9♦", "7♣"], ["2♠", "5♥"]);
+  assert.deepEqual([bj("hit").result.hand.playerTotal, store.economy.wallet], [21, 1100], "21 : la banque joue (16 + 2 = 18), gagné × 2");
+  preset(["10♠", "6♥"], ["9♦", "8♣"], ["K♠"]);
+  assert.equal(bj("hit").result.hand.status, "bust");
+  assert.equal(store.economy.wallet, 900);
+  preset(["5♠", "6♥"], ["10♦", "7♣"], ["K♠"]);
+  const doubled = bj("double");
+  assert.deepEqual([doubled.result.hand.status, doubled.result.hand.bet, doubled.result.win], ["win", 200, 400]);
+  assert.equal(store.economy.wallet, 1200);
+  preset(["10♠", "8♥"], ["10♦", "8♣"], []);
+  assert.equal(bj("stand").result.hand.status, "push");
+  assert.equal(store.economy.wallet, 1000, "égalité : mise rendue");
+  assert.match(playCasino(store, "blackjack", 10, "", CALM_MORNING, undefined, { action: "poker" }).error, /Aucune main|Action/);
+  // Blackjack naturel à la distribution : sabot truqué par le tirage (rng) — on essaie jusqu'à en obtenir un.
+  let natural = null;
+  for (let seed = 0; seed < 400 && !natural; seed++) {
+    const s = createStore(); s.economy.wallet = 1000;
+    let x = seed; const rng = (a, b) => a + ((x = (x * 1103515245 + 12345) % 2147483648) % (b - a));
+    const r = playCasino(s, "blackjack", 100, "", CALM_MORNING, rng, { action: "deal" });
+    if (r.result.hand.status === "blackjack") natural = { r, s };
+  }
+  assert.ok(natural, "un blackjack naturel finit par sortir");
+  assert.deepEqual([natural.r.result.win, natural.s.economy.wallet], [250, 1150]);
+});
+
+test("tennis et golf : retours moyens sous 100 %, scores de set valides", async () => {
+  const { playCasino } = await import("./economy.js");
+  const { CASINO } = await import("./public/economy-data.js");
+  for (const s of [...CASINO.tennis.styles, ...CASINO.golf.shots]) assert.ok(s.chance * s.payout > 0.9 && s.chance * s.payout < 0.95, s.id);
+  const store = createStore();
+  store.economy.wallet = 100_000;
+  let seed = 7; const rng = (a, b) => a + ((seed = (seed * 1103515245 + 12345) % 2147483648) % (b - a));
+  let wins = 0;
+  for (let i = 0; i < 150; i++) {
+    if (store.economy.day) store.economy.day.casino = { plays: 0, wagered: 0, won: 0 }; // limites du jour remises à zéro pour la statistique
+    const { result } = playCasino(store, "tennis", 10, "equilibre", CALM_MORNING, rng);
+    const [me, pro] = result.score, top = Math.max(me, pro), low = Math.min(me, pro);
+    assert.ok((top === 6 && low <= 4) || (top === 7 && low === 5), result.score.join("-"));
+    assert.equal(result.games.length, me + pro);
+    assert.equal(result.games.at(-1), result.won ? "toi" : "pro", "le gagnant marque le dernier jeu");
+    assert.equal(result.games.filter(g => g === "toi").length, me);
+    assert.equal(result.win, result.won ? 19 : 0);
+    wins += result.won;
+  }
+  assert.ok(wins > 40 && wins < 110);
+  const putt = playCasino(store, "golf", 100, "long", CALM_MORNING, () => 0);
+  assert.deepEqual([putt.result.holed, putt.result.win, putt.result.miss], [true, 420, null]);
+  const miss = playCasino(store, "golf", 100, "court", CALM_MORNING, (a, b) => b - 1);
+  assert.ok(!miss.result.holed && miss.result.miss);
+  assert.match(playCasino(store, "golf", 100, "eagle", CALM_MORNING).error, /putt/);
+  assert.match(playCasino(store, "tennis", 100, "", CALM_MORNING).error, /style/);
+});
+
+test("jackpot commun : alimenté par les mises, gagné au 7️⃣7️⃣7️⃣, visible de tous", async () => {
+  const { playCasino } = await import("./economy.js");
+  const store = createStore();
+  store.economy.wallet = 1000;
+  const lost = playCasino(store, "slots", 100, "", CALM_MORNING, () => 0, { pool: 1500 });
+  assert.deepEqual(lost.jackpot, { add: 2 });
+  const big = playCasino(store, "slots", 100, "", CALM_MORNING, () => 99, { pool: 1500 });
+  assert.deepEqual(big.jackpot, { won: 1500 });
+  assert.equal(big.result.progressive, 1500);
+  assert.ok(store.economy.ledger.some(e => e.label === "💰 Jackpot commun du penthouse" && e.amount === 1500));
+  const { app, url, call, db } = await open();
+  try {
+    const join = await call("/api/join", { name: "Flambeur", code: "porte" }, { "X-Forwarded-For": "10.3.0.1" });
+    const { token } = await join.json(), cookie = join.headers.get("set-cookie").split(";")[0];
+    assert.equal((await call("/api/join", { name: "Tennis", code: "porte" }, { "X-Forwarded-For": "10.3.0.2" })).status, 400, "nom réservé");
+    db.change("flambeur", s => { s.economy.wallet = 1000; });
+    const state = async () => (await fetch(url + "/api/state", { headers: { Cookie: cookie } })).json();
+    assert.deepEqual((await state()).casino, { jackpot: 1000, lastWinner: null });
+    const spin = await (await call("/api/economy/casino", { game: "slots", bet: 200 }, { Cookie: cookie, "X-Tour-Token": token })).json();
+    assert.equal(spin.jackpot, undefined, "le détail interne ne part pas au client");
+    const after = (await state()).casino;
+    assert.ok(spin.result.progressive ? after.lastWinner.name === "Flambeur" : after.jackpot === 1004);
+    const bj = await (await call("/api/economy/casino", { game: "blackjack", action: "deal", bet: 50 }, { Cookie: cookie, "X-Tour-Token": token })).json();
+    assert.ok(bj.result.hand.player.length === 2);
+    const room = await call("/api/spectate", { room: "Penthouse" }, { "X-Forwarded-For": "10.3.0.3" });
+    const spectator = (await (await fetch(url + "/api/state", { headers: { Cookie: room.headers.get("set-cookie").split(";")[0] } })).json());
+    assert.ok(Number.isFinite(spectator.casino.jackpot));
+    // Activités gratuites des nouveaux étages.
+    const rally = await call("/api/game/action", { action: "tennis_rally", floor: "tennis" }, { Cookie: cookie, "X-Tour-Token": token });
+    assert.equal(rally.status, 200);
+    assert.equal((await call("/api/game/action", { action: "golf_putt", floor: "tennis" }, { Cookie: cookie, "X-Tour-Token": token })).status, 400);
   } finally { app.close(); }
 });
