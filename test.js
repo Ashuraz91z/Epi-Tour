@@ -7,7 +7,8 @@ import { execFile } from "node:child_process";
 import { promisify } from "node:util";
 import { fileURLToPath } from "node:url";
 import { test } from "node:test";
-import { createStore, describeTool, ingest, normalize, snapshot } from "./core.js";
+import { createStore, describeTool, ingest, normalize, sanitizeProfile, snapshot } from "./core.js";
+import { officePublic, officeTierForLevel } from "./upgrades.js";
 import { openDb } from "./db.js";
 import { createApp, slugify, spectatorSnapshot } from "./penthouse.js";
 
@@ -711,7 +712,7 @@ test("pauses : choix variés, stables au polling, café puis Club conservés", a
     assert.deepEqual(breakVisit(seed, 950), breakVisit(seed, 950));
     const visits = new Set();
     for (let age = 900; age < 1800; age += 2) visits.add(breakVisit(seed, age).place);
-    assert.equal(visits.size, 5);
+    assert.equal(visits.size, 6);
   }
   assert.ok(new Set(Array.from({ length: 30 }, (_, seed) => breakVisit(seed, 1000).place)).size > 3);
 });
@@ -774,4 +775,466 @@ assert p['usage']['chatgpt']['seven_day']['pct']==30
 assert 'usage' not in parse('codex',[event(1,{'primary':None,'secondary':None})])
 `;
   await run('python3', ['-c', python, path]);
+});
+
+test("profil étage : enregistrement avec clé et exposition dans l'état", async () => {
+  const { app, url, call } = await open();
+  try {
+    const join = await call("/api/join", { name: "Styler", code: "porte" }, { "X-Forwarded-For": "10.0.0.42" });
+    assert.equal(join.status, 200);
+    const { slug, token } = await join.json();
+    const cookieHeader = join.headers.getSetCookie?.()?.[0] ?? join.headers.get("set-cookie");
+    assert.ok(cookieHeader);
+    const cookie = cookieHeader.split(";")[0];
+    assert.equal((await call("/api/profile", { profile: { accent: "#112233", tagline: "Nuit code" } }, { "X-Tour-Token": token })).status, 401);
+    const saved = await (await call("/api/profile", { profile: { accent: "#112233", tagline: "Nuit code" } }, { Cookie: cookie, "X-Tour-Token": token })).json();
+    assert.equal(saved.profile.tagline, "Nuit code");
+    assert.equal(sanitizeProfile({ accent: "bad", tagline: "x".repeat(200) }).accent, "#e8c27a");
+    assert.equal(sanitizeProfile({ accent: "bad", tagline: "x".repeat(200) }).tagline.length, 80);
+    const themed = await (await call("/api/profile", { profile: { theme: "cyberpunk", screens: "TikTok Shop / Toksy / toksy.fr / trop" } }, { Cookie: cookie, "X-Tour-Token": token })).json();
+    assert.equal(themed.profile.theme, "cyberpunk");
+    assert.deepEqual(themed.profile.screens, ["TikTok Shop", "Toksy", "toksy.fr"]);
+    assert.equal(themed.profile.tagline, "Nuit code");
+    const saveTv = tv => call("/api/profile", { profile: { tv } }, { Cookie: cookie, "X-Tour-Token": token });
+    assert.deepEqual((await (await saveTv("https://www.youtube.com/watch?v=abcdefghijk")).json()).profile.tv, { kind: "youtube", id: "abcdefghijk" });
+    assert.equal((await saveTv("https://exemple.com/page")).status, 400);
+    assert.deepEqual((await (await saveTv("https://twitch.tv/LofiGirl")).json()).profile.tv, { kind: "twitch", channel: "lofigirl" });
+    assert.deepEqual(sanitizeProfile({ tv: { kind: "youtube", id: "javascript:x" } }).tv, null);
+    assert.equal((await (await saveTv("")).json()).profile.tv, null);
+    assert.equal((await (await saveTv("https://twitch.tv/lofigirl")).json()).profile.theme, "cyberpunk");
+    const state = await (await fetch(url + "/api/state", { headers: { cookie } })).json();
+    const mine = state.apartments.find(a => a.slug === slug).profile;
+    assert.equal(mine.accent, "#112233");
+    assert.equal(mine.theme, "cyberpunk");
+    assert.deepEqual(mine.screens, ["TikTok Shop", "Toksy", "toksy.fr"]);
+  } finally {
+    app.close();
+  }
+});
+
+test("Cursor : sessions et signe de vie machine", () => {
+  const store = createStore();
+  ingest(store, "cursor", "macbook", { hook_event_name: "cursor:working", session_id: "cur-1", prompt: "refactor" }, 10);
+  const view = snapshot(store, 11);
+  assert.equal(view.sessions[0].state, "travaille");
+  assert.equal(view.sessions[0].task, "refactor");
+  assert.equal(store.seen.macbook.events.cursor, 10);
+  ingest(store, "cursor", "macbook", { hook_event_name: "cursor:approval", session_id: "cur-1" }, 12);
+  assert.equal(snapshot(store, 13).sessions[0].state, "autorisation");
+});
+
+test("gamification : activité commune et quête", async () => {
+  const { app, call } = await open();
+  try {
+    const join = await call("/api/join", { name: "Joueur", code: "porte" }, { "X-Forwarded-For": "10.0.0.50" });
+    const { token } = await join.json();
+    const cookieHeader = join.headers.getSetCookie?.()?.[0] ?? join.headers.get("set-cookie");
+    const cookie = cookieHeader.split(";")[0];
+    const action = await call("/api/game/action", { action: "roof_breathe", floor: "roof", agentsHere: 0 }, { Cookie: cookie, "X-Tour-Token": token });
+    assert.equal(action.status, 200);
+    const body = await action.json();
+    assert.ok(body.game.xp >= 30);
+    assert.ok(body.toasts.length >= 1);
+    const again = await call("/api/game/action", { action: "roof_breathe", floor: "lounge", agentsHere: 0 }, { Cookie: cookie, "X-Tour-Token": token });
+    assert.equal(again.status, 400);
+  } finally {
+    app.close();
+  }
+});
+
+test("aménagement bureau lié au niveau XP", () => {
+  assert.equal(officeTierForLevel(1).name, "Starter");
+  assert.equal(officeTierForLevel(3).id, 2);
+  assert.ok(officeTierForLevel(6).bookcase);
+  const pub = officePublic(5);
+  assert.equal(pub.name, "Confort");
+  assert.equal(pub.next.name, "Pro");
+  assert.equal(officePublic(15).next, null);
+});
+
+test("flux SSE : premier paquet d'état pour un résident", async () => {
+  const { app, url, call } = await open();
+  try {
+    const join = await call("/api/join", { name: "Stream", code: "porte" }, { "X-Forwarded-For": "10.0.0.43" });
+    assert.equal(join.status, 200);
+    const cookieHeader = join.headers.getSetCookie?.()?.[0] ?? join.headers.get("set-cookie");
+    assert.ok(cookieHeader);
+    const cookie = cookieHeader.split(";")[0];
+    const res = await fetch(url + "/api/stream", { headers: { Cookie: cookie } });
+    assert.equal(res.status, 200);
+    assert.match(res.headers.get("content-type") ?? "", /text\/event-stream/);
+    const reader = res.body.getReader();
+    const decoder = new TextDecoder();
+    let buffer = "";
+    while (!buffer.includes("data: ")) {
+      const { value, done } = await reader.read();
+      if (done) break;
+      buffer += decoder.decode(value);
+    }
+    reader.cancel().catch(() => {});
+    const line = buffer.split("\n").find(row => row.startsWith("data: "));
+    assert.ok(line);
+    const payload = JSON.parse(line.slice(6));
+    assert.ok(Array.isArray(payload.apartments));
+    assert.equal(payload.viewer.role, "resident");
+  } finally {
+    app.close();
+  }
+});
+
+// ---------- Corrections de novembre 2026 : site qui charge, serveur qui tient, jeu sans triche ----------
+
+test("client : chaque module importé par la page est servi (sinon la page entière reste vide)", async () => {
+  const { app, url } = await open();
+  try {
+    const { readdirSync } = await import("node:fs");
+    const publicDir = new URL("./public/", import.meta.url);
+    const wanted = new Set();
+    const html = readFileSync(new URL("index.html", publicDir), "utf8");
+    for (const [, src] of html.matchAll(/<script[^>]+src="([^"]+)"/g)) wanted.add("/" + src.replace(/^\.?\//, ""));
+    for (const [, href] of html.matchAll(/<link[^>]+rel="stylesheet"[^>]+href="([^"h][^"]*)"/g)) wanted.add("/" + href.replace(/^\.?\//, ""));
+    for (const file of readdirSync(publicDir).filter(f => f.endsWith(".js"))) {
+      const source = readFileSync(new URL(file, publicDir), "utf8");
+      for (const [, path] of source.matchAll(/^\s*import\b[^"']*["'](\.\/[^"']+)["']/gm)) wanted.add(path.slice(1));
+      for (const [, path] of source.matchAll(/\bimport\(\s*["'](\.\/[^"']+)["']\s*\)/g)) wanted.add(path.slice(1));
+    }
+    assert.ok(wanted.has("/wings-client.js") && wanted.has("/app.js"));
+    for (const path of wanted) assert.equal((await fetch(url + path)).status, 200, `${path} doit être servi`);
+  } finally { app.close(); }
+});
+
+test("collecte : un événement mal formé est refusé sans arrêter le serveur", async () => {
+  const { app, url, call } = await open();
+  try {
+    const { token } = await (await call("/api/join", { name: "Robuste", code: "porte" }, { "X-Forwarded-For": "10.1.0.1" })).json();
+    const post = body => fetch(url + "/e?src=claude&host=mac", { method: "POST", body: JSON.stringify(body), headers: { "X-Tour-Token": token } });
+    for (const body of [
+      { hook_event_name: "Stop", session_id: "a", cwd: 123 },
+      { hook_event_name: "PreToolUse", session_id: "b", tool_name: 42, tool_input: { command: ["x"] } },
+      { hook_event_name: "PermissionRequest", session_id: "c", tool_name: { x: 1 } },
+      { hook_event_name: "UserPromptSubmit", session_id: "d", prompt: { long: "x" }, usage: "n'importe quoi", info: [1, 2] },
+      { hook_event_name: "health", health: { services: "x".repeat(20000) } },
+    ]) assert.ok([204, 400].includes((await post(body)).status));
+    // Le serveur répond toujours, et l'étage garde des données propres.
+    const state = await fetch(url + "/api/connection", { headers: { "X-Tour-Token": token } });
+    assert.equal(state.status, 200);
+  } finally { app.close(); }
+});
+
+test("collecte : machines et objets libres bornés", () => {
+  const store = createStore();
+  for (let i = 0; i < 40; i++) ingest(store, "claude", "m" + i, { hook_event_name: "Stop", session_id: "s" + i, info: { big: "x".repeat(i === 3 ? 5000 : 10) } }, 1000 + i);
+  assert.equal(Object.keys(store.seen).length, 24);
+  assert.ok(store.seen.m39 && !store.seen.m0);
+  ingest(store, "claude", "vieux", { hook_event_name: "Stop", session_id: "v" }, 1000);
+  ingest(store, "claude", "neuf", { hook_event_name: "Stop", session_id: "n" }, 1000 + 31 * 86400);
+  assert.equal(store.seen.vieux, undefined);
+  ingest(store, "codex", "neuf", { hook_event_name: "usage", usage: { chatgpt: { ts: 5, plan: "pro", five_hour: { pct: 12, resets_at: 99, secret: "x" }, extra: "y".repeat(1000) } } }, 1000 + 31 * 86400);
+  assert.deepEqual(store.usage.chatgpt, { plan: "pro", five_hour: { pct: 12, resets_at: 99 }, ts: 5 });
+});
+
+test("jeu : ailes inventées, verrouillées ou d'un autre étage ne rapportent rien", async () => {
+  const { visitWing, performSpaceAction } = await import("./gamify.js");
+  const store = createStore(), now = Date.UTC(2026, 10, 4, 12) / 1000;
+  for (let i = 0; i < 20; i++) visitWing(store, "moi:fake" + i, now, "moi");
+  visitWing(store, "moi:studio", now, "moi");
+  assert.equal(store.game.xp, 0);
+  assert.ok(performSpaceAction(store, "studio_focus", now, { floor: "moi:studio", slug: "moi" }).error);
+  assert.ok(performSpaceAction(store, "roof_breathe", now, {}).error, "l'étage est obligatoire");
+  assert.ok(performSpaceAction(store, "club_dance", now, { floor: "club", agentsHere: 99 }).error, "le serveur compte lui-même les agents en pause");
+  store.game.xp = 10_000; // niveau 12 : toutes les ailes
+  assert.equal(visitWing(store, "autre:lab", now, "moi").skipped, true);
+  const visit = visitWing(store, "moi:lab", now, "moi");
+  assert.equal(visit.skipped, undefined);
+  assert.equal(store.game.xp, 10_012);
+  assert.equal(visitWing(store, "moi:lab", now, "moi").skipped, true, "une fois par jour");
+  assert.ok(performSpaceAction(store, "studio_focus", now, { floor: "moi:studio", slug: "moi" }).ok);
+});
+
+test("jeu : la série de jours suit l'activité réelle, pas les visites du site", async () => {
+  const { onIngestGame } = await import("./gamify.js");
+  const store = createStore(), day = Date.UTC(2026, 10, 1, 12) / 1000;
+  for (let d = 0; d < 5; d++) snapshot(store, day + d * 86400);
+  assert.equal(snapshot(store, day + 5 * 86400).game.streak, 0);
+  for (let d = 10; d < 13; d++) {
+    const prev = Object.fromEntries(Object.entries(store.sessions).map(([k, s]) => [k, { state: s.state, updated: s.updated }]));
+    ingest(store, "claude", "mac", { hook_event_name: "UserPromptSubmit", session_id: "s" + d }, day + d * 86400);
+    onIngestGame(store, prev, {}, day + d * 86400);
+  }
+  assert.equal(snapshot(store, day + 12 * 86400).game.streak, 3);
+  assert.equal(snapshot(store, day + 14 * 86400).game.streak, 0, "un jour sans activité casse la série");
+});
+
+test("jeu : les toasts d'une visite d'aile arrivent au client", async () => {
+  const { app, call, db } = await open();
+  try {
+    const join = await call("/api/join", { name: "Visiteur", code: "porte" }, { "X-Forwarded-For": "10.1.0.2" });
+    const { token } = await join.json(), cookie = join.headers.get("set-cookie").split(";")[0];
+    db.change("visiteur", store => { store.game.xp = 2000; });
+    const r = await call("/api/game/visit", { floor: "visiteur:lab" }, { Cookie: cookie, "X-Tour-Token": token });
+    const body = await r.json();
+    assert.equal(r.status, 200);
+    assert.ok(body.toasts.some(t => t.title === "Aile · Labo IA"));
+  } finally { app.close(); }
+});
+
+test("télé : lien perso YouTube/Twitch normalisé, toute autre adresse refusée", async () => {
+  const { parseTvLink } = await import("./penthouse.js");
+  assert.deepEqual(parseTvLink("https://www.youtube.com/watch?v=dQw4w9WgXcQ&t=3"), { kind: "youtube", id: "dQw4w9WgXcQ" });
+  assert.deepEqual(parseTvLink("https://youtu.be/dQw4w9WgXcQ"), { kind: "youtube", id: "dQw4w9WgXcQ" });
+  assert.deepEqual(parseTvLink("https://www.youtube.com/live/jfKfPfyJRdk"), { kind: "youtube", id: "jfKfPfyJRdk" });
+  assert.deepEqual(parseTvLink("https://www.twitch.tv/Zerator"), { kind: "twitch", channel: "zerator" });
+  for (const bad of ["javascript:alert(1)", "https://evil.example/watch?v=dQw4w9WgXcQ", "https://youtube.com.evil.example/watch?v=dQw4w9WgXcQ",
+    "https://www.youtube.com/watch?v=<script>", "data:text/html,x", "https://www.twitch.tv/directory", ""]) assert.equal(parseTvLink(bad), null, bad);
+  const { app, call } = await open();
+  try {
+    const join = await call("/api/join", { name: "Teleur", code: "porte" }, { "X-Forwarded-For": "10.1.0.3" });
+    const { token } = await join.json(), cookie = join.headers.get("set-cookie").split(";")[0];
+    const ok = await call("/api/tv", { channel: "custom", url: "https://youtu.be/dQw4w9WgXcQ", by: "Quelqu'un d'autre" }, { Cookie: cookie, "X-Tour-Token": token });
+    assert.deepEqual((({ channel, custom, by }) => ({ channel, custom, by }))(await ok.json()), { channel: "custom", custom: { kind: "youtube", id: "dQw4w9WgXcQ" }, by: "Teleur" });
+    assert.equal((await call("/api/tv", { channel: "custom", url: "javascript:alert(1)" }, { Cookie: cookie })).status, 400);
+  } finally { app.close(); }
+});
+
+test("historique CSV : les formules de tableur sont neutralisées", async () => {
+  const { historyCsv } = await import("./public/penthouse-extras.js");
+  const csv = historyCsv({ sessions: [{ updated: 1, src: "claude", project: "=HYPERLINK(\"x\")", state: "fini", action: "+cmd" }], feed: [] });
+  assert.match(csv, /"'=HYPERLINK\(""x""\)"/);
+  assert.match(csv, /"'\+cmd"/);
+});
+
+test("limite d'essais : X-Forwarded-For ignoré quand le serveur est exposé directement", async () => {
+  process.env.TRUST_PROXY = "0";
+  const { app, call } = await open();
+  try {
+    let last;
+    for (let i = 0; i < 12; i++) last = await call("/api/join", { name: "x", code: "faux" }, { "X-Forwarded-For": "9.9.9." + i });
+    assert.equal(last.status, 429);
+  } finally { delete process.env.TRUST_PROXY; app.close(); }
+});
+
+// ---------- Économie : rôles selon l'abonnement, salaires, carrière, boutique, casino, primes ----------
+
+// Journée calme d'un lundi (2026-11-02), 10 h à Paris : aucun événement ni majoration ne fausse les calculs.
+const CALM_MORNING = Date.UTC(2026, 10, 2, 9) / 1000;
+// Fait travailler une session : un signe de vie toutes les 2 minutes pendant `minutes`.
+async function workSession(store, src, sid, start, minutes, extra = {}) {
+  const { onIngestEconomy } = await import("./economy.js");
+  const step = (p, t) => {
+    const prev = Object.fromEntries(Object.entries(store.sessions).map(([k, s]) => [k, { state: s.state, updated: s.updated }]));
+    ingest(store, src, "mac", { session_id: sid, ...extra, ...p }, t);
+    onIngestEconomy(store, prev, t);
+  };
+  step({ hook_event_name: "UserPromptSubmit", prompt: "go" }, start);
+  for (let m = 2; m <= minutes; m += 2) step({ hook_event_name: "PreToolUse", tool_name: "Bash" }, start + m * 60);
+  return step;
+}
+
+test("économie : le grade suit l'abonnement, le salaire suit le temps de travail réel", async () => {
+  const { setSubscription, publicEconomy } = await import("./economy.js");
+  const store = createStore();
+  assert.equal(publicEconomy(store, CALM_MORNING).staff.length, 0);
+  assert.ok(setSubscription(store, "claude", "max20", CALM_MORNING).ok);
+  await workSession(store, "claude", "c1", CALM_MORNING, 60);
+  const claude = publicEconomy(store, CALM_MORNING + 3600).staff.find(s => s.src === "claude");
+  assert.equal(claude.grade.id, "lead");
+  assert.equal(claude.role, "🧭 Lead · Ingé logiciel");
+  assert.equal(claude.todayMinutes, 60);
+  assert.equal(claude.todayPay, 120, "1 h à 120 P$/h");
+  assert.equal(store.economy.wallet, 120);
+  // Sans abonnement déclaré, Codex est stagiaire : 1 h à 15 P$/h.
+  await workSession(store, "codex", "x1", CALM_MORNING, 60);
+  assert.equal(publicEconomy(store, CALM_MORNING + 3600).staff.find(s => s.src === "codex").todayPay, 15);
+  // Un outil inconnu n'est pas un employé.
+  await workSession(store, "pirate", "p1", CALM_MORNING, 60);
+  assert.equal(store.economy.wallet, 135);
+  assert.ok(store.game.badges.includes("first_pay"));
+});
+
+test("économie : heures sup majorées, repos obligatoire après 10 h, gros trous non payés", async () => {
+  const { setSubscription, publicEconomy } = await import("./economy.js");
+  const store = createStore();
+  const start = CALM_MORNING - 3 * 3600; // 7 h à Paris : la journée finit à 18 h, sans majoration de nuit
+  setSubscription(store, "claude", "pro", start); // Junior, 30 P$/h
+  store.economy.perks.cafe_premium = CALM_MORNING + 86400; // moral au max : seul le temps compte ici
+  const step = await workSession(store, "claude", "c1", start, 11 * 60);
+  const day = publicEconomy(store, start + 11 * 3600).staff[0];
+  assert.equal(day.todayMinutes, 660);
+  assert.ok(day.overtime && day.resting);
+  // 2 h à 30, 4 h à 31,80 (échelon 2), 1 h à 33,60 (échelon 3), 3 h sup à 33,60 × 1,25, la 11e heure non payée.
+  assert.equal(day.todayPay, money2(60 + 127.2 + 33.6 + 126));
+  const paid = store.economy.wallet;
+  step({ hook_event_name: "PreToolUse", tool_name: "Bash" }, start + 11 * 3600 + 120);
+  assert.equal(store.economy.wallet, paid, "au-delà de 10 h, plus rien");
+  // Un trou de 2 h entre deux événements ne compte que pour 10 minutes.
+  const other = createStore();
+  const stepOther = await workSession(other, "claude", "c2", CALM_MORNING, 0);
+  stepOther({ hook_event_name: "PreToolUse", tool_name: "Bash" }, CALM_MORNING + 7200);
+  assert.equal(other.economy.day.minutes.claude, 10);
+});
+
+test("économie : majorations de nuit et du dimanche, moral qui baisse sans pause", async () => {
+  const { rateFor, setSubscription } = await import("./economy.js");
+  const store = createStore();
+  setSubscription(store, "claude", "pro", CALM_MORNING);
+  assert.equal(rateFor(store, "claude", CALM_MORNING).rate, 30);
+  assert.equal(rateFor(store, "claude", Date.UTC(2026, 10, 2, 22) / 1000).rate, 37.5, "23 h à Paris : +25 %");
+  assert.equal(rateFor(store, "claude", Date.UTC(2026, 10, 15, 10) / 1000).rate, 45, "dimanche : +50 %");
+  store.economy.staff.claude = { minutes: 0, cont: 300, lastWork: CALM_MORNING, model: "claude-opus-4" };
+  const tired = rateFor(store, "claude", CALM_MORNING);
+  assert.equal(tired.morale, 40);
+  assert.ok(tired.factors.some(f => f.label === "Prime modèle haut de gamme"));
+  assert.equal(tired.rate, money2(30 * 1.15 * 0.82));
+  assert.equal(rateFor(store, "claude", CALM_MORNING + 20 * 60).morale, 100, "une pause de 15 min remet le moral à 100");
+});
+const money2 = x => Math.round(x * 100) / 100;
+
+test("économie : formule ChatGPT vérifiée par Codex, montée en gamme limitée, descente libre", async () => {
+  const { setSubscription, publicEconomy } = await import("./economy.js");
+  const store = createStore();
+  assert.ok(setSubscription(store, "chatgpt", "plus", CALM_MORNING).ok);
+  assert.match(setSubscription(store, "chatgpt", "pro", CALM_MORNING + 60).error, /6 h/);
+  assert.ok(setSubscription(store, "chatgpt", "free", CALM_MORNING + 120).ok, "descendre est toujours permis");
+  assert.ok(setSubscription(store, "chatgpt", "pro", CALM_MORNING + 7 * 3600).ok);
+  assert.ok(setSubscription(store, "inconnu", "pro", CALM_MORNING).error);
+  assert.ok(setSubscription(store, "claude", "max999", CALM_MORNING).error);
+  // Les journaux Codex disent « plus » : c'est la formule retenue, marquée vérifiée.
+  ingest(store, "codex", "mac", { hook_event_name: "Stop", session_id: "x", usage: { chatgpt: { ts: 1, plan: "plus", five_hour: { pct: 3 } } } }, CALM_MORNING);
+  const codex = publicEconomy(store, CALM_MORNING + 7 * 3600).staff.find(s => s.src === "codex");
+  assert.deepEqual([codex.tier.id, codex.verified, codex.grade.id], ["plus", true, "junior"]);
+});
+
+test("économie : ancienneté, promotion d'échelon, primes de livraison et de réactivité", async () => {
+  const { onIngestEconomy, publicEconomy } = await import("./economy.js");
+  const store = createStore();
+  const step = await workSession(store, "claude", "c1", CALM_MORNING, 120);
+  let claude = publicEconomy(store, CALM_MORNING + 7200).staff[0];
+  assert.equal(claude.echelon, 2);
+  assert.equal(claude.nextEchelon, 240);
+  assert.ok(store.economy.ledger.some(e => e.kind === "promo"));
+  assert.ok(store.game.badges.includes("promo"));
+  const before = store.economy.wallet;
+  step({ hook_event_name: "Stop" }, CALM_MORNING + 7300);
+  // 100 s de travail à 15,90 P$/h (stagiaire, échelon 2) puis la prime de livraison d'un stagiaire : 4 P$.
+  assert.equal(money2(store.economy.wallet - before), money2(0.44 + 4));
+  step({ hook_event_name: "PermissionRequest", tool_name: "Bash" }, CALM_MORNING + 7400);
+  const mid = store.economy.wallet;
+  step({ hook_event_name: "PreToolUse", tool_name: "Bash" }, CALM_MORNING + 7460);
+  assert.equal(money2(store.economy.wallet - mid), 12, "accord donné en 1 min");
+  assert.equal(publicEconomy(store, CALM_MORNING + 7500).today.reactivity, 1);
+  void onIngestEconomy;
+});
+
+test("économie : boutique, Black Friday, décor, formation et séminaire", async () => {
+  const { buyItem, publicEconomy } = await import("./economy.js");
+  const store = createStore();
+  assert.match(buyItem(store, "arcade", null, CALM_MORNING).error, /Solde insuffisant/);
+  store.economy.wallet = 5000;
+  assert.ok(buyItem(store, "arcade", null, CALM_MORNING).ok);
+  assert.equal(store.economy.wallet, 4100);
+  assert.match(buyItem(store, "arcade", null, CALM_MORNING).error, /Déjà/);
+  const blackFriday = Date.UTC(2026, 10, 28, 10) / 1000;
+  assert.equal(publicEconomy(store, blackFriday).shopFactor, 0.7);
+  assert.ok(buyItem(store, "aquarium", null, blackFriday).ok);
+  assert.equal(store.economy.wallet, 4100 - 1050);
+  assert.ok(buyItem(store, "plante_xl", null, blackFriday).ok);
+  assert.ok(store.game.badges.includes("decorator"));
+  assert.deepEqual(publicEconomy(store, blackFriday).decor, ["arcade", "aquarium", "plante_xl"]);
+  assert.match(buyItem(store, "formation", "nimporte", blackFriday).error, /agent/);
+  assert.ok(buyItem(store, "formation", "claude", blackFriday).ok);
+  assert.equal(publicEconomy(store, blackFriday).staff.find(s => s.src === "claude").echelon, 2);
+  const xp = store.game.xp;
+  assert.ok(buyItem(store, "seminaire", null, blackFriday).ok);
+  assert.equal(store.game.xp, xp + 150);
+  assert.ok(buyItem(store, "objectifs", null, blackFriday).ok);
+  assert.ok(publicEconomy(store, blackFriday).perks.objectifs > blackFriday);
+  assert.equal(buyItem(store, "inexistant", null, blackFriday).error, "Article inconnu.");
+});
+
+test("casino : tirages du serveur, gains, limites et assurance", async () => {
+  const { playCasino, slotsMultiplier } = await import("./economy.js");
+  const { CASINO, EVENTS } = await import("./public/economy-data.js");
+  // Retour moyen de la machine à sous, calculé exactement : la maison gagne, même un jour de jackpot.
+  const symbols = CASINO.slots.symbols, total = symbols.reduce((n, s) => n + s.w, 0);
+  const rtp = event => symbols.flatMap(a => symbols.flatMap(b => symbols.map(c => [a, b, c])))
+    .reduce((n, r) => n + r.reduce((p, s) => p * s.w / total, 1) * slotsMultiplier(r.map(s => s.s), event), 0);
+  assert.ok(rtp({}) > 0.9 && rtp({}) < 0.96, `retour ${rtp({})}`);
+  assert.ok(rtp(EVENTS.find(e => e.jackpot)) < 1);
+  const store = createStore();
+  store.economy.wallet = 1000;
+  const fixed = values => { let i = 0; return () => values[i++ % values.length]; };
+  // Rouleaux 7️⃣ 7️⃣ 7️⃣ (tirage 99 sur 100), jour calme : × 50.
+  const jackpot = playCasino(store, "slots", 100, "", CALM_MORNING, fixed([99, 99, 99]));
+  assert.deepEqual(jackpot.result, { reels: ["7️⃣", "7️⃣", "7️⃣"], win: 5000, net: 4900 });
+  assert.equal(store.economy.wallet, 5900);
+  assert.ok(store.game.badges.includes("jackpot"));
+  assert.equal(store.economy.records.jackpots, 1);
+  const pair = playCasino(store, "slots", 10, "", CALM_MORNING, fixed([0, 0, 60]));
+  assert.deepEqual([pair.result.reels.join(""), pair.result.win], ["🍒🍒🔔", 15]);
+  assert.equal(playCasino(store, "roulette", 10, "rouge", CALM_MORNING, fixed([1])).result.win, 20);
+  assert.equal(playCasino(store, "roulette", 10, "pair", CALM_MORNING, fixed([0])).result.win, 0, "le zéro n'est pas pair");
+  assert.equal(playCasino(store, "roulette", 10, "17", CALM_MORNING, fixed([17])).result.win, 360);
+  assert.match(playCasino(store, "roulette", 10, "bleu", CALM_MORNING).error, /rouge/);
+  const race = playCasino(store, "race", 100, "claude", CALM_MORNING, fixed([0, 0, 0, 0, 0]));
+  assert.equal(race.result.order.length, 6);
+  assert.equal(race.result.win, race.result.winner === "claude" ? 550 : 0);
+  assert.match(playCasino(store, "slots", 5, "", CALM_MORNING).error, /Mise/);
+  assert.match(playCasino(store, "slots", 501, "", CALM_MORNING).error, /Mise/);
+  assert.match(playCasino(store, "poker", 10, "", CALM_MORNING).error, /inconnu/);
+  // Assurance : la moitié de la prochaine perte revient.
+  store.economy.perks.assurance = true;
+  const before = store.economy.wallet;
+  playCasino(store, "roulette", 400, "0", CALM_MORNING, fixed([5]));
+  assert.equal(store.economy.wallet, before - 200);
+  assert.equal(store.economy.perks.assurance, undefined);
+  // Limite de pertes du jour.
+  const broke = createStore();
+  broke.economy.wallet = 10_000;
+  for (let i = 0; i < 4; i++) playCasino(broke, "roulette", 500, "0", CALM_MORNING, fixed([5]));
+  assert.match(playCasino(broke, "roulette", 10, "0", CALM_MORNING, fixed([5])).error, /pertes/);
+  const poor = createStore();
+  assert.match(playCasino(poor, "slots", 10, "", CALM_MORNING).error, /Solde/);
+});
+
+test("économie par HTTP : abonnement, casino, primes entre résidents, missions payées, vue spectateur", async () => {
+  const { app, url, call, db } = await open();
+  try {
+    const enter = async (name, ip) => {
+      const join = await call("/api/join", { name, code: "porte" }, { "X-Forwarded-For": ip });
+      const { token } = await join.json();
+      return { token, headers: { Cookie: join.headers.get("set-cookie").split(";")[0], "X-Tour-Token": token } };
+    };
+    const ana = await enter("Ana", "10.2.0.1"), bob = await enter("Bob", "10.2.0.2");
+    assert.equal((await call("/api/economy/subscription", { provider: "claude", tier: "max5" }, { Cookie: ana.headers.Cookie })).status, 403);
+    const sub = await (await call("/api/economy/subscription", { provider: "claude", tier: "max5" }, ana.headers)).json();
+    assert.equal(sub.economy.subs.claude, "max5");
+    assert.ok(sub.toasts.some(t => /Senior/.test(t.body)));
+    db.change("ana", store => { store.economy.wallet = 600; });
+    const slots = await call("/api/economy/casino", { game: "slots", bet: 10 }, ana.headers);
+    assert.equal(slots.status, 200);
+    assert.equal((await slots.json()).result.reels.length, 3);
+    const sent = await call("/api/economy/tip", { to: "Bob", amount: 100, message: "Merci pour la revue !" }, ana.headers);
+    assert.equal(sent.status, 200);
+    assert.equal(db.get("bob").store.economy.wallet, 100);
+    assert.equal(db.get("bob").store.economy.ledger[0].label, "Prime de Ana · Merci pour la revue !");
+    assert.equal((await call("/api/economy/tip", { to: "ana", amount: 10 }, ana.headers)).status, 400);
+    assert.equal((await call("/api/economy/tip", { to: "personne", amount: 10 }, ana.headers)).status, 400);
+    assert.match((await (await call("/api/economy/tip", { to: "bob", amount: 950 }, ana.headers)).json()).error, /Plafond|Solde/);
+    // Mission du jour : récompense en XP et en P$.
+    const now = Date.now() / 1000;
+    db.change("bob", store => { store.economy.day = null; });
+    const ev = (body, t) => fetch(`${url}/e?src=claude&host=mac`, { method: "POST", body: JSON.stringify(body), headers: { "X-Tour-Token": bob.token } });
+    for (const sid of ["a", "b", "c"]) await ev({ hook_event_name: "SessionStart", session_id: sid }, now);
+    const claim = await (await call("/api/game/claim", { questId: "sessions" }, bob.headers)).json();
+    assert.ok(claim.game.xp >= 80);
+    assert.ok(db.get("bob").store.economy.ledger.some(e => e.kind === "quest" && e.amount === 80));
+    // Spectateur : réussite visible, comptes et relevé absents.
+    const room = await call("/api/spectate", { room: "Penthouse" }, { "X-Forwarded-For": "10.2.0.3" });
+    const spectator = room.headers.get("set-cookie").split(";")[0];
+    const state = await (await fetch(url + "/api/state", { headers: { Cookie: spectator } })).json();
+    const view = state.apartments.find(a => a.slug === "ana").economy;
+    assert.deepEqual(Object.keys(view).sort(), ["decor", "earned", "records", "staff", "title", "today", "wallet"]);
+    assert.deepEqual(Object.keys(view.staff[0]).sort(), ["echelon", "grade", "role", "src"]);
+    assert.equal((await call("/api/economy/casino", { game: "slots", bet: 10 }, { Cookie: spectator, "X-Tour-Token": ana.token })).status, 401);
+  } finally { app.close(); }
 });

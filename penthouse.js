@@ -6,7 +6,9 @@ import { createServer } from "node:http";
 import { dirname, join } from "node:path";
 import { fileURLToPath } from "node:url";
 import { gzipSync } from "node:zlib";
-import { ingest } from "./core.js";
+import { ingest, sanitizeProfile } from "./core.js";
+import { DAILY_QUESTS, claimQuest, onIngestGame, performSpaceAction, pullToasts, publicGame, visitWing } from "./gamify.js";
+import { buyItem, onIngestEconomy, playCasino, questReward, setSubscription, spectatorEconomy, tip } from "./economy.js";
 
 const ROOT = dirname(fileURLToPath(import.meta.url));
 const MAX_BODY = 256 * 1024;
@@ -17,7 +19,14 @@ const FILES = {
   "/approval-alert.js": ["public/approval-alert.js", "text/javascript"],
   "/spectator-tour.js": ["public/spectator-tour.js", "text/javascript"],
   "/desk-slots.js": ["public/desk-slots.js", "text/javascript"],
-  "/": ["public/index.html", "text/html"], "/app.js": ["public/app.js", "text/javascript"], "/style.css": ["public/style.css", "text/css"],
+  "/": ["public/index.html", "text/html"], "/app.js": ["public/app.js", "text/javascript"],
+  "/penthouse-extras.js": ["public/penthouse-extras.js", "text/javascript"],
+  "/gamify-ui.js": ["public/gamify-ui.js", "text/javascript"],
+  "/upgrades-client.js": ["public/upgrades-client.js", "text/javascript"],
+  "/wings-client.js": ["public/wings-client.js", "text/javascript"],
+  "/economy-data.js": ["public/economy-data.js", "text/javascript"],
+  "/economy-ui.js": ["public/economy-ui.js", "text/javascript"],
+  "/style.css": ["public/style.css", "text/css"],
   "/tour-hook": ["collecteurs/tour-hook", "text/plain"], "/install-hook.py": ["collecteurs/install-hook.py", "text/plain"],
   "/hermes-handler.py": ["collecteurs/hermes-hook/handler.py", "text/plain"],
   "/hermes-hook.yaml": ["collecteurs/hermes-hook/HOOK.yaml", "text/plain"],
@@ -26,6 +35,7 @@ const FILES = {
   "/tour-sync": ["collecteurs/tour-sync", "text/plain"],
   "/install-sync.py": ["collecteurs/install-sync.py", "text/plain"],
   "/tour-check": ["collecteurs/tour-check", "text/plain"],
+  "/cursor-notify.py": ["collecteurs/cursor-notify.py", "text/plain"],
   "/install.sh": ["public/install.sh", "text/plain"], "/assets/CREDITS.txt": ["public/assets/CREDITS.txt", "text/plain"],
 };
 
@@ -63,11 +73,40 @@ async function liveChannels() {
 // Limite les essais du code d'entrée : 10 par adresse et par 10 minutes.
 const attempts = new Map();
 function tooMany(ip, now = Date.now()) {
+  // Ménage des adresses anciennes : la table ne grossit pas indéfiniment.
+  if (attempts.size > 5000) for (const [k, v] of attempts) if (!v.some(t => now - t < 600_000)) attempts.delete(k);
   const recent = (attempts.get(ip) ?? []).filter(t => now - t < 600_000);
   recent.push(now);
   attempts.set(ip, recent);
   return recent.length > 10;
 }
+// Derrière le proxy de l'hébergeur (par défaut), la dernière adresse de X-Forwarded-For est la vraie.
+// Serveur exposé directement : TRUST_PROXY=0, sinon un visiteur choisirait son adresse et contournerait la limite.
+const trustProxy = () => process.env.TRUST_PROXY !== "0";
+
+// Lien perso de la télé (idée de la branche de Quentin) : seulement une vidéo YouTube ou une chaîne Twitch,
+// normalisées ici. Jamais d'URL arbitraire dans l'iframe que tout le penthouse regarde.
+export function parseTvLink(raw) {
+  let u;
+  try { u = new URL(String(raw ?? "").trim().slice(0, 500)); } catch { return null; }
+  if (u.protocol !== "https:" && u.protocol !== "http:") return null;
+  const host = u.hostname.toLowerCase().replace(/^(www|m|music)\./, ""), video = /^[A-Za-z0-9_-]{11}$/;
+  if (host === "youtu.be") {
+    const id = u.pathname.split("/")[1];
+    return video.test(id ?? "") ? { kind: "youtube", id } : null;
+  }
+  if (host === "youtube.com" || host === "youtube-nocookie.com") {
+    const id = u.searchParams.get("v") ?? /^\/(?:embed|shorts|live)\/([^/]+)/.exec(u.pathname)?.[1];
+    return id && video.test(id) ? { kind: "youtube", id } : null;
+  }
+  if (host === "twitch.tv") {
+    const channel = (u.pathname.split("/")[1] ?? "").toLowerCase();
+    return /^[a-z0-9_]{3,25}$/.test(channel) && !["directory", "videos", "settings", "downloads", "search"].includes(channel)
+      ? { kind: "twitch", channel } : null;
+  }
+  return null;
+}
+export const publicTv = tv => ({ channel: tv?.channel ?? "auto", ...(tv?.custom ? { custom: tv.custom } : {}) });
 
 // Vue publique : activité et quotas autorisés, sans conversations, machines ni détails de compte.
 export function spectatorSnapshot(a) {
@@ -85,8 +124,11 @@ export function spectatorSnapshot(a) {
     }
   }
   return { slug: a.slug, name: a.name, created: a.created,
+    profile: sanitizeProfile(a.profile),
+    game: a.game ? { level: a.game.level, xp: a.game.xp, streak: a.game.streak, badges: a.game.badges ?? [] } : { level: 1, xp: 0, streak: 0, badges: [] },
     sessions: a.sessions.map(s => ({ src: s.src, host: sha(s.host).slice(0, 12), sid: s.sid,
       state: s.state, started: s.started, updated: s.updated, task: "", action: "" })),
+    economy: spectatorEconomy(a.economy),
     feed: [], usage, seen: {}, today: {}, health: {} };
 }
 
@@ -98,6 +140,31 @@ export function createApp({ code, db }) {
   // Seule l'empreinte de la clé est gardée ; on cherche l'étage par empreinte.
   const byToken = token => typeof token === "string" && token ? db.byTokenHash(sha(token)) : null;
   const newToken = () => randomBytes(24).toString("base64url");
+
+  // État complet envoyé aux résidents, ou filtré pour les spectateurs. Un seul calcul des étages pour les deux.
+  const payloads = (now = Date.now() / 1000) => {
+    const apartments = db.snapshots(now);
+    const tv = db.setting("tv") ?? { channel: "auto" };
+    const room = roomName();
+    let resident, spectator;
+    return {
+      resident: () => resident ??= { now, viewer: { role: "resident", room }, tv, apartments },
+      spectator: () => spectator ??= { now, viewer: { role: "spectator", room }, tv: publicTv(tv), apartments: apartments.map(spectatorSnapshot) },
+    };
+  };
+  // Flux SSE : un seul minuteur pour tous les onglets ouverts, l'état est calculé une fois toutes les 2 s.
+  const streams = new Set();
+  let streamTimer = null;
+  const broadcast = () => {
+    if (!streams.size) return;
+    let built;
+    try { built = payloads(); } catch { return; }
+    const text = { resident: null, spectator: null };
+    for (const client of streams) {
+      const role = client.spectator ? "spectator" : "resident";
+      try { client.res.write(text[role] ??= `data: ${JSON.stringify(built[role]())}\n\n`); } catch { streams.delete(client); }
+    }
+  };
 
   const server = createServer((req, res) => {
     const send = (status, body = "", type = "text/plain; charset=utf-8", headers = {}) =>
@@ -116,7 +183,7 @@ export function createApp({ code, db }) {
       return send(302, "", "text/plain; charset=utf-8", { Location: "/", "Set-Cookie": cookieFor(spectatorPass) });
     }
     // Dernière adresse de X-Forwarded-For : celle ajoutée par le proxy de l'hébergeur, que le visiteur ne choisit pas.
-    const ip = String(req.headers["x-forwarded-for"] ?? req.socket.remoteAddress ?? "").split(",").pop().trim();
+    const ip = String((trustProxy() ? req.headers["x-forwarded-for"] : null) ?? req.socket.remoteAddress ?? "").split(",").pop().trim();
 
     const serve = (file, type, cache = "public, max-age=0, must-revalidate") => {
       let resource;
@@ -152,11 +219,31 @@ export function createApp({ code, db }) {
     }
     if (req.method === "GET" && url.pathname === "/api/state") {
       if (!canView) return json(401, { error: "entrée requise" });
-      const now = Date.now() / 1000;
-      const apartments = db.snapshots(now);
-      const tv = db.setting("tv") ?? { channel: "auto" };
-      return json(200, { now, viewer: { role: isSpectator ? "spectator" : "resident", room: roomName() },
-        tv: isSpectator ? { channel: tv.channel } : tv, apartments: isSpectator ? apartments.map(spectatorSnapshot) : apartments });
+      const built = payloads();
+      return json(200, isSpectator ? built.spectator() : built.resident());
+    }
+    if (req.method === "GET" && url.pathname === "/api/stream") {
+      if (!canView) return json(401, { error: "entrée requise" });
+      res.writeHead(200, {
+        "Content-Type": "text/event-stream; charset=utf-8",
+        "Cache-Control": "no-store",
+        Connection: "keep-alive",
+        "X-Content-Type-Options": "nosniff",
+      });
+      // Reconnexion conseillée au navigateur après 5 s si le flux tombe.
+      res.write("retry: 5000\n: connected\n\n");
+      const client = { res, spectator: isSpectator };
+      try {
+        const built = payloads();
+        res.write(`data: ${JSON.stringify(isSpectator ? built.spectator() : built.resident())}\n\n`);
+      } catch { return res.end(); }
+      streams.add(client);
+      streamTimer ??= setInterval(broadcast, 2000);
+      req.on("close", () => {
+        streams.delete(client);
+        if (!streams.size && streamTimer) { clearInterval(streamTimer); streamTimer = null; }
+      });
+      return;
     }
     if (req.method !== "POST") return send(404);
 
@@ -164,6 +251,14 @@ export function createApp({ code, db }) {
     let size = 0;
     req.on("data", c => { size += c.length; if (size > MAX_BODY) req.destroy(); else chunks.push(c); });
     req.on("end", () => {
+      // Une requête mal formée renvoie une erreur ; elle ne doit jamais arrêter le processus pour tout le monde.
+      try { handlePost(); }
+      catch (error) {
+        console.error("penthouse :", url.pathname, "en erreur :", error?.message ?? error);
+        if (!res.headersSent) send(500, "erreur interne");
+      }
+    });
+    function handlePost() {
       const body = Buffer.concat(chunks);
       let p;
       try { p = JSON.parse(body); } catch { return send(400); }
@@ -182,22 +277,116 @@ export function createApp({ code, db }) {
       if (url.pathname === "/e") {
         const apt = byToken(req.headers["x-tour-token"]);
         if (!apt) return send(401);
-        db.change(apt.slug, store => ingest(store, String(url.searchParams.get("src") ?? "?").slice(0, 20), String(url.searchParams.get("host") ?? "?").slice(0, 40), p));
+        const now = Date.now() / 1000;
+        db.change(apt.slug, store => {
+          const prev = Object.fromEntries(Object.entries(store.sessions).map(([k, s]) => [k, { state: s.state, updated: s.updated }]));
+          ingest(store, String(url.searchParams.get("src") ?? "?").slice(0, 20), String(url.searchParams.get("host") ?? "?").slice(0, 40), p, now);
+          onIngestEconomy(store, prev, now);
+          onIngestGame(store, prev, p, now);
+        });
         return send(204);
+      }
+      if (url.pathname === "/api/profile") {
+        if (isSpectator || !same(cookie, pass)) return json(401, { error: "entrée requise" });
+        const apt = byToken(req.headers["x-tour-token"]);
+        if (!apt) return json(403, { error: "Clé de ton étage requise." });
+        // Le lien de la télé géante suit la règle de la télé du Salon : une vidéo YouTube ou une chaîne Twitch, sinon refus.
+        const profile = { ...p.profile };
+        if (typeof profile.tv === "string") {
+          profile.tv = profile.tv.trim() ? parseTvLink(profile.tv) : null;
+          if (profile.tv === null && p.profile.tv.trim()) return json(400, { error: "Télé géante : colle un lien YouTube (vidéo ou live) ou une chaîne Twitch." });
+        }
+        db.change(apt.slug, store => { store.profile = sanitizeProfile(profile, store.profile); });
+        return json(200, { slug: apt.slug, profile: sanitizeProfile(db.get(apt.slug).store.profile) });
+      }
+      // Actions de jeu d'un résident : cookie d'entrée et clé de son étage. Le serveur décide seul du résultat.
+      const residentApt = () => {
+        if (isSpectator || !same(cookie, pass)) { json(401, { error: "entrée requise" }); return null; }
+        const apt = byToken(req.headers["x-tour-token"]);
+        if (!apt) { json(403, { error: "Clé de ton étage requise." }); return null; }
+        return apt;
+      };
+      const play = (apt, fn) => {
+        let result, toasts = [];
+        db.change(apt.slug, store => {
+          const now = Date.now() / 1000;
+          result = fn(store, now);
+          // XP et badges à jour dans la réponse, sans attendre le prochain état du flux.
+          if (result && !result.error && !result.game) result.game = publicGame(store, now);
+          toasts = [...(result?.toasts ?? []), ...pullToasts(store)];
+        });
+        if (!result || result.error) return json(400, { error: result?.error ?? "Action impossible." });
+        const { toasts: _ignored, ...rest } = result;
+        return json(200, { ...rest, toasts });
+      };
+      if (url.pathname === "/api/game/action") {
+        const apt = residentApt();
+        if (!apt) return;
+        const action = String(p.action ?? "").slice(0, 32), floor = String(p.floor ?? "").slice(0, 48);
+        return play(apt, (store, now) => performSpaceAction(store, action, now, { floor, slug: apt.slug }));
+      }
+      if (url.pathname === "/api/game/claim") {
+        const apt = residentApt();
+        if (!apt) return;
+        const questId = String(p.questId ?? "").slice(0, 24);
+        return play(apt, (store, now) => {
+          const result = claimQuest(store, questId, now);
+          // Une mission rapporte aussi des P$ : autant que son XP.
+          const quest = DAILY_QUESTS.find(q => q.id === questId);
+          if (result.ok && quest) questReward(store, quest.xp, quest.title, now);
+          return result;
+        });
+      }
+      // Économie : abonnements, boutique, casino, primes entre résidents. Le serveur décide de tout (y compris le hasard).
+      if (url.pathname === "/api/economy/subscription") {
+        const apt = residentApt();
+        if (!apt) return;
+        return play(apt, (store, now) => setSubscription(store, String(p.provider ?? "").slice(0, 16), p.tier ? String(p.tier).slice(0, 16) : null, now));
+      }
+      if (url.pathname === "/api/economy/buy") {
+        const apt = residentApt();
+        if (!apt) return;
+        return play(apt, (store, now) => buyItem(store, String(p.item ?? "").slice(0, 24), String(p.target ?? "").slice(0, 16), now));
+      }
+      if (url.pathname === "/api/economy/casino") {
+        const apt = residentApt();
+        if (!apt) return;
+        return play(apt, (store, now) => playCasino(store, String(p.game ?? "").slice(0, 12), p.bet, String(p.choice ?? "").slice(0, 12), now));
+      }
+      if (url.pathname === "/api/economy/tip") {
+        const apt = residentApt();
+        if (!apt) return;
+        const to = slugify(String(p.to ?? ""));
+        let result, toasts = [];
+        db.changeMany([apt.slug, to], ([from, target]) => {
+          result = tip(from, target, p.amount, p.message, Date.now() / 1000);
+          if (from && result?.ok) result.game = publicGame(from.store);
+          if (from) toasts = pullToasts(from.store);
+        });
+        if (!result || result.error) return json(400, { error: result?.error ?? "Prime impossible." });
+        return json(200, { ...result, toasts });
+      }
+      if (url.pathname === "/api/game/visit") {
+        const apt = residentApt();
+        if (!apt) return;
+        const floorKey = String(p.floor ?? "").slice(0, 48);
+        return play(apt, (store, now) => visitWing(store, floorKey, now, apt.slug));
       }
       // Télé du Salon : la chaîne est commune à tout le penthouse.
       if (url.pathname === "/api/tv") {
         if (!same(cookie, pass)) return json(401, { error: "entrée requise" });
         const channel = String(p.channel ?? "");
+        // Le nom affiché vient de la clé quand elle est fournie : on ne choisit pas la télé « au nom » d'un autre.
+        const by = byToken(req.headers["x-tour-token"])?.name ?? String(p.by ?? "").trim().slice(0, 32);
         if (channel === "custom") {
-          const customUrl = String(p.url ?? "").trim().slice(0, 500);
-          if (!customUrl) return json(400, { error: "URL requise pour lien personnalisé." });
-          const tv = { channel: "custom", url: customUrl, by: String(p.by ?? "").trim().slice(0, 32), at: Date.now() / 1000 };
+          const custom = parseTvLink(p.url);
+          if (!custom) return json(400, { error: "Colle un lien YouTube (vidéo ou live) ou une chaîne Twitch." });
+          const tv = { channel, custom, by, at: Date.now() / 1000 };
           db.setSetting("tv", tv);
           return json(200, tv);
         }
         if (channel !== "auto" && !CHANNELS.includes(channel)) return json(400, { error: "Chaîne inconnue." });
-        const tv = { channel, by: String(p.by ?? "").trim().slice(0, 32), at: Date.now() / 1000 };
+        const tv = { channel, by, at: Date.now() / 1000 };
         db.setSetting("tv", tv);
         return json(200, tv);
       }
@@ -233,7 +422,8 @@ export function createApp({ code, db }) {
         return json(200, { slug, name: apt.name, token }, { "Set-Cookie": cookie });
       }
       send(404);
-    });
+    }
   });
+  server.on("close", () => { if (streamTimer) clearInterval(streamTimer); streamTimer = null; streams.clear(); });
   return server;
 }

@@ -50,6 +50,18 @@ export function openDb(path) {
       if (after !== before) db.prepare("UPDATE apartments SET store = ? WHERE slug = ?").run(after, slug);
       return result;
     }),
+    // Plusieurs étages modifiés ensemble (prime d'un résident à un autre) : tout ou rien.
+    changeMany: (slugs, fn) => tx(() => {
+      const list = slugs.map(slug => row(one.get(slug)));
+      if (list.some(a => !a)) return fn(list.map(() => null));
+      const before = list.map(a => JSON.stringify(a.store));
+      const result = fn(list);
+      list.forEach((a, i) => {
+        const after = JSON.stringify(a.store);
+        if (after !== before[i]) db.prepare("UPDATE apartments SET store = ? WHERE slug = ?").run(after, a.slug);
+      });
+      return result;
+    }),
     // Réglages communs à tout le penthouse (la chaîne de la télé du Salon).
     setting: key => { const r = db.prepare("SELECT value FROM settings WHERE key = ?").get(key); return r ? JSON.parse(r.value) : undefined; },
     setSetting: (key, value) => db.prepare("INSERT OR REPLACE INTO settings VALUES (?, ?)").run(key, JSON.stringify(value)),

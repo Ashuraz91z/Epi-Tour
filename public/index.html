@@ -35,15 +35,29 @@
 </main>
 
 <div id="app" hidden>
-  <header class="top">
+  <header class="top" id="topBar">
     <div class="brandline"><span class="brand small">PENTHOUSE</span><span class="clock" id="clock"></span></div>
+    <div class="status-chips"><div id="xpHost"></div><div id="ecoHost" class="eco-host"></div></div>
     <div class="totals" id="totals"></div>
-    <button class="ghost" type="button" id="spectatorBtn" data-spectate>Mode spectateur</button>
-    <button class="ghost" id="tourPause" type="button" hidden aria-pressed="false">Pause visite</button>
-    <span id="viewerBadge" class="viewer-badge" hidden>Spectateur</span>
-    <button class="ghost" id="exitSpectator" type="button" hidden>Quitter le mode spectateur</button>
-    <button class="ghost" id="linkBtn" type="button">Relier mes agents</button>
+    <div class="top-actions">
+      <button class="ghost" id="tourPause" type="button" hidden aria-pressed="false">Pause visite</button>
+      <span id="viewerBadge" class="viewer-badge" hidden>Spectateur</span>
+      <button class="ghost" id="exitSpectator" type="button" hidden>Quitter le mode spectateur</button>
+      <button class="ghost icon-btn" id="missionsBtn" type="button" hidden aria-label="Missions" title="Missions"><span aria-hidden="true">🎯</span><span class="lbl">Missions</span></button>
+      <button class="ghost icon-btn" id="ecoBtn" type="button" hidden aria-label="Entreprise" title="Entreprise : équipe, boutique, casino, banque"><span aria-hidden="true">💼</span><span class="lbl">Entreprise</span></button>
+      <button class="ghost icon-btn" id="linkBtn" type="button" aria-label="Relier mes agents" title="Relier mes agents"><span aria-hidden="true">🔗</span><span class="lbl">Relier<span class="lbl-long"> mes agents</span></span></button>
+      <div class="more" id="moreWrap">
+        <button class="ghost more-btn" id="moreBtn" type="button" aria-expanded="false" aria-controls="moreMenu" aria-label="Plus d’options" title="Plus d’options">⋯</button>
+        <div class="more-menu" id="moreMenu" hidden>
+          <button type="button" id="historyBtn" hidden>🕘 Historique</button>
+          <button type="button" id="customizeBtn" hidden>🎨 Mon étage</button>
+          <button type="button" id="notifyBtn" hidden>🔔 Alertes navigateur</button>
+          <button type="button" id="spectatorBtn" data-spectate>👁️ Mode spectateur</button>
+        </div>
+      </div>
+    </div>
   </header>
+  <section id="quotaBanner" class="quota-banner" hidden role="status"></section>
   <section id="spectatorDashboard" class="spectator-dashboard" hidden aria-label="Usages de tous les résidents"></section>
   <div id="tourCaption" class="tour-caption" hidden aria-live="polite"></div>
   <aside id="aptPanel" class="panel" aria-live="polite"></aside>
@@ -69,6 +83,48 @@
   <h3>Relier tes agents à ton étage</h3>
   <div id="linkBody"></div>
 </dialog>
+
+<div id="gameCelebrations" class="game-celebrations" aria-live="polite"></div>
+
+<dialog id="missionsDlg" class="dlg wide">
+  <form method="dialog"><button class="x" aria-label="Fermer">×</button></form>
+  <h3>Missions & progression</h3>
+  <div id="missionsXp"></div>
+  <h4>Badges</h4>
+  <div id="missionsBadges"></div>
+  <h4>Quêtes du jour</h4>
+  <div id="missionsBody"></div>
+</dialog>
+
+<dialog id="historyDlg" class="dlg wide">
+  <form method="dialog"><button class="x" aria-label="Fermer">×</button></form>
+  <h3>Historique du jour</h3>
+  <p class="extras-muted">Sessions et fil d’activité de ton étage (sans contenu de conversation).</p>
+  <div id="historyBody"></div>
+  <button type="button" class="ghost" id="historyCsvBtn">Exporter CSV</button>
+</dialog>
+
+<dialog id="customizeDlg" class="dlg">
+  <form method="dialog"><button class="x" aria-label="Fermer">×</button></form>
+  <h3>Personnaliser mon étage</h3>
+  <form id="customizeForm" class="customize-form">
+    <label>Couleur d’accent<input name="accent" type="color" value="#e8c27a"></label>
+    <label>Phrase sur ton panneau<input name="tagline" maxlength="80" placeholder="ex. Full stack la nuit"></label>
+    <label>Ambiance de l’étage<select name="theme"><option value="classique">Classique</option><option value="cyberpunk">Cyberpunk</option></select></label>
+    <label>Texte des écrans<input name="screens" maxlength="80" placeholder="ex. TikTok Shop / Toksy / toksy.fr"></label>
+    <label>Télé géante (lien YouTube ou Twitch, vide pour l’éteindre)<input name="tv" type="url" maxlength="500" placeholder="ex. https://www.youtube.com/watch?v=…"></label>
+    <button type="submit">Enregistrer</button>
+    <p class="err" id="customizeErr" role="alert"></p>
+  </form>
+</dialog>
+
+<dialog id="economyDlg" class="dlg wide eco-dlg" aria-labelledby="economyTitle">
+  <form method="dialog"><button class="x" aria-label="Fermer">×</button></form>
+  <h3 id="economyTitle">💼 Entreprise</h3>
+  <div id="economyBody"></div>
+</dialog>
+
+<div id="leaderboardDlg" class="leaderboard-floating" hidden aria-label="Classement du jour"></div>
 
 <dialog id="casinoDlg" class="dlg wide">
   <form method="dialog"><button class="x" aria-label="Fermer">×</button></form>

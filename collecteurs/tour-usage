@@ -3,13 +3,18 @@
 
 Claude ne donne son quota qu'en réponse à une requête : une mini-requête (Haiku, sans outils) au plus
 toutes les 15 min, et seulement si la fenêtre de 5 h est déjà ouverte ou si une session Claude a tourné
-depuis sa fin. Ainsi la sonde n'ouvre jamais une fenêtre à elle seule.
+depuis sa fin (d'après les journaux locaux de Claude Code). Ainsi la sonde n'ouvre jamais une fenêtre à elle seule.
 """
+import glob
 import json
 import os
 import subprocess
+import sys
 import time
-import urllib.request
+import urllib.parse
+
+sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
+from tour_http import request  # noqa: E402  (installé à côté par install.sh, HTTPS imposé)
 
 CONF = os.path.expanduser("~/.config/tour/")
 STATE = CONF + "usage-state.json"
@@ -25,8 +30,9 @@ if now - st["last_probe"] < EVERY:
     raise SystemExit
 st_try = dict(st, last_probe=now)
 if now >= st["resets_at"]:
-    tour = json.load(urllib.request.urlopen(read("url") + "/state", timeout=5))
-    if not any(s["src"] == "claude" and s["updated"] > st["resets_at"] for s in tour["sessions"]):
+    # Une session Claude a-t-elle écrit son journal depuis la fin de la dernière fenêtre ?
+    logs = glob.glob(os.path.expanduser("~/.claude/projects/*/*.jsonl"))
+    if not any(os.path.getmtime(log) > st["resets_at"] for log in logs):
         raise SystemExit
 
 json.dump(st_try, open(STATE, "w"))
@@ -39,12 +45,12 @@ out = subprocess.run(
     cwd=os.path.expanduser("~"), env={**os.environ, "TOUR_SKIP": "1"}, capture_output=True, text=True, timeout=120).stdout
 for line in out.splitlines():
     if '"rate_limit_event"' in line:
-        w = json.loads(line)["rate_limit_info"]["unifiedWindows"]
-        win = lambda k: k in w and {"pct": round(w[k]["utilization"] * 100), "resets_at": w[k]["resetsAt"]}
+        w = json.loads(line).get("rate_limit_info", {}).get("unifiedWindows", {})
+        win = lambda k: k in w and {"pct": round(w[k]["utilization"] * 100), "resets_at": w[k]["resetsAt"]} or None
         usage = {"five_hour": win("five_hour"), "seven_day": win("seven_day"), "ts": now}
-        st["resets_at"] = w["five_hour"]["resetsAt"]
-        body = json.dumps({"hook_event_name": "usage", "usage": {"claude": usage}}).encode()
-        urllib.request.urlopen(urllib.request.Request(read("url") + "/e?src=usage&host=" + read("host"), body,
-                                                      {"Content-Type": "application/json", "X-Tour-Token": read("secret")}), timeout=5)
+        if "five_hour" in w:
+            st["resets_at"] = w["five_hour"]["resetsAt"]
+        request(read("url"), read("secret"), "/e?" + urllib.parse.urlencode({"src": "usage", "host": read("host")}),
+                {"hook_event_name": "usage", "usage": {"claude": usage}})
         break
 json.dump(st, open(STATE, "w"))
