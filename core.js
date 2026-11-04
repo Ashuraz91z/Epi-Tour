@@ -1,12 +1,13 @@
 // Données de la tour de contrôle : traduit les événements bruts des agents en sessions, quotas et compteurs.
 // Repris de la v1 Python (srv/tour/tour.py), sans l'interface.
 import { createGame, publicGame } from "./gamify.js";
+import { createEconomy, publicEconomy } from "./economy.js";
 
 export function createStore() {
   // sessions : par clé "src:machine:session" ; usage : quotas par fournisseur ;
   // seen : dernier signe de vie par machine ; stats : compteurs par jour ; health : services d'Hermes.
   return { sessions: {}, feed: [], usage: {}, seen: {}, stats: {}, health: {},
-    profile: { accent: "#e8c27a", tagline: "" }, game: createGame() };
+    profile: { accent: "#e8c27a", tagline: "" }, game: createGame(), economy: createEconomy() };
 }
 
 const ACCENT = /^#[0-9a-fA-F]{6}$/;
@@ -156,6 +157,8 @@ export function snapshot(store, now = Date.now() / 1000) {
     now, sessions: sessions.filter(s => s.src !== "hermes" || hermes.includes(s)), feed: store.feed.slice(-60).reverse(),
     usage: store.usage, seen: store.seen, today: store.stats[dayOf(now)] ?? {}, health: store.health,
     profile: sanitizeProfile(store.profile),
+    // L'économie avant le jeu : la mission « Jour de paie » lit les salaires du jour.
+    economy: publicEconomy(store, now),
     game: publicGame(store, now),
   };
 }

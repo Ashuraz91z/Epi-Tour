@@ -7,7 +7,8 @@ import { dirname, join } from "node:path";
 import { fileURLToPath } from "node:url";
 import { gzipSync } from "node:zlib";
 import { ingest, sanitizeProfile } from "./core.js";
-import { claimQuest, onIngestGame, performSpaceAction, pullToasts, publicGame, visitWing } from "./gamify.js";
+import { DAILY_QUESTS, claimQuest, onIngestGame, performSpaceAction, pullToasts, publicGame, visitWing } from "./gamify.js";
+import { buyItem, onIngestEconomy, playCasino, questReward, setSubscription, spectatorEconomy, tip } from "./economy.js";
 
 const ROOT = dirname(fileURLToPath(import.meta.url));
 const MAX_BODY = 256 * 1024;
@@ -23,6 +24,8 @@ const FILES = {
   "/gamify-ui.js": ["public/gamify-ui.js", "text/javascript"],
   "/upgrades-client.js": ["public/upgrades-client.js", "text/javascript"],
   "/wings-client.js": ["public/wings-client.js", "text/javascript"],
+  "/economy-data.js": ["public/economy-data.js", "text/javascript"],
+  "/economy-ui.js": ["public/economy-ui.js", "text/javascript"],
   "/style.css": ["public/style.css", "text/css"],
   "/tour-hook": ["collecteurs/tour-hook", "text/plain"], "/install-hook.py": ["collecteurs/install-hook.py", "text/plain"],
   "/hermes-handler.py": ["collecteurs/hermes-hook/handler.py", "text/plain"],
@@ -125,6 +128,7 @@ export function spectatorSnapshot(a) {
     game: a.game ? { level: a.game.level, xp: a.game.xp, streak: a.game.streak, badges: a.game.badges ?? [] } : { level: 1, xp: 0, streak: 0, badges: [] },
     sessions: a.sessions.map(s => ({ src: s.src, host: sha(s.host).slice(0, 12), sid: s.sid,
       state: s.state, started: s.started, updated: s.updated, task: "", action: "" })),
+    economy: spectatorEconomy(a.economy),
     feed: [], usage, seen: {}, today: {}, health: {} };
 }
 
@@ -277,6 +281,7 @@ export function createApp({ code, db }) {
         db.change(apt.slug, store => {
           const prev = Object.fromEntries(Object.entries(store.sessions).map(([k, s]) => [k, { state: s.state, updated: s.updated }]));
           ingest(store, String(url.searchParams.get("src") ?? "?").slice(0, 20), String(url.searchParams.get("host") ?? "?").slice(0, 40), p, now);
+          onIngestEconomy(store, prev, now);
           onIngestGame(store, prev, p, now);
         });
         return send(204);
@@ -315,7 +320,41 @@ export function createApp({ code, db }) {
         const apt = residentApt();
         if (!apt) return;
         const questId = String(p.questId ?? "").slice(0, 24);
-        return play(apt, (store, now) => claimQuest(store, questId, now));
+        return play(apt, (store, now) => {
+          const result = claimQuest(store, questId, now);
+          // Une mission rapporte aussi des P$ : autant que son XP.
+          const quest = DAILY_QUESTS.find(q => q.id === questId);
+          if (result.ok && quest) questReward(store, quest.xp, quest.title, now);
+          return result;
+        });
+      }
+      // Économie : abonnements, boutique, casino, primes entre résidents. Le serveur décide de tout (y compris le hasard).
+      if (url.pathname === "/api/economy/subscription") {
+        const apt = residentApt();
+        if (!apt) return;
+        return play(apt, (store, now) => setSubscription(store, String(p.provider ?? "").slice(0, 16), p.tier ? String(p.tier).slice(0, 16) : null, now));
+      }
+      if (url.pathname === "/api/economy/buy") {
+        const apt = residentApt();
+        if (!apt) return;
+        return play(apt, (store, now) => buyItem(store, String(p.item ?? "").slice(0, 24), String(p.target ?? "").slice(0, 16), now));
+      }
+      if (url.pathname === "/api/economy/casino") {
+        const apt = residentApt();
+        if (!apt) return;
+        return play(apt, (store, now) => playCasino(store, String(p.game ?? "").slice(0, 12), p.bet, String(p.choice ?? "").slice(0, 12), now));
+      }
+      if (url.pathname === "/api/economy/tip") {
+        const apt = residentApt();
+        if (!apt) return;
+        const to = slugify(String(p.to ?? ""));
+        let result, toasts = [];
+        db.changeMany([apt.slug, to], ([from, target]) => {
+          result = tip(from, target, p.amount, p.message, Date.now() / 1000);
+          if (from) toasts = pullToasts(from.store);
+        });
+        if (!result || result.error) return json(400, { error: result?.error ?? "Prime impossible." });
+        return json(200, { ...result, toasts });
       }
       if (url.pathname === "/api/game/visit") {
         const apt = residentApt();

@@ -23,6 +23,7 @@ export const DAILY_QUESTS = [
   { id: "spaces", title: "Tour des communs", desc: "3 activités dans les espaces partagés.", target: 3, xp: 110 },
   { id: "club_crowd", title: "Soirée club", desc: "Avoir 2 agents en pause au club.", target: 2, xp: 85 },
   { id: "wings", title: "Explorateur", desc: "Visiter 2 ailes privées différentes.", target: 2, xp: 95 },
+  { id: "payday", title: "Jour de paie", desc: "Tes agents touchent 100 P$ de salaires aujourd'hui.", target: 100, xp: 90 },
 ];
 
 export const BADGES = [
@@ -87,12 +88,12 @@ export function markActive(game, now) {
 // Série affichée : retombe à 0 dès qu'une journée entière est passée sans activité.
 const currentStreak = (game, now) => [DAY(now), yesterdayOf(now)].includes(game.lastDay) ? game.streak ?? 0 : 0;
 
-function pushToast(game, title, body, xp = 0) {
+export function pushToast(game, title, body, xp = 0) {
   game.toast.push({ id: `${Date.now()}-${Math.random()}`, title, body, xp, at: Date.now() / 1000 });
   if (game.toast.length > 8) game.toast.splice(0, game.toast.length - 8);
 }
 
-function grantXp(game, amount, reason) {
+export function grantXp(game, amount, reason) {
   if (!Number.isFinite(amount) || amount <= 0) return;
   const beforeLevel = levelFromXp(game.xp);
   const beforeOffice = officeTierForLevel(beforeLevel);
@@ -140,6 +141,8 @@ function questProgress(store, game, quest, now) {
       return Math.min(2, pausedAgents(store, now));
     case "wings":
       return game.counters?.wingsVisited ?? 0;
+    case "payday":
+      return Math.floor(Object.values(store.economy?.day?.pay ?? {}).reduce((n, v) => n + v, 0));
     default:
       return 0;
   }
