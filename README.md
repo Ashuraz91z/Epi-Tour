@@ -1,18 +1,36 @@
 # Penthouse — Tour de contrôle
 
 Le site **https://agent.ashuraz.xyz** : chacun entre avec son nom, reçoit un appartement, y relie ses agents
-(Claude Code, Codex, Hermes, n8n), et tout le monde les voit travailler de pièce en pièce.
+(Claude Code, Codex, Cursor, Grok Bot, Hermes, n8n), et tout le monde les voit travailler de pièce en pièce.
+Les agents sont aussi les employés de l'étage : ils touchent un salaire selon l'abonnement de leur IA (voir « Économie »).
 
 - `core.js` : traduit les événements des agents en sessions, quotas et compteurs.
-- `penthouse.js` : appartements, entrée (nom + code), clés, API (`POST /e`, `GET /api/state`, `POST /api/join`, `POST /api/key`).
-- `server.js` : démarrage et sauvegarde (`~/.tour-de-controle/state.json`).
-- `public/` : l'interface et `install.sh` (relie une machine à un appartement).
-- `collecteurs/` : scripts installés sur les machines (hooks Claude/Codex, sonde de quota Claude, relais n8n, hook Hermes).
+- `gamify.js`, `wings.js`, `upgrades.js` : XP, missions du jour, badges, ailes privées et aménagement du bureau.
+- `economy.js` : rôles, salaires, carrière, boutique, casino et primes entre résidents ; catalogue partagé avec l'interface dans `public/economy-data.js`.
+- `penthouse.js` : appartements, entrée (nom + code), clés, API (voir plus bas).
+- `db.js` / `server.js` : état dans SQLite (`$DATA_DIR/penthouse.db`, par défaut `~/.tour-de-controle/`), l'ancien `state.json` est repris une fois.
+- `public/` : l'interface 3D (three.js) et `install.sh` (relie une machine à un appartement).
+- `collecteurs/` : scripts installés sur les machines (lecteur de journaux, hooks Claude/Codex, Cursor, pont MCP Grok, sonde de quota Claude, relais n8n, hook Hermes).
 
 ```bash
 npm test
 PENTHOUSE_CODE=essai PORT=3007 npm start
 ```
+
+Variables : `PENTHOUSE_CODE` (obligatoire), `PORT`, `DATA_DIR`, `TRUST_PROXY=0` si le serveur est exposé sans proxy
+(la limite d'essais du code ne se fie alors plus à `X-Forwarded-For`).
+
+### API
+
+| Route | Accès | Rôle |
+|---|---|---|
+| `POST /e?src=…&host=…` | clé `X-Tour-Token` | événement d'un collecteur ; types vérifiés, objets libres bornés |
+| `GET /api/state`, `GET /api/stream` | cookie résident ou spectateur | état complet (filtré pour les spectateurs), SSE toutes les 2 s |
+| `POST /api/join`, `/api/key`, `/api/leave` | code / clé | entrée, renouvellement ou suppression de l'étage |
+| `POST /api/profile`, `/api/game/{action,claim,visit}` | cookie + clé | profil, activités, missions, visites d'ailes |
+| `POST /api/economy/{subscription,buy,casino,tip}` | cookie + clé | abonnements, boutique, casino, primes entre résidents |
+| `POST /api/tv` | cookie résident | chaîne du Salon, ou lien perso YouTube/Twitch normalisé côté serveur |
+| `GET /api/live`, `/api/connection`, `/spectateur` | — | directs Twitch, vérification de clé, lien spectateur |
 
 Suivi du projet dans Obsidian, dossier `Tour de contrôle/`.
 
@@ -38,13 +56,38 @@ Hermes/n8n se branchent sur leur serveur, avec les procédures du panneau ; ils 
 
 Le mode spectateur démarre automatiquement : dashboard des quotas de tous les résidents (pages de 14 s, adaptées à l’écran), chaque étage pendant 12 s, panneau des agents pendant 10 s, puis panneau des usages assez longtemps pour parcourir chaque résident. Retour au dashboard à la fin. Caméra cadrée sur chaque panneau. Bouton Pause/Reprendre ; navigation manuelle pendant la pause. Les transitions caméra sont instantanées si le navigateur demande une réduction des animations. Les quotas absents ou expirés sont affichés explicitement, sans estimation.
 
+## Économie
+
+Chaque outil relié est un employé de l'étage. Tout est calculé par le serveur ; le client n'envoie que des intentions.
+
+- **Rôle** : le rang de l'abonnement déclaré pour son IA (« 💼 Entreprise ») donne le grade — Stagiaire 15 P$/h, Junior 30,
+  Confirmé·e 50, Senior 80, Lead 120, Directeur·rice 160 — et l'outil son métier (Claude/Codex : Ingé logiciel, Cursor :
+  Dev studio, Hermes : Chercheur·se IA, Grok : Analyste, n8n : Automaticien·ne). La formule ChatGPT lue dans les journaux Codex
+  (`plan_type`) remplace la déclaration et est marquée vérifiée. Monter en gamme : une fois toutes les 6 h ; descendre : libre.
+- **Salaire** : temps entre deux événements d'une session au travail (10 min au plus par écart). 7 h normales, heures sup
+  +25 % jusqu'à 10 h, puis repos obligatoire. Majorations nuit (22 h–6 h, Paris) +25 % et dimanche +50 %. Moral : baisse après
+  2 h sans pause (jusqu'à −18 %). Gros modèles +15 %, petits −10 %. Primes de livraison (tour terminé) et de réactivité
+  (accord donné en moins de 2 min), plafonnées par jour.
+- **Carrière** : 10 échelons à l'ancienneté (+6 % chacun). Titre du résident selon le cumul gagné, d'Auto-entrepreneur·e à Empire.
+- **Dépenses** : boutique (café premium, objectifs, formation, séminaire, assurance casino ; décor visible dans le bureau 3D),
+  casino (machine à sous ~94 % de retour, roulette européenne, course de robots ; mises 10–500 P$, 2 000 P$ de pertes et
+  200 parties par jour au plus), primes à un autre résident (1 000 P$ par jour).
+- **Événement du jour**, commun à tous et tiré d'après la date : double paie, Black Friday, nuit blanche, jackpot progressif…
+- Les missions du jour rapportent aussi des P$ ; la mission « Jour de paie » demande 100 P$ de salaires.
+- Les spectateurs voient fortune, titre, paie du jour et rôles, jamais le relevé ni les abonnements.
+
+Les P$ n'ont aucune valeur réelle. Ils viennent d'événements envoyés avec la clé de l'étage : c'est un jeu entre résidents
+de confiance, pas une comptabilité.
+
 ## Performances
 
 Ressources statiques conservées en mémoire avec gzip et ETag/revalidation 304 ; les réponses privées restent `no-store` et sont compressées au-delà de 1 Ko. SQLite lit tous les résidents en une fois ; les nettoyages nécessaires sont écrits avec comparaison de l’état original pour ne pas écraser une collecte concurrente.
 
 Géométries simples partagées, ressources propres aux agents libérées à leur départ, rendu plafonné à 60 images/s et suspendu en onglet masqué, requêtes masquées ou déjà en cours évitées. Calcul des cartes spectateur à environ 1 Hz plutôt qu’à chaque image. Mesures Twitch concurrentes partagées par processus serveur. Résolution 3D conservée.
 
-Benchmark reproductible, local et sans contact avec les comptes/outils réels : `node benchmark.mjs`. Maquette 20 résidents/600 sessions, 40 lectures après échauffement : ancien chemin SQLite simulé 2,59 ms/requête, nouveau 1,40 ms sur une exécution du 3 novembre 2026. JS 122 429 → 40 936 octets gzip ; état synthétique ~178 Ko → 3,3 Ko gzip. Mesures locales indicatives, pas une mesure des FPS sur les appareils des utilisateurs.
+Le flux SSE calcule l'état une seule fois toutes les 2 s pour tous les onglets ouverts (résidents et spectateurs).
+
+Benchmark reproductible, local et sans contact avec les comptes/outils réels : `node benchmark.mjs`. Maquette 20 résidents/600 sessions, 40 lectures après échauffement. Le 3 novembre 2026 : ancien chemin SQLite simulé 2,59 ms/requête, nouveau 1,40 ms ; JS 40 936 octets gzip ; état 3,3 Ko gzip. Le 4 novembre 2026, sur une autre machine (environ 5 fois plus lente sur l'ancien chemin), avec la gamification et l'économie : 17,5 ms contre 11,3 ms ; état 8,0 Ko gzip ; JS 53 Ko gzip. Mesures locales indicatives, pas une mesure des FPS sur les appareils des utilisateurs.
 
 ## Grok Bot
 
