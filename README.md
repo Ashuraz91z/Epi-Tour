@@ -72,6 +72,11 @@ Chaque outil relié est un employé de l'étage. Tout est calculé par le serveu
 - **Dépenses** : boutique (café premium, objectifs, formation, séminaire, assurance casino ; décor visible dans le bureau 3D),
   casino (machine à sous ~94 % de retour, roulette européenne, course de robots ; mises 10–500 P$, 2 000 P$ de pertes et
   200 parties par jour au plus), primes à un autre résident (1 000 P$ par jour).
+- **Casino** (étage de Quentin) : en plus de la machine à sous, de la roulette et de la course, un blackjack joué par le serveur
+  (sabot de 52 cartes par main, tirer / rester / doubler, blackjack × 2,5) et un **jackpot commun** à tout le penthouse,
+  alimenté par 2 % des mises à la machine à sous et remporté au 7️⃣7️⃣7️⃣.
+- **Tennis et Golf** : deux étages communs où les agents vont aussi en pause ; activités XP gratuites (échanges, tournoi,
+  putting, neuf trous) et paris sportifs dans « Entreprise → Sport » (un set contre le pro du club, putts de 1 à 12 m).
 - **Événement du jour**, commun à tous et tiré d'après la date : double paie, Black Friday, nuit blanche, jackpot progressif…
 - Les missions du jour rapportent aussi des P$ ; la mission « Jour de paie » demande 100 P$ de salaires.
 - Les spectateurs voient fortune, titre, paie du jour et rôles, jamais le relevé ni les abonnements.
