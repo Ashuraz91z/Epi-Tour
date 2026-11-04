@@ -56,6 +56,21 @@ Hermes/n8n se branchent sur leur serveur, avec les procédures du panneau ; ils 
 
 Le mode spectateur démarre automatiquement : dashboard des quotas de tous les résidents (pages de 14 s, adaptées à l’écran), chaque étage pendant 12 s, panneau des agents pendant 10 s, puis panneau des usages assez longtemps pour parcourir chaque résident. Retour au dashboard à la fin. Caméra cadrée sur chaque panneau. Bouton Pause/Reprendre ; navigation manuelle pendant la pause. Les transitions caméra sont instantanées si le navigateur demande une réduction des animations. Les quotas absents ou expirés sont affichés explicitement, sans estimation.
 
+## Administration
+
+Sur le serveur, avec le même `DATA_DIR` que `server.js` (le serveur peut tourner pendant ce temps) :
+
+```bash
+npm run admin -- list
+npm run admin -- merge "Linnix" "Arthur"        # même personne, deux étages : tout est additionné dans Arthur
+npm run admin -- rename "Paul-Arien" "Paul-Adrien"
+npm run admin -- remove "Ancien" --oui
+```
+
+Une fusion additionne P$, XP, ancienneté des agents, journées, décor et sessions, garde le profil de l'étage de destination et
+la position la plus ancienne dans la tour. La clé de l'étage fusionné continue de relier ses machines à l'étage gardé, jusqu'au
+prochain « Remplacer la clé ». Un renommage garde la clé ; le résident rentre ensuite sur le site avec le nouveau nom.
+
 ## Économie
 
 Chaque outil relié est un employé de l'étage. Tout est calculé par le serveur ; le client n'envoie que des intentions.

@@ -7,7 +7,9 @@ export function openDb(path) {
   const db = new DatabaseSync(path);
   db.exec(`PRAGMA journal_mode = WAL; PRAGMA busy_timeout = 5000;
     CREATE TABLE IF NOT EXISTS apartments (slug TEXT PRIMARY KEY, name TEXT NOT NULL, created REAL NOT NULL, token_hash TEXT NOT NULL, store TEXT NOT NULL);
-    CREATE TABLE IF NOT EXISTS settings (key TEXT PRIMARY KEY, value TEXT NOT NULL)`);
+    CREATE TABLE IF NOT EXISTS settings (key TEXT PRIMARY KEY, value TEXT NOT NULL);
+    -- Clés supplémentaires d'un étage : celles des étages fusionnés dedans, pour que leurs machines restent reliées.
+    CREATE TABLE IF NOT EXISTS keys (token_hash TEXT PRIMARY KEY, slug TEXT NOT NULL)`);
   const row = r => r && { slug: r.slug, name: r.name, created: r.created, tokenHash: r.token_hash, store: { ...createStore(), ...JSON.parse(r.store) } };
   const one = db.prepare("SELECT * FROM apartments WHERE slug = ?");
   const tx = fn => {
@@ -31,7 +33,8 @@ export function openDb(path) {
       return views;
     },
     get: slug => row(one.get(slug)),
-    byTokenHash: hash => row(db.prepare("SELECT * FROM apartments WHERE token_hash = ?").get(hash)),
+    byTokenHash: hash => row(db.prepare("SELECT * FROM apartments WHERE token_hash = ?").get(hash)
+      ?? db.prepare("SELECT a.* FROM keys k JOIN apartments a ON a.slug = k.slug WHERE k.token_hash = ?").get(hash)),
     // Création si le nom est libre (et le penthouse pas complet) : renvoie false sinon, même en cas de course.
     create: (slug, name, tokenHash, max) => tx(() => {
       if (one.get(slug) || db.prepare("SELECT count(*) n FROM apartments").get().n >= max) return false;
@@ -39,8 +42,32 @@ export function openDb(path) {
       return true;
     }),
     count: () => db.prepare("SELECT count(*) n FROM apartments").get().n,
-    setToken: (slug, tokenHash) => db.prepare("UPDATE apartments SET token_hash = ? WHERE slug = ?").run(tokenHash, slug),
-    remove: slug => db.prepare("DELETE FROM apartments WHERE slug = ?").run(slug),
+    // Nouvelle clé : les anciennes, y compris celles reprises d'étages fusionnés, ne relient plus aucune machine.
+    setToken: (slug, tokenHash) => tx(() => {
+      db.prepare("DELETE FROM keys WHERE slug = ?").run(slug);
+      db.prepare("UPDATE apartments SET token_hash = ? WHERE slug = ?").run(tokenHash, slug);
+    }),
+    remove: slug => tx(() => {
+      db.prepare("DELETE FROM keys WHERE slug = ?").run(slug);
+      db.prepare("DELETE FROM apartments WHERE slug = ?").run(slug);
+    }),
+    // Administration (admin.js) : fusion de deux étages en une transaction, renommage en gardant la clé.
+    merge: (from, into, combine) => tx(() => {
+      const a = row(one.get(from)), b = row(one.get(into));
+      if (!a || !b || from === into) return null;
+      const store = combine(b.store, a.store);
+      db.prepare("UPDATE apartments SET store = ?, created = ? WHERE slug = ?").run(JSON.stringify(store), Math.min(a.created, b.created), into);
+      db.prepare("INSERT OR REPLACE INTO keys VALUES (?, ?)").run(a.tokenHash, into);
+      db.prepare("UPDATE keys SET slug = ? WHERE slug = ?").run(into, from);
+      db.prepare("DELETE FROM apartments WHERE slug = ?").run(from);
+      return { from: a.name, into: b.name };
+    }),
+    rename: (slug, newSlug, name) => tx(() => {
+      if (!one.get(slug) || (newSlug !== slug && one.get(newSlug))) return false;
+      db.prepare("UPDATE apartments SET slug = ?, name = ? WHERE slug = ?").run(newSlug, name, slug);
+      db.prepare("UPDATE keys SET slug = ? WHERE slug = ?").run(newSlug, slug);
+      return true;
+    }),
     change: (slug, fn) => tx(() => {
       const a = row(one.get(slug));
       if (!a) return;

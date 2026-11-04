@@ -1384,3 +1384,64 @@ assert count('codex',[json.dumps(r) for r in codex],0)[0]==2
   ingest(store, "claude", "mac", { hook_event_name: "PreToolUse", session_id: "t", sync: true, observed_at: 1006, actions: "12" }, 1010);
   assert.equal(snapshot(store, 1010).today.claude.actions, 207, "7, puis 200 au plus par relevé, et rien d'un nombre mal formé");
 });
+
+// ---------- Administration : fusion, renommage, suppression d'étages ----------
+
+test("admin : fusion de deux étages d'une même personne, clés conservées, renommage, suppression", async () => {
+  const { runAdmin } = await import("./admin.js");
+  const { app, url, call, db } = await open();
+  try {
+    const enter = async (name, ip) => (await (await call("/api/join", { name, code: "porte" }, { "X-Forwarded-For": ip })).json()).token;
+    const oldKey = await enter("Paul-Adrien", "10.4.0.1"), newKey = await enter("Paul-Arien", "10.4.0.2");
+    const ev = (key, sid) => fetch(`${url}/e?src=claude&host=mac`, { method: "POST", body: JSON.stringify({ hook_event_name: "UserPromptSubmit", session_id: sid }), headers: { "X-Tour-Token": key } });
+    await ev(oldKey, "ancien"); await ev(newKey, "nouveau");
+    db.change("paul-adrien", s => { s.economy.wallet = 100; s.economy.decor = ["piano"]; s.economy.staff.claude = { minutes: 200 }; s.game.xp = 300; s.game.badges = ["rookie"]; });
+    db.change("paul-arien", s => { s.economy.wallet = 10.5; s.economy.decor = ["neon"]; s.economy.staff.claude = { minutes: 50 }; s.game.xp = 40; s.profile.accent = "#ff0000"; });
+    const lines = [], print = l => lines.push(l);
+    assert.equal(runAdmin(db, ["merge", "Paul-Adrien", "Paul-Arien"], print), 0);
+    assert.equal(db.get("paul-adrien"), undefined);
+    const merged = db.get("paul-arien").store;
+    assert.equal(merged.economy.wallet, 110.5);
+    assert.deepEqual(merged.economy.decor.sort(), ["neon", "piano"]);
+    assert.equal(merged.economy.staff.claude.minutes, 250);
+    assert.equal(merged.game.xp, 340);
+    assert.ok(merged.game.badges.includes("rookie"));
+    assert.equal(merged.profile.accent, "#ff0000", "le profil de l'étage gardé reste");
+    assert.ok(merged.sessions["claude:mac:ancien"] && merged.sessions["claude:mac:nouveau"]);
+    // L'ancienne clé relie toujours ses machines, désormais à l'étage gardé.
+    assert.equal((await ev(oldKey, "encore")).status, 204);
+    assert.ok(db.get("paul-arien").store.sessions["claude:mac:encore"]);
+    // Renommage : la faute de frappe corrigée, la clé ne change pas.
+    assert.equal(runAdmin(db, ["rename", "paul-arien", "Paul-Adrien"], print), 0);
+    assert.equal(db.get("paul-arien"), undefined);
+    assert.equal(db.get("paul-adrien").name, "Paul-Adrien");
+    assert.equal((await fetch(url + "/api/connection", { headers: { "X-Tour-Token": newKey } })).status, 200);
+    assert.equal((await fetch(url + "/api/connection", { headers: { "X-Tour-Token": oldKey } })).status, 200);
+    // Erreurs explicites.
+    await enter("Arthur", "10.4.0.3");
+    assert.equal(runAdmin(db, ["rename", "paul-adrien", "Arthur"], print), 1);
+    assert.equal(runAdmin(db, ["merge", "personne", "arthur"], print), 1);
+    assert.equal(runAdmin(db, ["merge", "arthur", "Arthur"], print), 1);
+    assert.equal(runAdmin(db, ["remove", "arthur"], print), 1, "--oui obligatoire");
+    assert.equal(runAdmin(db, ["remove", "arthur", "--oui"], print), 0);
+    assert.equal(db.get("arthur"), undefined);
+    runAdmin(db, ["list"], print);
+    assert.ok(lines.at(-1).startsWith("paul-adrien"));
+    // Remplacer la clé coupe aussi les anciennes clés reprises par la fusion.
+    const join = await call("/api/key", { name: "Paul-Adrien", code: "porte" }, { "X-Forwarded-For": "10.4.0.4", "X-Tour-Token": newKey });
+    assert.equal(join.status, 200);
+    assert.equal((await fetch(url + "/api/connection", { headers: { "X-Tour-Token": oldKey } })).status, 401);
+  } finally { app.close(); }
+});
+
+test("admin : la commande s'utilise sur la base du serveur (DATA_DIR)", async () => {
+  const dir = mkdtempSync(join(tmpdir(), "penthouse-admin-"));
+  try {
+    const db = openDb(join(dir, "penthouse.db"));
+    db.create("linnix", "Linnix", "h1", 50); db.create("arthur", "Arthur", "h2", 50);
+    const run = promisify(execFile);
+    const { stdout } = await run(process.execPath, ["admin.js", "merge", "Linnix", "Arthur"], { env: { ...process.env, DATA_DIR: dir }, cwd: fileURLToPath(new URL(".", import.meta.url)) });
+    assert.match(stdout, /« Linnix » fusionné dans « Arthur »/);
+    assert.deepEqual(openDb(join(dir, "penthouse.db")).all().map(a => a.slug), ["arthur"]);
+  } finally { rmSync(dir, { recursive: true, force: true }); }
+});
