@@ -642,16 +642,18 @@ function removeFloor(k) {
 
 function buildResident(apt, wing, officeTier) {
   officeTier = officeTier ?? { id: 1, open: "#2a3142", boss: "#3a3029", wood: "#573d2e", metal: "#b7a27b", deskScale: 2, chairScale: 1 };
-  const f = shell(wing.floor ?? officeTier.open ?? "#232a39");
+  // Ambiance choisie par le résident : elle habille son aile principale.
+  const cyber = (wing.id ?? "work") === "work" && apt.profile?.theme === "cyberpunk";
+  const f = shell(cyber ? CYBER.floor : wing.floor ?? officeTier.open ?? "#232a39");
   const g = f.group;
   const wingId = wing.id ?? "work";
   Object.assign(f, {
     key: `${apt.slug}:${wingId}`, kind: "resident", residentSlug: apt.slug, wingId, wing,
     name: wingId === "work" ? apt.name : `${apt.name} · ${wing.name ?? wingId}`,
-    officeTierId: officeTier.id, buildSlug: apt.slug,
+    officeTierId: officeTier.id, buildSlug: apt.slug, themeKey: themeKey(apt),
   });
-  const openMat = wingId === "work" ? officeTier.open : "#2a3142";
-  const bossMat = wingId === "work" ? officeTier.boss : "#3a3029";
+  const openMat = cyber ? CYBER.open : wingId === "work" ? officeTier.open : "#2a3142";
+  const bossMat = cyber ? CYBER.boss : wingId === "work" ? officeTier.boss : "#3a3029";
   const c = P(OPEN.x + OPEN.w / 2, OPEN.y + OPEN.h / 2), b = P(BOSS.x + BOSS.w / 2, BOSS.y + BOSS.h / 2);
   box(g, OPEN.w * S, 0.03, OPEN.h * S, mat(openMat), c.x, 0.05, c.z);
   box(g, BOSS.w * S, 0.03, BOSS.h * S, mat(bossMat), b.x, 0.05, b.z);
@@ -770,6 +772,7 @@ function buildResident(apt, wing, officeTier) {
         ctx.fillText(`${(r + 1) * 12}          ${(2451 - r * 0.1).toFixed(2)}          ${(10 - r) * 8}`, 50, y);
       }
     }
+    if (cyber) neonScreen(c, screenTexts(apt)[k], k);
     const texture = new THREE.CanvasTexture(c); texture.colorSpace = THREE.SRGBColorSpace;
     texture.anisotropy = renderer.capabilities.getMaxAnisotropy();
     const screen = new THREE.Mesh(new THREE.PlaneGeometry(0.94, 0.54), new THREE.MeshBasicMaterial({ map: texture }));
@@ -982,6 +985,7 @@ function buildResident(apt, wing, officeTier) {
   f.alarmLight.position.set(bd.x, 2.4, bd.z);
   g.add(f.alarmLight);
   if (wingId === "work") placeDecor(g, f, apt);
+  if (cyber) cyberpunk(f, apt);
   return f;
 }
 
@@ -1138,6 +1142,103 @@ function drawArcade(arcade, frame) {
   ctx.fillStyle = "#4ade80"; ctx.fillRect(112 + Math.sin(frame) * 60, 172, 28, 10);
   ctx.fillStyle = "#ffffff"; ctx.font = "bold 14px monospace"; ctx.fillText(`SCORE ${String(1200 + frame * 10).padStart(5, "0")}`, 10, 196);
   tex.needsUpdate = true;
+}
+
+// ---------- ambiance cyberpunk ----------
+// Néons magenta et cyan, sol à grille, salle serveurs, borne d'arcade et hologramme ; les écrans affichent les textes du résident.
+const CYBER = { floor: "#07060f", open: "#0d0b1c", boss: "#150c24", pink: "#ff2bd6", cyan: "#00e5ff", violet: "#8b5cff" };
+const themeKey = a => JSON.stringify([a.profile?.theme ?? "classique", a.profile?.screens ?? []]);
+const screenTexts = a => {
+  const own = a.profile?.screens?.length ? a.profile.screens : [a.name];
+  return [0, 1, 2].map(k => own[k % own.length]);
+};
+
+// Écran néon : fond quadrillé, texte principal, sous-titre et barres d'activité décoratives.
+function neonScreen(c, text, k) {
+  const ctx = c.getContext("2d"), { width: w, height: h } = c, color = [CYBER.pink, CYBER.cyan, CYBER.violet][k % 3];
+  ctx.fillStyle = "#08061a"; ctx.fillRect(0, 0, w, h);
+  ctx.strokeStyle = "#1f1747"; ctx.lineWidth = 2;
+  for (let x = 0; x <= w; x += 64) { ctx.beginPath(); ctx.moveTo(x, 0); ctx.lineTo(x, h); ctx.stroke(); }
+  for (let y = 0; y <= h; y += 64) { ctx.beginPath(); ctx.moveTo(0, y); ctx.lineTo(w, y); ctx.stroke(); }
+  ctx.strokeStyle = color; ctx.lineWidth = 6; ctx.strokeRect(14, 14, w - 28, h - 28);
+  ctx.textAlign = "center"; ctx.textBaseline = "middle";
+  let size = Math.round(h * 0.26);
+  ctx.font = `700 ${size}px Sora, sans-serif`;
+  while (size > 24 && ctx.measureText(text.toUpperCase()).width > w * 0.84) ctx.font = `700 ${size -= 6}px Sora, sans-serif`;
+  ctx.shadowColor = color; ctx.shadowBlur = 36; ctx.fillStyle = color;
+  ctx.fillText(text.toUpperCase(), w / 2, h * 0.42);
+  ctx.shadowBlur = 0; ctx.fillStyle = "#cfd8ff"; ctx.font = `500 ${Math.round(h * 0.06)}px monospace`;
+  ctx.fillText(["> EN LIGNE", "> AGENTS ACTIFS", "> SYSTÈME OK"][k % 3], w / 2, h * 0.66);
+  for (let i = 0; i < 18; i++) {
+    ctx.fillStyle = i % 4 ? color : "#ffffff"; ctx.globalAlpha = 0.55;
+    const bar = 18 + (i * 37 + k * 11) % 70;
+    ctx.fillRect(w * 0.1 + i * w * 0.045, h * 0.9 - bar, w * 0.03, bar);
+  }
+  ctx.globalAlpha = 1; ctx.textAlign = "start"; ctx.textBaseline = "alphabetic";
+}
+
+function cyberpunk(f, apt) {
+  const g = f.group, { pink, cyan, violet } = CYBER, texts = screenTexts(apt);
+  // Grille lumineuse au sol de l'open space, en dehors de l'allée centrale.
+  for (let x = OPEN.x + 40; x < OPEN.x + OPEN.w; x += 80) {
+    const p = P(x, OPEN.y + OPEN.h / 2);
+    box(g, 0.025, 0.01, OPEN.h * S - 0.2, glow(violet, 0.9), p.x, 0.075, p.z);
+  }
+  for (let y = OPEN.y + 40; y < OPEN.y + OPEN.h; y += 80) {
+    const p = P(OPEN.x + OPEN.w / 2, y);
+    box(g, OPEN.w * S - 0.2, 0.01, 0.025, glow(violet, 0.9), p.x, 0.075, p.z);
+  }
+  // Tubes néon le long de la façade et des cloisons, magenta en haut, cyan en bas.
+  box(g, 20.4, 0.05, 0.05, glow(pink, 2.2), 0, 4.55, -6.4);
+  box(g, 20.4, 0.05, 0.05, glow(cyan, 2), 0, 0.12, -6.4);
+  for (const x of [-10.3, 10.3]) {
+    box(g, 0.05, 0.05, 12.6, glow(pink, 2.2), x, 4.55, 0);
+    box(g, 0.05, 0.05, 12.6, glow(cyan, 2), x, 0.12, 0);
+  }
+  for (const x of [OPEN.x + OPEN.w, BOSS.x]) box(g, 0.04, 0.04, OPEN.h * S, glow(cyan, 1.6), P(x, 0).x, 1.08, P(0, OPEN.y + OPEN.h / 2).z);
+  // Enseignes néon des projets du résident, sur la vitre du fond de l'open space.
+  texts.slice(0, 2).forEach((text, k) => {
+    const x = P(OPEN.x + OPEN.w * (k ? 0.72 : 0.28), 0).x, color = k ? cyan : pink;
+    box(g, 5.1, 1.05, 0.04, mat("#0b0918"), x, 2.0, -6.44);
+    box(g, 5.1, 0.03, 0.03, glow(color, 1.6), x, 1.46, -6.41);
+    sign(g, text.toUpperCase(), 5, 1, { color, font: "700 160px Sora, sans-serif", w: 1024, h: 205, blur: 26 }, x, 2.0, -6.41);
+  });
+  // Écrans des postes : le texte du résident au repos, cyan vif quand un agent travaille.
+  const idle = document.createElement("canvas"); idle.width = 256; idle.height = 160;
+  neonScreen(idle, texts[0], 0);
+  const idleTexture = new THREE.CanvasTexture(idle); idleTexture.colorSpace = THREE.SRGBColorSpace;
+  f.idleScreen = new THREE.MeshBasicMaterial({ map: idleTexture });
+  f.busyScreen = glow(cyan, 1.8);
+  // Baies serveurs à diodes contre la cloison ouest, façade tournée vers les postes.
+  for (const [y, k] of [[200, 0], [440, 1]]) {
+    const p = P(48, y);
+    box(g, 0.6, 2.1, 0.9, mat("#0e0d1a", { metalness: 0.6, roughness: 0.4 }), p.x, 1.05, p.z);
+    box(g, 0.02, 1.9, 0.8, mat("#16142b"), p.x + 0.31, 1.05, p.z);
+    for (let r = 0; r < 8; r++) for (let d = 0; d < 3; d++)
+      box(g, 0.02, 0.04, 0.06, glow(d === 2 && r % 3 === k ? pink : cyan, 2), p.x + 0.33, 0.3 + r * 0.22, p.z - 0.25 + d * 0.25);
+  }
+  // Borne d'arcade dans le coin est, écran tourné vers la caméra.
+  const arcade = new THREE.Group(); arcade.position.copy(P(600, 150)); g.add(arcade);
+  box(arcade, 0.8, 1.9, 0.75, mat("#140f2e"), 0, 0.95, 0);
+  for (const dx of [-0.41, 0.41]) box(arcade, 0.03, 1.9, 0.03, glow(pink, 1.8), dx, 0.95, 0.38);
+  const play = document.createElement("canvas"); play.width = 512; play.height = 384;
+  neonScreen(play, "PLAY", 1);
+  const playTexture = new THREE.CanvasTexture(play); playTexture.colorSpace = THREE.SRGBColorSpace;
+  const playScreen = new THREE.Mesh(new THREE.PlaneGeometry(0.62, 0.46), new THREE.MeshBasicMaterial({ map: playTexture }));
+  playScreen.position.set(0, 1.35, 0.38); arcade.add(playScreen);
+  box(arcade, 0.76, 0.08, 0.3, mat("#221a48"), 0, 0.98, 0.42);
+  for (const [dx, color] of [[-0.2, pink], [0.05, cyan], [0.2, violet]]) cyl(arcade, 0.035, 0.03, glow(color, 1.8), dx, 1.03, 0.42, 12);
+  sign(arcade, "ARCADE", 0.7, 0.16, { color: pink, font: "700 72px Sora, sans-serif", blur: 18 }, 0, 1.78, 0.38);
+  // Hologramme filaire qui tourne au-dessus de l'open space (animé comme les vinyles du club).
+  const holo = new THREE.Group(); holo.position.copy(P(OPEN.x + OPEN.w / 2, LANE, 3.4)); g.add(holo);
+  holo.add(new THREE.Mesh(new THREE.IcosahedronGeometry(0.42, 1), new THREE.MeshBasicMaterial({ color: cyan, wireframe: true, transparent: true, opacity: 0.8 })));
+  holo.add(new THREE.Mesh(new THREE.TorusGeometry(0.62, 0.012, 6, 48), new THREE.MeshBasicMaterial({ color: pink })));
+  f.records = [holo];
+  // Lumières d'ambiance colorées : magenta sur l'open space, cyan sur le bureau.
+  for (const [x, y, color] of [[330, 310, pink], [820, 310, cyan]]) {
+    const light = new THREE.PointLight(color, 9, 14, 1.6);
+    light.position.copy(P(x, y, 3.4)); g.add(light);
+  }
 }
 
 // ---------- étages communs ----------
@@ -1932,8 +2033,8 @@ function syncFloors(list) {
       const prev = floors.get(k);
       if (!prev) {
         floors.set(k, buildResident(a, w, tier ?? undefined));
-      } else if (w.id === "work" && (prev.officeTierId !== tier.id || prev.decorKey !== decorKeyOf(a))) {
-        // Palier d'aménagement ou décor acheté : l'étage est reconstruit, ses agents passent dans le nouveau.
+      } else if (w.id === "work" && (prev.officeTierId !== tier.id || prev.decorKey !== decorKeyOf(a) || prev.themeKey !== themeKey(a))) {
+        // Palier d'aménagement, décor acheté ou ambiance : l'étage est reconstruit, ses agents passent dans le nouveau.
         for (const [, g] of agents) if (g.userData.floor === k) prev.group.remove(g);
         removeFloor(k);
         floors.set(k, buildResident(a, w, tier));
@@ -2052,7 +2153,7 @@ function update(now) {
         const wnt = want.get(row.key);
         if (wnt) busy.add(wnt.index);
       }
-      f.screens.forEach((sc, k) => { sc.material = busy.has(k) ? glow("#4fb6ff", 1.4) : mat("#1d2433"); });
+      f.screens.forEach((sc, k) => { sc.material = busy.has(k) ? f.busyScreen ?? glow("#4fb6ff", 1.4) : f.idleScreen ?? mat("#1d2433"); });
     }
     const fw = floors.get(`${a.slug}:work`);
     if (fw) fw.alert = (groups.get(`${a.slug}:work/boss`) ?? []).length > 0;
@@ -2833,6 +2934,8 @@ function showCustomize() {
   const form = $("#customizeForm");
   form.accent.value = apt.profile?.accent ?? "#e8c27a";
   form.tagline.value = apt.profile?.tagline ?? "";
+  form.theme.value = apt.profile?.theme ?? "classique";
+  form.screens.value = (apt.profile?.screens ?? []).join(" / ");
   $("#customizeDlg").showModal();
 }
 $("#customizeBtn").addEventListener("click", showCustomize);
@@ -2843,7 +2946,7 @@ $("#customizeForm").addEventListener("submit", async e => {
   const fields = Object.fromEntries(new FormData(e.currentTarget));
   $("#customizeErr").textContent = "";
   try {
-    await saveProfile(token, { accent: fields.accent, tagline: fields.tagline });
+    await saveProfile(token, { accent: fields.accent, tagline: fields.tagline, theme: fields.theme, screens: fields.screens });
     $("#customizeDlg").close();
     await tick();
   } catch (error) { $("#customizeErr").textContent = error.message; }

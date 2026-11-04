@@ -31,7 +31,7 @@ input:focus-visible, button:focus-visible, select:focus-visible { outline: 2px s
 .lead { color: var(--mute); margin: 12px 0 24px; }
 form#join { display: grid; gap: 14px; text-align: left; }
 label { display: grid; gap: 6px; font-size: 13px; color: var(--mute); }
-input { font: inherit; color: var(--fg); background: #0a0d15; border: 1px solid var(--line); border-radius: 10px; padding: 11px 12px; }
+input, select { font: inherit; color: var(--fg); background: #0a0d15; border: 1px solid var(--line); border-radius: 10px; padding: 11px 12px; }
 form#join button { margin-top: 6px; padding: 12px; border: 0; border-radius: 10px; font-weight: 600; color: #1a1305;
   background: linear-gradient(180deg, #f4d699, var(--gold) 50%, var(--gold2)); box-shadow: 0 8px 24px #e8c27a33; }
 .err { color: var(--auth); min-height: 1.2em; margin: 0; font-size: 13px; }

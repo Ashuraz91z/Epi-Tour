@@ -124,7 +124,7 @@ export function spectatorSnapshot(a) {
     }
   }
   return { slug: a.slug, name: a.name, created: a.created,
-    profile: { accent: sanitizeProfile(a.profile).accent, tagline: sanitizeProfile(a.profile).tagline },
+    profile: sanitizeProfile(a.profile),
     game: a.game ? { level: a.game.level, xp: a.game.xp, streak: a.game.streak, badges: a.game.badges ?? [] } : { level: 1, xp: 0, streak: 0, badges: [] },
     sessions: a.sessions.map(s => ({ src: s.src, host: sha(s.host).slice(0, 12), sid: s.sid,
       state: s.state, started: s.started, updated: s.updated, task: "", action: "" })),
