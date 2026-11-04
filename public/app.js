@@ -75,10 +75,12 @@ const SHARED = [
   { id: "lounge", name: "Salon", kicker: "Café · repos · tabac · toilettes", icon: "☕", floor: "#22202a" },
   { id: "club", name: "Club", kicker: "Étage commun", icon: "🪩", floor: "#160c22" },
   { id: "casino", name: "Casino", kicker: "Jeux · bar · détente", icon: "🎰", floor: "#2d1810" },
+  { id: "tennis", name: "Tennis", kicker: "Court central · tribunes", icon: "🎾", floor: "#23302a" },
+  { id: "golf", name: "Golf", kicker: "Putting green · practice", icon: "⛳", floor: "#1d2a1f" },
 ];
-const FLOOR_OF = { smoke: "roof", cafe: "lounge", rest: "lounge", tabac: "lounge", wc: "lounge", club: "club", casino: "casino" };
+const FLOOR_OF = { smoke: "roof", cafe: "lounge", rest: "lounge", tabac: "lounge", wc: "lounge", club: "club", casino: "casino", tennis: "tennis", golf: "golf" };
 const PLACE_FR = { open: "Open space", boss: "Bureau du résident", smoke: "Terrasse fumeurs", cafe: "Café", rest: "Salle de repos",
-  tabac: "Bureau de tabac", wc: "Toilettes", club: "Club", casino: "Casino" };
+  tabac: "Bureau de tabac", wc: "Toilettes", club: "Club", casino: "Casino", tennis: "Court de tennis", golf: "Green de golf" };
 
 // ---------- géométrie (plan de 1000 × 620 unités, 1 unité = 2 cm) ----------
 const S = 0.02, FLOOR_H = 5.2, LIFT = 22;
@@ -113,6 +115,16 @@ const clubAnimation = (t, seed) => {
   const phase = t + seed * 17;
   return phase % 12 < 2 ? CLUB_EMOTES[Math.floor(phase / 12) % CLUB_EMOTES.length] : "Dance";
 };
+// Tennis : un coup (Punch dure 0,83 s), la position d'attente, puis un petit déplacement. Golf : un swing, l'attente, parfois un « oui ».
+const tennisAnimation = (t, seed) => {
+  const phase = (t + seed * 13) % 4.2;
+  return phase < 0.83 ? "Punch" : phase > 3.3 ? "Running" : "Idle";
+};
+const golfAnimation = (t, seed) => {
+  const phase = t + seed * 11, k = phase % 7;
+  return k < 0.83 ? "Punch" : k > 5.3 && Math.floor(phase / 7) % 3 === 1 ? "Yes" : "Idle";
+};
+const SLOT_MOTION = { Dance: clubAnimation, Tennis: tennisAnimation, Golf: golfAnimation };
 // Casino : tables, machines à sous, bar
 // Mêmes positions que les meubles dessinés dans buildShared (tables de jeu et machines à sous).
 const CASINO_TABLES = [[150, 120], [350, 120], [550, 120], [150, 350], [350, 350], [550, 350]];
@@ -128,6 +140,42 @@ const CASINO_SLOTS = [
   ...CASINO_SLOT_MACHINES.map(([x, y, side]) => [x, y, Math.PI, "Idle", [[x + side, y]]]),
   ...[150, 250, 350, 450, 550, 650].map(x => [x, 550, Math.PI, "Idle"]),
   ...[300, 400, 500].map(x => [x, 100, 0, "Idle"]),
+];
+// Places assises : la 6e valeur est la hauteur de la racine du robot (assise − 0,24 m de bassin), la racine étant
+// 10 unités (0,20 m) devant le bassin. Un point de passage peut porter une hauteur : l'agent monte les gradins en marchant.
+// Tennis : court en terre battue devant (filet en x = 500), tribunes à trois rangs au fond, allée centrale libre entre les deux.
+const TENNIS_COURT = { x0: 200, x1: 800, y0: 380, y1: 590 };
+const TENNIS_ROWS = [{ bench: 240, floor: 0 }, { bench: 190, floor: 0.35 }, { bench: 140, floor: 0.7 }];
+const TENNIS_SEATS = [220, 290, 360, 430, 570, 640, 710, 780];
+const tennisAisle = x => x < 330 ? 165 : x > 670 ? 835 : 500; // escaliers : aux deux bouts et entre les deux sections
+const TENNIS_NPCS = [[215, 485], [785, 485]];
+const TENNIS_SLOTS = [
+  // Joueurs : de chaque côté du filet, tournés vers lui ; ils arrivent tout droit depuis l'allée (rien sur le chemin).
+  ...[[300, 420], [300, 550], [410, 440], [410, 530]].flatMap(([x, y]) => [[x, y, Math.PI / 2, "Tennis"], [1000 - x, y, -Math.PI / 2, "Tennis"]]),
+  // Spectateurs : on monte par l'escalier le plus proche, on longe son rang devant les bancs, puis on s'assoit.
+  ...TENNIS_ROWS.flatMap(({ bench, floor }, k) => TENNIS_SEATS.map(sx => {
+    const a = tennisAisle(sx), steps = TENNIS_ROWS.slice(1, k + 1).map(r => [a, r.bench + 25, r.floor]);
+    return [sx, bench + 10, 0, "Sitting", [[a, 265, 0], ...steps, [sx, bench + 25, floor]], floor + 0.21];
+  })),
+];
+// Golf : putting green devant (trois trous), practice et son filet au fond à gauche, étang au centre, club-house à droite.
+const GOLF_GREEN = { cx: 520, cy: 470, rx: 270, ry: 115 };
+const GOLF_HOLES = [[370, 420], [560, 520], [700, 410]]; // le deuxième sert aux putts joués au dialogue (ligne y = 520)
+const GOLF_MATS = [130, 210, 290, 370, 450]; // tapis de practice ; le dernier est au golfeur du club
+const GOLF_POND = { cx: 590, cy: 200, rx: 95, ry: 55 }, GOLF_BUNKER = { cx: 150, cy: 530, rx: 90, ry: 55 };
+const GOLF_TABLES = [[800, 230], [920, 230]]; // chaises à ±45, racine des assis à ±35
+const towards = (x, y, [hx, hy]) => Math.atan2(hx - x, hy - y);
+const GOLF_SLOTS = [
+  // Putts autour des trous, hors de la ligne du golfeur du club.
+  ...[[295, 430, 0], [330, 365, 0], [440, 385, 0], [625, 395, 2], [760, 370, 2], [770, 450, 2], [640, 560, 1], [600, 455, 1], [520, 450, 1]]
+    .map(([x, y, h]) => [x, y, towards(x, y, GOLF_HOLES[h]), "Golf"]),
+  // Practice : face au filet du fond.
+  ...GOLF_MATS.slice(0, 4).map(x => [x, 105, Math.PI, "Golf"]),
+  // Club-house : au comptoir (par derrière les tables), puis assis aux deux tables (chaises à coussin : assise 0,48 m).
+  ...[770, 840, 910].map(x => [x, 120, Math.PI, "Idle", [[710, 170], [x, 170]]]),
+  ...GOLF_TABLES.flatMap(([tx, ty]) => [[tx - 35, ty, Math.PI / 2, "Sitting", [], 0.24], [tx + 35, ty, -Math.PI / 2, "Sitting", [], 0.24]]),
+  // Bancs au bord du green, côté club-house : on les contourne par l'avant.
+  ...[385, 415, 465, 495].map(y => [920, y, -Math.PI / 2, "Sitting", [[880, y]], 0.21]),
 ];
 const SHARED_SLOTS = {
   // Café : les chaises du côté opposé à l'allée se rejoignent par l'allée entre les tables.
@@ -146,6 +194,8 @@ const SHARED_SLOTS = {
     .filter(([x, y]) => CLUB_NPCS.every(([nx, ny]) => Math.hypot(nx - x, ny - y) >= 48)),
   smoke: [...ASHTRAYS.flatMap(([x, y]) => around(x, y, 42, 3, Math.PI / 6)), ...[440, 600].map(x => [x, 560, 0])],
   casino: CASINO_SLOTS,
+  tennis: TENNIS_SLOTS,
+  golf: GOLF_SLOTS,
 };
 function slotOf(list, k) {
   if (list[k]) return list[k];
@@ -1987,8 +2037,8 @@ function update(now) {
       })), SHARED_SLOTS[list[0].place].length) : null;
     list.forEach((w, position) => {
       const k = deskSlots?.get(w.key) ?? pauseSlots?.get(w.key) ?? position;
-      const [x, y, facing, anim, way = []] = slotOf(RES_SLOTS[w.place] ?? SHARED_SLOTS[w.place], k);
-      const slot = P(x, y, w.place === "rest" && k % 3 < 2 ? 0.36 : 0);
+      const [x, y, facing, anim, way = [], seat] = slotOf(RES_SLOTS[w.place] ?? SHARED_SLOTS[w.place], k);
+      const slot = P(x, y, seat ?? (w.place === "rest" && k % 3 < 2 ? 0.36 : 0));
       if (w.place === "open" && anim === "Sitting") {
         // Chaise de bureau ×2 : coussin à 0,47 m ; bassin Sitting à 0,24 m.
         slot.y = 0.23;
@@ -2000,7 +2050,7 @@ function update(now) {
         slot.x += Math.sin(facing) * 0.20;
         slot.z += Math.cos(facing) * 0.20;
       }
-      want.set(w.key, { ...w, slot, facing, anim, way: way.map(([wx, wy]) => P(wx, wy)), index: k });
+      want.set(w.key, { ...w, slot, facing, anim, way: way.map(([wx, wy, wh = 0]) => P(wx, wy, wh)), index: k });
     });
   }
 
@@ -2157,7 +2207,7 @@ function animate(frameTime = performance.now()) {
   for (const g of agents.values()) {
     const u = g.userData;
     u.bubble.visible = u.floor === focusKey;
-    let walking = false;
+    let walking = false, walkY = u.stepY ?? 0;
     if (u.wait > 0) { u.wait -= dt; g.visible = u.wait <= 0; }
     else if (u.path.length) {
       const next = u.path[0];
@@ -2169,23 +2219,26 @@ function animate(frameTime = performance.now()) {
         u.floor = next.toFloor;
         u.path.shift();
         u.wait = 0.8;
+        u.stepY = walkY = 0;
         g.visible = false;
       } else {
         tmp.subVectors(next, g.position);
         tmp.y = 0;
         const d = tmp.length(), step = dt * 2.6;
-        if (d <= step) { g.position.x = next.x; g.position.z = next.z; u.path.shift(); }
+        if (d <= step) { g.position.x = next.x; g.position.z = next.z; u.path.shift(); if (next !== u.slot) u.stepY = next.y; }
         else { tmp.normalize(); g.position.x += tmp.x * step; g.position.z += tmp.z * step; u.dir = Math.atan2(tmp.x, tmp.z); walking = true; }
+        // Les points de passage des gradins ont une hauteur : l'agent la gagne en marchant ; vers sa place, il reste au niveau du dernier.
+        walkY = next === u.slot ? u.stepY ?? 0 : next.y;
       }
     }
     const settled = !walking && !u.path.length;
-    // Chaque assise fournit sa hauteur ; revenir au sol pendant la marche.
-    g.position.y += ((settled ? u.slot.y : 0) - g.position.y) * Math.min(1, dt * 8);
+    // Chaque assise fournit sa hauteur ; pendant la marche, celle du sol ou de la marche de gradin.
+    g.position.y += ((settled ? u.slot.y : walkY) - g.position.y) * Math.min(1, dt * 8);
     const facing = !settled ? (u.dir ?? 0) : u.slotAnim === "Dance" ? Math.PI + Math.sin(t * 3 + u.seed * 6) * 0.6 : (u.slotFacing ?? 0);
     const turn = ((facing - g.rotation.y + Math.PI * 3) % (Math.PI * 2)) - Math.PI;
     g.rotation.y += turn * Math.min(1, dt * 8);
     // Animation selon le lieu : marche, assis au poste / au salon / aux toilettes, danse au Club, signe chez le résident.
-    play(g, !settled ? "Walking" : u.slotAnim === "Dance" ? clubAnimation(t, u.seed) : u.slotAnim ?? "Idle");
+    play(g, !settled ? "Walking" : SLOT_MOTION[u.slotAnim]?.(t, u.seed) ?? u.slotAnim ?? "Idle");
     if (g.parent?.visible) u.mixer.update(dt); // les agents des étages fermés avancent sans être animés
     u.orb.position.y = 1.78 + Math.sin(t * 2 + u.seed * 6) * 0.04;
     u.cup.visible = settled && u.place === "cafe";
@@ -2196,7 +2249,7 @@ function animate(frameTime = performance.now()) {
       p.scale.setScalar(0.6 + k * 1.8);
       p.material.opacity = 0.45 * Math.sin(k * Math.PI);
     });
-    u.ring.position.y = 0.03 - g.position.y; // le repère reste au sol quand le robot est sur une assise
+    u.ring.position.y = 0.03 + (u.stepY ?? 0) - g.position.y; // le repère reste au sol (ou sur la marche) quand le robot est assis
     u.ring.visible = u.state !== "autorisation" || Math.sin(t * 10) > -0.3;
   }
 
