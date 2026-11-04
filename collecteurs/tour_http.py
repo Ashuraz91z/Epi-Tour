@@ -1,11 +1,23 @@
-"""Transport commun : curl, déjà requis par l'installateur, avec vérification TLS conservée."""
+"""Transport commun : curl, déjà requis par l'installateur, avec vérification TLS conservée.
+
+Sous Windows : le curl.exe livré avec Windows 10 (1803 et plus) et 11, lancé sans fenêtre de console."""
 import json
+import os
 import subprocess
+import sys
 import urllib.parse
 
 
 class ConnectionError(Exception):
     pass
+
+
+def curl():
+    if sys.platform == 'win32':
+        # Celui de System32 d'abord : un curl.exe posé dans le dossier courant ne doit pas recevoir la clé.
+        system = os.path.join(os.environ.get('SystemRoot', 'C:\\Windows'), 'System32', 'curl.exe')
+        return system if os.path.isfile(system) else 'curl.exe'
+    return 'curl'
 
 
 def request(site, key, path, payload=None):
@@ -20,14 +32,23 @@ def request(site, key, path, payload=None):
     def quoted(value):
         return json.dumps(value, ensure_ascii=True)
     config = 'header = ' + quoted('X-Tour-Token: ' + key) + '\n'
-    args = ['curl', '--silent', '--show-error', '--max-time', '12', '--proto', '=http,https',
-            '--config', '-', '--write-out', '\n%{http_code}', '--url', site.rstrip('/') + path]
+    # Le \n de --write-out est décodé par curl lui-même : aucun retour à la ligne brut dans la ligne de commande Windows.
+    args = [curl(), '--silent', '--show-error', '--max-time', '12', '--proto', '=http,https',
+            '--config', '-', '--write-out', '\\n%{http_code}', '--url', site.rstrip('/') + path]
     if payload is not None:
         config += 'header = "Content-Type: application/json"\n'
         config += 'data = ' + quoted(json.dumps(payload, ensure_ascii=True)) + '\n'
+    options = {}
+    if sys.platform == 'win32':
+        # Sous pythonw (tâche planifiée), sans ce drapeau chaque envoi ferait clignoter une fenêtre de console.
+        options['creationflags'] = getattr(subprocess, 'CREATE_NO_WINDOW', 0x08000000)
     try:
-        result = subprocess.run(args, input=config, capture_output=True, text=True, timeout=15)
+        # UTF-8 explicite : sous Windows l'encodage par défaut (cp1252) déformerait un nom d'étage accentué.
+        result = subprocess.run(args, input=config, capture_output=True, encoding='utf-8', errors='replace', timeout=15, **options)
     except FileNotFoundError:
+        if sys.platform == 'win32':
+            raise ConnectionError('curl.exe est introuvable : il est fourni avec Windows 10 (1803 et plus) et Windows 11. '
+                                  'Mets Windows à jour ou installe curl (winget install -e --id cURL.cURL).') from None
         raise ConnectionError('curl est introuvable sur cette machine.') from None
     except subprocess.TimeoutExpired:
         raise ConnectionError('Le serveur ne répond pas : vérifie le réseau puis relance la commande.') from None

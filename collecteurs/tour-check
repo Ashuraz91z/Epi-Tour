@@ -27,13 +27,14 @@ def installed_tools():
 def main():
     verify = '--verify' in sys.argv
     conf = Path.home() / '.config/tour'
-    site = os.environ['PENTHOUSE_SITE'] if verify else (conf / 'url').read_text().strip()
-    key = os.environ['PENTHOUSE_KEY'] if verify else (conf / 'secret').read_text().strip()
+    # utf-8-sig : un fichier réenregistré par le Bloc-notes de Windows (avec BOM) reste lisible.
+    site = os.environ['PENTHOUSE_SITE'] if verify else (conf / 'url').read_text(encoding='utf-8-sig').strip()
+    key = os.environ['PENTHOUSE_KEY'] if verify else (conf / 'secret').read_text(encoding='utf-8-sig').strip()
     owner = request(site, key, '/api/connection')
     print('Appartement vérifié : ' + owner['name'])
     if verify:
         return
-    host = (conf / 'host').read_text().strip() if (conf / 'host').exists() else socket.gethostname().split('.')[0]
+    host = (conf / 'host').read_text(encoding='utf-8-sig').strip() if (conf / 'host').exists() else socket.gethostname().split('.')[0]
     tools = installed_tools()
     readers = {name: (conf / 'tour-sync').exists() and Path(path).expanduser().is_dir() for name, path in [('claude', '~/.claude/projects'), ('codex', '~/.codex/sessions')]}
     request(site, key, '/e?' + urllib.parse.urlencode({'src': 'setup', 'host': host}),
