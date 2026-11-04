@@ -303,7 +303,10 @@ export function createApp({ code, db }) {
       const play = (apt, fn) => {
         let result, toasts = [];
         db.change(apt.slug, store => {
-          result = fn(store, Date.now() / 1000);
+          const now = Date.now() / 1000;
+          result = fn(store, now);
+          // XP et badges à jour dans la réponse, sans attendre le prochain état du flux.
+          if (result && !result.error && !result.game) result.game = publicGame(store, now);
           toasts = [...(result?.toasts ?? []), ...pullToasts(store)];
         });
         if (!result || result.error) return json(400, { error: result?.error ?? "Action impossible." });
@@ -351,6 +354,7 @@ export function createApp({ code, db }) {
         let result, toasts = [];
         db.changeMany([apt.slug, to], ([from, target]) => {
           result = tip(from, target, p.amount, p.message, Date.now() / 1000);
+          if (from && result?.ok) result.game = publicGame(from.store);
           if (from) toasts = pullToasts(from.store);
         });
         if (!result || result.error) return json(400, { error: result?.error ?? "Prime impossible." });

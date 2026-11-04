@@ -87,7 +87,7 @@ Géométries simples partagées, ressources propres aux agents libérées à leu
 
 Le flux SSE calcule l'état une seule fois toutes les 2 s pour tous les onglets ouverts (résidents et spectateurs).
 
-Benchmark reproductible, local et sans contact avec les comptes/outils réels : `node benchmark.mjs`. Maquette 20 résidents/600 sessions, 40 lectures après échauffement. Le 3 novembre 2026 : ancien chemin SQLite simulé 2,59 ms/requête, nouveau 1,40 ms ; JS 40 936 octets gzip ; état 3,3 Ko gzip. Le 4 novembre 2026, sur une autre machine (environ 5 fois plus lente sur l'ancien chemin), avec la gamification et l'économie : 17,5 ms contre 11,3 ms ; état 8,0 Ko gzip ; JS 53 Ko gzip. Mesures locales indicatives, pas une mesure des FPS sur les appareils des utilisateurs.
+Benchmark reproductible, local et sans contact avec les comptes/outils réels : `node benchmark.mjs`. Maquette 20 résidents/600 sessions, 40 lectures après échauffement. Le 3 novembre 2026 : ancien chemin SQLite simulé 2,59 ms/requête, nouveau 1,40 ms ; JS 40 936 octets gzip ; état 3,3 Ko gzip. Le 4 novembre 2026, sur une autre machine (environ 5 fois plus lente sur l'ancien chemin), avec la gamification et l'économie : 14,1 ms contre 11,5 ms ; état 8,4 Ko gzip ; app.js 60 Ko gzip (plus economy-ui.js, chargé à part). Mesures locales indicatives, pas une mesure des FPS sur les appareils des utilisateurs.
 
 ## Grok Bot
 

@@ -2460,9 +2460,13 @@ $("#showPermission").addEventListener("click", () => {
 });
 
 // Panneau latéral : pas de redessin sous les doigts de quelqu'un qui saisit (lien perso de la télé).
+// Le HTML n'est réécrit que s'il a changé : un bouton n'est pas remplacé sous le pointeur toutes les deux secondes.
+let panelHtml = "";
 function setPanel(html) {
   const panel = $("#aptPanel"), typing = panel.contains(document.activeElement) && document.activeElement.matches("input, textarea");
-  if (!typing && panel.innerHTML !== html) panel.innerHTML = html;
+  if (typing || html === panelHtml) return;
+  panel.innerHTML = html;
+  panelHtml = html;
 }
 
 // En-tête : portefeuille, titre et événement du jour ; bouton Entreprise ; primes reçues d'un autre résident.

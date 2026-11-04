@@ -94,7 +94,7 @@ function staffCard(st, c) {
   const echelonPct = end == null || st.nextEchelon == null ? 100 : pct(end - start - st.nextEchelon, end - start);
   const morale = Number(st.morale) || 0;
   const flags = [
-    st.active ? `<span class="eco-flag live">● au travail${st.active > 1 ? ` (${st.active})` : ""}</span>` : "",
+    st.active ? `<span class="eco-flag live">● au travail${st.active > 1 ? ` (${Number(st.active)})` : ""}</span>` : "",
     st.resting ? '<span class="eco-flag rest">😴 Repos obligatoire : 10 h atteintes</span>'
       : st.overtime ? `<span class="eco-flag over">⏱️ Heures sup (×${nf.format(WORKDAY.overtime)})</span>` : "",
   ].join("");
@@ -205,7 +205,7 @@ function casinoHtml(c) {
         <button type="button" class="eco-play" data-play="slots" data-fk="play:slots" ${playAttr}>Tirer le levier</button>${outcome("slots")}</section>
       <section class="eco-game" aria-labelledby="ecoRouletteTitle"><h4 id="ecoRouletteTitle">🎡 Roulette</h4>
         <div class="eco-wheel-wrap" aria-hidden="true"><div class="eco-wheel" style="background:${WHEEL_BG};transform:rotate(${Number(c.rot) || 0}deg)"></div><span class="eco-pointer"></span>
-          <span class="eco-ball ${r ? esc(r.color) : ""}">${r ? r.number : "?"}</span></div>
+          <span class="eco-ball ${r ? esc(r.color) : ""}">${r ? esc(r.number) : "?"}</span></div>
         <label class="eco-choice"><span>Tu mises sur</span><select name="rouletteChoice" data-keep data-fk="rouletteChoice">
           <optgroup label="Chances simples (× ${CASINO.roulette.even})">${["rouge", "noir", "pair", "impair"].map(v => `<option value="${v}" ${choiceR === v ? "selected" : ""}>${v[0].toUpperCase() + v.slice(1)}</option>`).join("")}</optgroup>
           <optgroup label="Numéro plein (× ${CASINO.roulette.number})">${[...Array(37).keys()].map(n => `<option value="${n}" ${choiceR === String(n) ? "selected" : ""}>${n} · ${pocketColor(n)}</option>`).join("")}</optgroup>
@@ -382,7 +382,8 @@ export function createEconomyUi({ dialog, body, esc, tools, getData, getMine, ge
     return { eco: mine?.economy, esc, tools, now: data?.now ?? Date.now() / 1000, apartments: data?.apartments ?? [], me: mine?.slug,
       form: state.form, last: state.last, rot: state.rot };
   };
-  const setStatus = (text, error = false) => { statusEl.textContent = text; statusEl.classList.toggle("err", error); };
+  // Ligne d'état (annoncée aux lecteurs d'écran) : tone = "err" (refus), "ok" (réussite ou gain), "loss" (perte au casino).
+  const setStatus = (text, tone = "") => { statusEl.textContent = text; statusEl.className = `eco-status ${tone}`; };
 
   function refresh(force = false) {
     if (!dialog.open && !force) return;
@@ -430,13 +431,13 @@ export function createEconomyUi({ dialog, body, esc, tools, getData, getMine, ge
     setStatus("…");
     try {
       const j = await post(path, payload);
-      setStatus(success);
+      setStatus(success, "ok");
       celebrate(j.toasts);
       if (j.economy) onEconomy(j.economy);
       refresh(true);
       return j;
     } catch (error) {
-      setStatus(error.message, true);
+      setStatus(error.message, "err");
       refresh(true);
       return null;
     }
@@ -447,8 +448,8 @@ export function createEconomyUi({ dialog, body, esc, tools, getData, getMine, ge
     const eco = getMine()?.economy;
     if (!eco) return;
     const bet = Math.floor(Number(state.form.bet ?? 50));
-    if (!(bet >= CASINO.minBet && bet <= CASINO.maxBet)) return setStatus(`Mise entre ${CASINO.minBet} et ${CASINO.maxBet} ${CURRENCY}.`, true);
-    if (bet > (Number(eco.wallet) || 0)) return setStatus("Solde insuffisant pour cette mise.", true);
+    if (!(bet >= CASINO.minBet && bet <= CASINO.maxBet)) return setStatus(`Mise entre ${CASINO.minBet} et ${CASINO.maxBet} ${CURRENCY}.`, "err");
+    if (bet > (Number(eco.wallet) || 0)) return setStatus("Solde insuffisant pour cette mise.", "err");
     const choice = game === "roulette" ? state.form.rouletteChoice ?? "rouge" : game === "race" ? state.form.raceChoice ?? CASINO.race.runners[0] : "";
     // Le solde affiché garde la mise retirée jusqu'à la fin de l'animation : le flux ne dévoile pas le résultat.
     state.busy = true; state.frozenWallet = (Number(eco.wallet) || 0) - bet;
@@ -462,13 +463,13 @@ export function createEconomyUi({ dialog, body, esc, tools, getData, getMine, ge
       if (game === "roulette" && rot != null) state.rot = rot;
       state.last[game] = j.result;
       state.busy = false;
-      setStatus(outcomeText(game, j.result, tools));
+      setStatus(outcomeText(game, j.result, tools), j.result.net > 0 ? "ok" : j.result.net < 0 ? "loss" : "");
       celebrate(j.toasts);
       if (j.economy) onEconomy(j.economy);
     } catch (error) {
       anim.cancel();
       state.busy = false;
-      setStatus(error.message, true);
+      setStatus(error.message, "err");
     }
     refresh(true);
   }
@@ -476,8 +477,8 @@ export function createEconomyUi({ dialog, body, esc, tools, getData, getMine, ge
   async function sendTip(form) {
     const f = Object.fromEntries(new FormData(form));
     const amount = Math.floor(Number(f.amount));
-    if (!f.to) return setStatus("Choisis le résident à remercier.", true);
-    if (!(amount >= TIPS.min)) return setStatus(`Prime minimum : ${TIPS.min} ${CURRENCY}.`, true);
+    if (!f.to) return setStatus("Choisis le résident à remercier.", "err");
+    if (!(amount >= TIPS.min)) return setStatus(`Prime minimum : ${TIPS.min} ${CURRENCY}.`, "err");
     const name = getData()?.apartments.find(a => a.slug === f.to)?.name ?? f.to;
     const j = await act(form.querySelector("button[type=submit]"), "/api/economy/tip", { to: f.to, amount, message: String(f.message ?? "").slice(0, TIPS.message) },
       `💌 Prime de ${money(amount)} envoyée à ${name}.`);

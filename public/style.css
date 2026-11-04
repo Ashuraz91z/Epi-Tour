@@ -314,18 +314,19 @@ body.kiosk-mode #moreWrap { display: none !important; }
 .eco-line { display: flex; flex-wrap: wrap; gap: 4px 12px; font-size: 12px; color: var(--mute); margin: -4px 0 10px; }
 .eco-line b { color: var(--gold); font-family: var(--mono); font-weight: 600; }
 .leaderboard-floating ol + h4 { margin-top: 10px; }
-/* Moins de place : libellés des totaux lus seulement par les lecteurs d'écran, puis totaux masqués, puis boutons en icônes. */
+/* Moins de place : libellés des totaux lus seulement par les lecteurs d'écran, nom de l'événement en infobulle,
+   puis totaux masqués, puis boutons en icônes ; sur téléphone, l'en-tête passe sur deux lignes (--top-h suit). */
 @media (max-width: 1599px) {
   .totals { gap: 6px 12px; }
   .totals .lbl { position: absolute; width: 1px; height: 1px; overflow: hidden; clip: rect(0 0 0 0); white-space: nowrap; }
   .lbl-long { display: none; }
-  .eco-event { max-width: 160px; }
+  .top .eco-event { max-width: 160px; }
 }
 @media (max-width: 1359px) {
-  .totals { display: none; }
-  .eco-event-name { position: absolute; width: 1px; height: 1px; overflow: hidden; clip: rect(0 0 0 0); white-space: nowrap; }
-  .eco-event { padding: 5px 8px; }
+  .top .eco-event-name { position: absolute; width: 1px; height: 1px; overflow: hidden; clip: rect(0 0 0 0); white-space: nowrap; }
+  .top .eco-event { padding: 5px 8px; }
 }
+@media (max-width: 1239px) { .totals { display: none; } }
 @media (max-width: 1099px) {
   .top-actions .lbl { display: none; }
   .icon-btn { padding: 7px 11px; }
@@ -336,12 +337,15 @@ body.kiosk-mode #moreWrap { display: none !important; }
   .brandline { gap: 10px; }
   .top { gap: 6px 10px; }
   .eco-chip { padding: 4px 10px; font-size: 12px; }
-  .eco-tip { position: fixed; left: 12px; right: 12px; top: calc(var(--top-h, 52px) + 4px); max-width: none; width: auto; }
+  .top .eco-tip { position: fixed; left: 12px; right: 12px; top: calc(var(--top-h, 52px) + 4px); max-width: none; width: auto; }
+  /* Le panneau occupe le bas de l'écran : le classement flottant le recouvrirait. */
+  .leaderboard-floating { display: none !important; }
 }
 @media (max-width: 420px) { .clock { display: none; } }
 
 /* ---------- Dialogue « Entreprise » ---------- */
-.eco-dlg { width: min(920px, calc(100vw - 32px)); max-height: calc(100dvh - 32px); }
+/* Hauteur fixe : le dialogue ne saute pas d'un onglet à l'autre. */
+.dlg.eco-dlg { width: min(920px, calc(100vw - 32px)); height: min(860px, calc(100dvh - 32px)); max-height: calc(100dvh - 32px); overflow: auto; }
 .eco-dlg h4 { margin: 18px 0 8px; font-size: 12px; letter-spacing: .12em; text-transform: uppercase; color: var(--gold); }
 .eco-dlg select, .eco-dlg input { font: inherit; font-size: 13px; color: var(--fg); background: #0a0d15; border: 1px solid var(--line); border-radius: 8px; padding: 7px 9px; min-height: 36px; width: 100%; }
 .eco-dlg select:disabled { opacity: .7; }
@@ -351,7 +355,9 @@ body.kiosk-mode #moreWrap { display: none !important; }
 .eco-tabs [role=tab] { flex: none; color: #c9cede; background: #ffffff08; border: 1px solid var(--line); border-radius: 999px; padding: 7px 14px; font-size: 13px; min-height: 38px; }
 .eco-tabs [role=tab]:hover { border-color: #e8c27a77; }
 .eco-tabs [role=tab][aria-selected=true] { color: #1a1305; background: var(--gold); border-color: var(--gold); font-weight: 600; }
-.dlg .eco-status { min-height: 1.4em; margin: 8px 0 4px; font-size: 13px; color: var(--work); }
+.dlg .eco-status { min-height: 1.4em; margin: 8px 0 4px; font-size: 13px; color: var(--fg); }
+.dlg .eco-status.ok { color: var(--work); }
+.dlg .eco-status.loss { color: #ff9a9a; }
 .dlg .eco-status.err { color: var(--auth); }
 .eco-panel:focus-visible { outline: 2px solid var(--gold); outline-offset: 4px; border-radius: 6px; }
 .dlg .eco-muted { color: var(--mute); font-size: 13px; }
@@ -370,6 +376,7 @@ body.kiosk-mode #moreWrap { display: none !important; }
 .eco-table td:nth-child(2) { white-space: normal; }
 .eco-table thead th { color: var(--mute); font-weight: 600; }
 .eco-table .m { font-family: var(--mono); text-align: right; }
+.eco-table td.m:first-child { text-align: left; }
 .eco-table tfoot th { font-weight: 400; color: var(--mute); text-align: right; white-space: normal; }
 .eco-table tfoot .total th, .eco-table tfoot .total td { color: var(--gold); font-weight: 600; border-bottom: 0; }
 .eco-table .up { color: var(--work); }

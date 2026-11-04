@@ -1219,7 +1219,7 @@ test("économie par HTTP : abonnement, casino, primes entre résidents, missions
     const spectator = room.headers.get("set-cookie").split(";")[0];
     const state = await (await fetch(url + "/api/state", { headers: { Cookie: spectator } })).json();
     const view = state.apartments.find(a => a.slug === "ana").economy;
-    assert.deepEqual(Object.keys(view).sort(), ["earned", "records", "staff", "title", "today", "wallet"]);
+    assert.deepEqual(Object.keys(view).sort(), ["decor", "earned", "records", "staff", "title", "today", "wallet"]);
     assert.deepEqual(Object.keys(view.staff[0]).sort(), ["echelon", "grade", "role", "src"]);
     assert.equal((await call("/api/economy/casino", { game: "slots", bet: 10 }, { Cookie: spectator, "X-Tour-Token": ana.token })).status, 401);
   } finally { app.close(); }

@@ -337,7 +337,7 @@ export function tip(from, to, amountRaw, messageRaw, now = Date.now() / 1000) {
   log(eco, { t: now, kind: "tip_out", label: `Prime à ${to.name}${message ? " · " + message : ""}`, amount: -amount });
   target.wallet = money(target.wallet + amount);
   log(target, { t: now, kind: "tip_in", label: `Prime de ${from.name}${message ? " · " + message : ""}`, amount });
-  pushToast(gameOf(to.store), `💌 Prime de ${from.name}`, `+${amount} P$${message ? " · " + message : ""}`);
+  // Le destinataire est prévenu par son interface, qui repère la nouvelle ligne « tip_in » de son relevé.
   pushToast(gameOf(from.store), "Prime envoyée", `${amount} P$ à ${to.name}`);
   if (eco.counters.tipsSent >= 3) badge(from.store, "generous");
   if (target.wallet >= 10000) badge(to.store, "rich");
@@ -400,5 +400,6 @@ export function publicEconomy(store, now = Date.now() / 1000) {
 export function spectatorEconomy(view) {
   if (!view) return undefined;
   return { wallet: view.wallet, earned: view.earned, title: view.title, today: { pay: view.today?.pay ?? 0, minutes: view.today?.minutes ?? 0 },
-    records: view.records, staff: (view.staff ?? []).map(({ src, grade, role, echelon }) => ({ src, grade, role, echelon })) };
+    records: view.records, decor: [...(view.decor ?? [])], // le décor se voit dans la tour, aussi en spectateur
+    staff: (view.staff ?? []).map(({ src, grade, role, echelon }) => ({ src, grade, role, echelon })) };
 }
