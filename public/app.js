@@ -3329,7 +3329,7 @@ function buildGolf(f, g, { at, tag, staff, back }) {
   ball.scale.setScalar(0.035);
   g.add(ball);
   f.golf = { flagGeo, flagBase: Float32Array.from(flagGeo.attributes.position.array), water, ripples, duck, pro, putter, ball, board, last: null,
-    range: { ball: rangeBall, t: 1, tx: 450, th: 1.5 }, putt: { phase: "rest", t: 0, event: false } };
+    range: { ball: rangeBall, t: 1, tx: GOLF_MATS[4] + GOLF_TEE.dx, th: 1.5 }, putt: { phase: "rest", t: 0, event: false } };
   planPutt(f.golf, "moyen", true, null, false);
   f.golf.putt.phase = "aim";
   drawGolfBoard(f.golf);
@@ -3402,10 +3402,11 @@ function tickRange(gf, dt) {
   r.t += dt;
   if (r.t >= 3.4) { r.t = 0; r.tx = x0 + (Math.random() - 0.5) * 120; r.th = 1.1 + Math.random() * 1.4; play(gf.pro, "Punch"); }
   else if (r.t > 0.83) play(gf.pro, "Idle");
-  const k = r.t - 0.2; // le fer traverse vers le filet : la balle s'envole
+  // Le fer traverse vers le filet : la balle s'envole, retombe au pied du filet, puis une nouvelle attend sur le tee.
+  const k = r.t - 0.2;
   let X = x0, Y = tee, H = 0.11;
   if (k > 0 && k < 0.55) { const u = k / 0.55; X = x0 + (r.tx - x0) * u; Y = tee + (34 - tee) * u; H = 0.11 + (r.th - 0.11) * u + 3.2 * u * (1 - u); }
-  else if (k >= 0.55) { const u = Math.min(1, (k - 0.55) / 0.5); X = r.tx; Y = 36 + u * 4; H = r.th + (0.11 - r.th) * u; }
+  else if (k >= 0.55 && k < 1.6) { const u = Math.min(1, (k - 0.55) / 0.5); X = r.tx; Y = 36 + u * 4; H = r.th + (0.11 - r.th) * u; }
   r.ball.position.set(X * S - 10, H, Y * S - 6.2);
 }
 function tickGolf(gf, dt, t, reduced) {
