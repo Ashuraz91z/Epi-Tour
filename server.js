@@ -4,6 +4,7 @@ import { homedir } from "node:os";
 import { join } from "node:path";
 import { openDb } from "./db.js";
 import { createApp } from "./penthouse.js";
+import { runMigrations } from "./migrations.js";
 
 const PORT = Number(process.env.PORT ?? 3000);
 // Hors du dossier du site : un redéploiement remplace le site mais garde les étages.
@@ -17,6 +18,9 @@ if (existsSync(legacy) && db.count() === 0) {
   db.importJson(JSON.parse(readFileSync(legacy, "utf8")));
   renameSync(legacy, legacy + ".importe");
 }
+
+// Ménage des données décrit dans migrations.js (fusion d'étages en double…), une seule fois par migration.
+runMigrations(db);
 
 const code = process.env.PENTHOUSE_CODE;
 if (!code) throw new Error("PENTHOUSE_CODE manquant : le code d'entrée du penthouse.");

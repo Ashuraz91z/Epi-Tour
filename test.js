@@ -1604,3 +1604,41 @@ test("thème Prestige : choisi dans « Mon étage », gardé, et un thème incon
   assert.equal(sanitizeProfile({ tagline: "Golf & GT" }, prestige).theme, "prestige", "un autre réglage ne change pas le thème");
   assert.equal(sanitizeProfile({ theme: "ferrari" }, prestige).theme, "prestige", "valeur inconnue : thème précédent gardé");
 });
+
+test("migration des doublons : trois étages de Paul en un, Linnix dans Arthur, Danny et les autres intacts, une seule fois", async () => {
+  const { runMigrations } = await import("./migrations.js");
+  const { app, url, call, db } = await open();
+  try {
+    const keys = {};
+    for (const [i, name] of ["Lucas", "Quentin", "Linnix", "hugoat", "Paul-Adrien", "Danny", "Arthur", "Paul-Arien", "Paul"].entries())
+      keys[name] = (await (await call("/api/join", { name, code: "porte" }, { "X-Forwarded-For": "10.6.0." + i })).json()).token;
+    db.change("danny", s => { s.profile.theme = "cyberpunk"; s.economy.wallet = 12.71; });
+    db.change("paul-arien", s => { s.economy.wallet = 97.87; s.profile.theme = "prestige"; });
+    db.change("paul-adrien", s => { s.economy.wallet = 10.67; });
+    db.change("arthur", s => { s.economy.wallet = 167.42; });
+    db.change("linnix", s => { s.economy.wallet = 5; });
+    const dannyBefore = JSON.stringify(db.get("danny").store);
+    const lines = [];
+    runMigrations(db, l => lines.push(l));
+    assert.deepEqual(db.all().map(a => a.name).sort(), ["Arthur", "Danny", "Lucas", "Paul-Adrien", "Quentin", "hugoat"]);
+    const paul = db.get("paul-adrien").store;
+    assert.equal(paul.economy.wallet, 108.54);
+    assert.equal(paul.profile.theme, "prestige", "le profil de l'étage gardé (celui du Mac) reste");
+    assert.equal(db.get("arthur").store.economy.wallet, 172.42);
+    assert.equal(JSON.stringify(db.get("danny").store), dannyBefore, "l'étage de Danny n'est pas touché");
+    // Toutes les anciennes clés relient encore leurs machines, au bon étage.
+    for (const [name, slug] of [["Paul-Arien", "paul-adrien"], ["Paul-Adrien", "paul-adrien"], ["Paul", "paul-adrien"], ["Linnix", "arthur"], ["Arthur", "arthur"]]) {
+      const r = await (await fetch(url + "/api/connection", { headers: { "X-Tour-Token": keys[name] } })).json();
+      assert.equal(r.slug, slug, name);
+    }
+    // Rejouée (redémarrage, autre copie du serveur) : rien ne bouge.
+    const snapshot = JSON.stringify(db.all());
+    runMigrations(db, l => lines.push(l));
+    assert.equal(JSON.stringify(db.all()), snapshot);
+    assert.deepEqual(db.setting("migrations"), ["2026-11-04-doublons"]);
+    // Base où ces étages n'existent pas : chaque étape est sautée sans erreur.
+    const empty = openDb(":memory:");
+    runMigrations(empty, () => {});
+    assert.equal(empty.count(), 0);
+  } finally { app.close(); }
+});
