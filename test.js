@@ -431,6 +431,38 @@ assert len(m.parse('claude', [json.dumps({'type':'user','message':{'content':'x'
   assert.equal(store.sessions["claude:mac:s"].task, "Ajoute le studio");
 });
 
+test("mode productif : choisi sur l'appareil, étages de jeu retirés de la navigation, rien de supprimé", async () => {
+  const { runInNewContext } = await import("node:vm");
+  const source = readFileSync(new URL("./public/tour/mode.js", import.meta.url), "utf8").replace(/^export /gm, "");
+  const store = new Map(), events = [];
+  // Un chargement de page : nouveau contexte, même stockage de l'appareil.
+  const load = () => {
+    const context = { localStorage: { getItem: k => store.get(k) ?? null, setItem: (k, v) => store.set(k, v) },
+      document: { body: { dataset: {} } }, dispatchEvent: e => events.push(e.detail), CustomEvent: class { constructor(type, o) { this.detail = o.detail; } } };
+    runInNewContext(source, context);
+    return context;
+  };
+  const context = load();
+  assert.equal(context.document.body.dataset.mode, "complet", "complet par défaut");
+  assert.ok(runInNewContext('floorShown("casino") && floorShown("lucas:work")', context));
+  runInNewContext('setMode("productif")', context);
+  assert.equal(store.get("penthouse.mode"), "productif");
+  assert.equal(context.document.body.dataset.mode, "productif");
+  assert.deepEqual(events, ["productif"]);
+  assert.deepEqual(["roof", "lucas:work", "lounge", "club", "casino", "tennis", "golf"].filter(k => runInNewContext(`floorShown(${JSON.stringify(k)})`, context)), ["roof", "lucas:work", "lounge", "club"]);
+  // Relu au chargement suivant ; une valeur inconnue revient au mode complet.
+  assert.equal(load().document.body.dataset.mode, "productif");
+  store.set("penthouse.mode", "n'importe quoi");
+  assert.equal(load().document.body.dataset.mode, "complet");
+  // Le panneau du travail en mode productif : ni XP, ni série, ni prime.
+  const { workPanelHtml } = await import("./public/work-ui.js");
+  const apt = { economy: { work: { today: { minutes: 95, deliveries: 3 }, team: { active: 2, bonus: 0.1 }, streak: { days: 4, today: true }, xpToday: 50, xpCap: 400, objectives: [{ id: "a", title: "Bronze", metric: "minutes", target: 60, value: 95, done: true }] } } };
+  const html = workPanelHtml(apt, 0, s => String(s), { mine: true, productive: true });
+  assert.match(html, /1 h 35|95/);
+  assert.ok(!/XP|série|Prime/i.test(html), html);
+  assert.match(workPanelHtml(apt, 0, s => String(s), { mine: true }), /XP/);
+});
+
 test("journaux : un relevé ancien ne remplace pas une autorisation récente", () => {
   const store = createStore();
   ingest(store, "codex", "mac", { hook_event_name: "PermissionRequest", session_id: "same", tool_name: "Bash" }, 1000);

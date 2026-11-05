@@ -845,3 +845,7 @@ dialog::backdrop { background: #000000b8; }
 .link-history input { margin-top: 3px; accent-color: var(--gold); }
 .link-history small { display: block; color: var(--mute); }
 .link-history .extras-muted { margin: 2px 0 0; font-size: 12px; }
+
+/* Mode productif (menu « ⋯ », tour/mode.js) : la gamification est masquée, pas supprimée. */
+body[data-mode="productif"] #xpHost, body[data-mode="productif"] #ecoHost, body[data-mode="productif"] #missionsBtn,
+body[data-mode="productif"] #ecoBtn, body[data-mode="productif"] #gameCelebrations, body[data-mode="productif"] .lvl-game { display: none !important; }

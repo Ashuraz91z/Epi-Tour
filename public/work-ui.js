@@ -87,20 +87,21 @@ export function workEventText(event, { tool = true, tools = TOOL_NAMES } = {}) {
 // ---------- panneau latéral d'un étage de résident ----------
 // Bloc compact (~300 px) : chiffres du jour, équipe et prime, objectif en cours, objectifs atteints, top 3 des projets.
 // mine : l'étage du résident qui regarde (conseils « fais ceci pour… » ; ailleurs, ces conseils ne s'affichent pas).
-export function workPanelHtml(apartment, now, esc, { mine = false } = {}) {
+// productive : mode productif, seulement le temps de travail, les tâches livrées et les agents au travail.
+export function workPanelHtml(apartment, now, esc, { mine = false, productive = false } = {}) {
   const w = workOf(apartment);
   if (!w) return "";
-  const today = w.today ?? {}, team = w.team ?? {}, streak = w.streak ?? {}, full = isFull(w);
+  const today = w.today ?? {}, team = w.team ?? {}, streak = w.streak ?? {}, full = isFull(w) && !productive;
   const minutes = num(today.minutes), deliveries = num(today.deliveries), active = num(team.active), days = num(streak.days);
   const streakOn = !!streak.today || (!full && days > 0);
   const stats = `<div class="work-stats">
       <span class="work-stat"><b>${workDuration(minutes)}</b><small>de travail</small></span>
       <span class="work-stat"><b>${nf.format(deliveries)}</b><small>${deliveries >= 2 ? "tâches livrées" : "tâche livrée"}</small></span>
-      <span class="work-stat streak${streakOn ? " on" : ""}${days ? "" : " off"}" title="Série : jours de suite avec au moins ${workDuration(WORK.streak.minMinutes)} de travail"><b><span aria-hidden="true">🔥</span> ${days} j</b><small>série</small></span>
+      ${productive ? "" : `<span class="work-stat streak${streakOn ? " on" : ""}${days ? "" : " off"}" title="Série : jours de suite avec au moins ${workDuration(WORK.streak.minMinutes)} de travail"><b><span aria-hidden="true">🔥</span> ${days} j</b><small>série</small></span>`}
     </div>`;
   // Équipe : agents au travail ; à partir de deux, la prime d'équipe majore les salaires.
   const bonus = num(team.bonus);
-  const teamHint = !full ? "" : bonus > 0 ? `<b class="work-bonus">Prime d'équipe ${bonusText(bonus)}</b>`
+  const teamHint = !full || productive ? "" : bonus > 0 ? `<b class="work-bonus">Prime d'équipe ${bonusText(bonus)}</b>`
     : mine ? `<small>${active ? "un 2e agent en parallèle" : "deux agents en parallèle"} : salaires ${bonusText(WORK.team.per)}</small>` : "";
   const teamLine = `<p class="work-team${active ? " on" : ""}"><i class="d" aria-hidden="true"></i><span><b>${active}</b> ${active >= 2 ? "agents au travail" : "agent au travail"}</span>${teamHint ? `<span class="work-team-hint">${teamHint}</span>` : ""}</p>`;
   if (!full) return `<section class="work-panel lite" aria-label="Travail du jour"><h4 class="work-title">Travail du jour</h4>${stats}${teamLine}</section>`;

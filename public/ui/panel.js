@@ -15,6 +15,7 @@ import {
 import { createSportsGames } from "../sports-games.js";
 import { workLeadersHtml, workPanelHtml } from "../work-ui.js";
 import { world } from "../tour/state.js";
+import { floorShown, productive, setMode } from "../tour/mode.js";
 import { $, CASINO_FEATURED, ME, PLACE_FR, STATE_FR, TOOLS, claudeTracked, esc, hm, keyOf, myApt, placeOf, quotaRemaining, stateOf } from "../tour/base.js";
 import { agents, floors } from "../tour/engine.js";
 import { reducedMotion } from "../tour/kit.js";
@@ -25,7 +26,7 @@ import { drawJackpot, showBlackjack, spinMachine, spinRoulette } from "../tour/f
 import { startTennisMatch } from "../tour/floors/tennis.js";
 import { puttResult } from "../tour/floors/golf.js";
 import { floorLabel, syncFloors, update } from "../tour/tower.js";
-import { activeTourStep, setFocus, updateSpectatorView } from "../tour/navigation.js";
+import { activeTourStep, keepFocusShown, setFocus, updateSpectatorView } from "../tour/navigation.js";
 import { enterWithKey, tick } from "./session.js";
 
 function agentsOnFloor(floorKey) {
@@ -107,7 +108,8 @@ function setPanel(html) {
 // En-tête : portefeuille, titre et événement du jour ; bouton Entreprise ; primes reçues d'un autre résident.
 let ecoHeaderHtml = "", tipWatch = { slug: null, seen: null };
 function renderEconomyHeader(mine, spectator) {
-  const eco = spectator ? null : mine?.economy;
+  // Mode productif : ni portefeuille, ni événement du jour, ni bouton Entreprise (l'économie continue côté serveur).
+  const eco = spectator || productive() ? null : mine?.economy;
   const html = eco ? walletChipHtml(eco, esc, economyUi.shownWallet(eco)) + eventChipHtml(eco.event, esc) : "";
   // Comparé avant d'écrire : l'infobulle de l'événement reste ouverte sous la souris ou le focus.
   if (html !== ecoHeaderHtml) { $("#ecoHost").innerHTML = html; ecoHeaderHtml = html; }
@@ -137,7 +139,7 @@ function render() {
   updateWorkBoards(list);
   world.order.forEach((key, i) => {
     const f = floors.get(key), apt = list.find(x => x.slug === f.residentSlug);
-    const lvl = apt?.game?.level && f.residentSlug === me && f.wingId === "work" ? `<span class="lvl-game">· ${apt.game.level}</span>` : "";
+    const lvl = apt?.game?.level && f.residentSlug === me && f.wingId === "work" && !productive() ? `<span class="lvl-game">· ${apt.game.level}</span>` : "";
     setHtml(f.tag.element, `<span>${floorLabel(i)}${lvl}</span> ${esc(f.name)}`);
   });
 
@@ -148,12 +150,14 @@ function render() {
     $(".brandline").appendChild(xpHost);
   }
   const mine = me ? list.find(x => x.slug === me) : null;
-  setHtml(xpHost, mine?.game && !spectator ? xpBarHtml(mine.game, esc) : "");
+  setHtml(xpHost, mine?.game && !spectator && !productive() ? xpBarHtml(mine.game, esc) : "");
   renderEconomyHeader(mine, spectator);
 
   const by = (ss, st) => ss.filter(s => stateOf(s, now) === st).length;
   const present = key => [...agents.values()].filter(g => g.userData.target === key);
+  // Mode productif : les étages de jeu (casino, tennis, golf) ne sont pas proposés ; les indices restent ceux de la tour.
   setHtml($("#floorNav"), world.order.map((key, i) => {
+    if (!floorShown(key)) return "";
     const f = floors.get(key), a = f.residentSlug ? list.find(x => x.slug === f.residentSlug) : null, here = present(key);
     const busy = a ? by(a.sessions, "travaille") : here.length, alert = a && by(a.sessions, "autorisation");
     const isMe = f.residentSlug === me;
@@ -173,11 +177,13 @@ function render() {
     const machineBlock = mine && f.wingId === "work" ? `<div class="machine-block"><h4>Machines reliées</h4>${machineStatusRows(a, now, TOOLS, esc, hm)}</div>` : "";
     const todayLine = mine && todayBadges(a.today) ? `<p class="extras-muted">Aujourd’hui · ${esc(todayBadges(a.today))}</p>` : "";
     const wingLine = `<p class="kicker">${esc(f.wing?.icon ?? "")} ${esc(f.wing?.name ?? "Aile")}${f.wing?.minLevel ? ` · dès nv. ${f.wing.minLevel}` : ""}</p>`;
-    const wingPlay = mine && a.game ? wingActionsHtml(a.game, f.key, esc) : "";
-    const wingHint = mine && (a.game?.wings?.length ?? 1) < 4 ? `<p class="extras-muted">Monte de niveau pour débloquer Labo (4), Ops (7), Studio (12).</p>` : "";
-    const officeBlock = f.wingId === "work" && a.game?.office ? officePanelHtml(a.game.office, esc) : "";
-    const ecoLine = residentEconomyLine(a.economy, esc);
-    const workBlock = f.wingId === "work" ? workPanelHtml(a, now, esc, { mine }) : "";
+    // Mode productif : ni activités à XP, ni paliers, ni argent ; le travail du jour sans XP, série ni prime.
+    const game = !productive();
+    const wingPlay = game && mine && a.game ? wingActionsHtml(a.game, f.key, esc) : "";
+    const wingHint = game && mine && (a.game?.wings?.length ?? 1) < 4 ? `<p class="extras-muted">Monte de niveau pour débloquer Labo (4), Ops (7), Studio (12).</p>` : "";
+    const officeBlock = game && f.wingId === "work" && a.game?.office ? officePanelHtml(a.game.office, esc) : "";
+    const ecoLine = game ? residentEconomyLine(a.economy, esc) : "";
+    const workBlock = f.wingId === "work" ? workPanelHtml(a, now, esc, { mine, productive: !game }) : "";
     setPanel(`${wingLine}<p class="kicker">${a.slug === list[0].slug && f.wingId === "work" ? "Penthouse" : esc(f.name)}${mine ? " · chez toi" : ""}</p><h2>${esc(a.name)}</h2>${tagline}${ecoLine}${workBlock}${officeBlock}${wingHint}${wingPlay}
       <div class="apt-c"><span><i class="d" style="background:var(--work)"></i><b>${by(a.sessions, "travaille")}</b> au travail</span>
       <span><i class="d" style="background:var(--auth)"></i><b>${by(a.sessions, "autorisation")}</b> ${spectator ? "attend un accord" : "attend ton accord"}</span>
@@ -195,7 +201,7 @@ function render() {
     for (const g of here) { const n = g.userData.apt.name; byRes.set(n, [...(byRes.get(n) ?? []), g.userData]); }
     const myGame = myApt();
     const myAgentsHere = here.filter(g => g.userData.apt.slug === me).length;
-    const spacePlay = me && myGame?.game && !spectator ? spaceActionsHtml(myGame.game, f.key, myAgentsHere, esc) : "";
+    const spacePlay = me && myGame?.game && !spectator && !productive() ? spaceActionsHtml(myGame.game, f.key, myAgentsHere, esc) : "";
     // Casino : les vrais jeux (en P$) s'ouvrent dans le dialogue Entreprise.
     const jackpot = Number(world.data.casino?.jackpot);
     const casinoPlay = f.key === "casino" && !spectator && myGame?.economy
@@ -211,7 +217,7 @@ function render() {
     const sportPlay = sport && !spectator && myGame
       ? `<div class="space-actions"><h4>${sport[0]}</h4><div class="space-grid"><button type="button" class="space-act eco-casino-btn" data-sport-open="${f.key}"><strong>${sport[1]}</strong><span>${sport[2]}</span></button>${sportBet}</div></div>` : "";
     setPanel(`<p class="kicker">${esc(f.def.kicker)}</p><h2>${f.def.icon} ${esc(f.name)}</h2>
-      ${f.key === "lounge" ? remote() : ""}${casinoPlay}${sportPlay}
+      ${f.key === "lounge" ? remote() : ""}${productive() ? "" : casinoPlay + sportPlay}
       <div class="apt-c"><span><b>${here.length}</b> agent(s) ici, de <b>${byRes.size}</b> résident(s)</span></div>
       ${spacePlay}
       ${[...byRes].map(([n, ss]) => `<div class="who-row"><b>${esc(n)}</b><span>${ss.map(u => `${esc(TOOLS[u.s.src]?.name ?? u.s.src)} · ${f.key === "lounge" ? esc(PLACE_FR[u.place]) : esc(u.s.project ?? "")}`).join("<br>")}</span></div>`).join("")
@@ -220,7 +226,7 @@ function render() {
 
   const all = list.flatMap(x => x.sessions);
   const board = activityLeaderboard(list);
-  const lb = $("#leaderboardDlg"), rich = fortuneLeaders(list), workers = spectator ? "" : workLeadersHtml(list, esc, { me });
+  const lb = $("#leaderboardDlg"), rich = productive() ? [] : fortuneLeaders(list), workers = spectator ? "" : workLeadersHtml(list, esc, { me });
   if ((board.length || rich.length || workers) && !spectator) {
     lb.hidden = false;
     setHtml(lb, workers + (board.length ? `<h4>Activité du jour</h4><ol>${board.map((r, i) => `<li><b>${esc(r.name)}</b> · ${r.actions} act. / ${r.sessions} sess.</li>`).join("")}</ol>` : "")
@@ -304,7 +310,7 @@ function showAgent(a, s) {
   const currentPlace = agents.get(keyOf(a.slug, s))?.userData.place ?? placeOf(s, now);
   const row = (l, v, mono) => v ? `<dt>${l}</dt><dd${mono ? ' class="m"' : ""}>${esc(v)}</dd>` : "";
   $("#agentBody").innerHTML = `<div class="who"><i class="d" style="width:12px;height:12px;background:${T.color}"></i>${esc(T.name)}</div>
-    <dl>${row("Résident", a.name)}${row("Rôle", agentRoleText(staffOf(a, s.src), world.data.viewer?.role === "spectator"))}${row("Machine", world.data.viewer?.role === "spectator" ? null : s.host)}${row("Projet", s.project)}${row("Modèle", s.model, true)}
+    <dl>${row("Résident", a.name)}${productive() ? "" : row("Rôle", agentRoleText(staffOf(a, s.src), world.data.viewer?.role === "spectator"))}${row("Machine", world.data.viewer?.role === "spectator" ? null : s.host)}${row("Projet", s.project)}${row("Modèle", s.model, true)}
     ${row("État", `${STATE_FR[stateOf(s, now)] ?? s.state} · ${PLACE_FR[currentPlace]}`)}${row("Demande", world.data.viewer?.role === "spectator" ? null : s.task || "(pas de demande connue)")}
     ${row("Action", s.action, true)}${row("Arrivé à", hm(s.started))}${row("Dernier signe", hm(s.updated))}</dl>`;
   $("#agentDlg").showModal();
@@ -500,6 +506,17 @@ const economyUi = createEconomyUi({
   celebrate: showCelebrations,
 });
 $("#ecoBtn").addEventListener("click", () => economyUi.open());
+// Mode complet / productif (menu « ⋯ ») : le bouton dit vers quel mode il bascule.
+const modeLabel = () => { $("#modeBtn").textContent = productive() ? "🎮 Mode complet (avec le jeu)" : "⚡ Mode productif (sans le jeu)"; };
+modeLabel();
+$("#modeBtn").addEventListener("click", () => setMode(productive() ? "complet" : "productif"));
+addEventListener("penthouse:mode", () => {
+  modeLabel();
+  for (const id of ["economyDlg", "missionsDlg", "sportDlg"]) if ($("#" + id)?.open) $("#" + id).close();
+  if (!world.data) return;
+  keepFocusShown();
+  render(); // redessine aussi le tableau de bord du travail dans le bureau
+});
 // Tennis et golf joués pour de vrai (sports-games.js) : le serveur renvoie la partie et l'économie à jour.
 const sportsGames = createSportsGames({ dialog: $("#sportDlg"), body: $("#sportBody"), esc, getToken: () => sessionStorage.getItem("penthouse.cle"), onResult: j => { const me = myApt(); if (me) { if (j.game) me.game = j.game; if (j.economy) me.economy = j.economy; } if (world.data) render(); }, celebrate: showCelebrations });
 document.addEventListener("click", e => {

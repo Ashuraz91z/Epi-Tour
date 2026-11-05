@@ -6,6 +6,7 @@ import { parseFloorKey } from "../wings-client.js";
 import { world } from "./state.js";
 import { $, ME, claudeTracked, esc, myApt, quotaRows, stateOf } from "./base.js";
 import { agents, camera, clock, floors, renderer } from "./engine.js";
+import { floorShown, productive } from "./mode.js";
 import { tvFrame, tvPageUrl } from "./floors/shared.js";
 import { economyUi, render, showAgent, sportsGames } from "../ui/panel.js";
 import { showCustomize } from "../ui/studio.js";
@@ -50,7 +51,7 @@ function setFocus(i) {
   const token = sessionStorage.getItem("penthouse.cle");
   if (token && me && slug === me && wing && wing !== "work") {
     postGame("/api/game/visit", token, { floor: key }).then(j => {
-      showCelebrations(j.toasts);
+      if (!productive()) showCelebrations(j.toasts);
       const apt = myApt();
       if (apt && j.game) apt.game = j.game;
       if (world.data) render();
@@ -58,10 +59,27 @@ function setFocus(i) {
   }
   if (world.data) render();
 }
+// Étage suivant (dir = 1) ou précédent (-1) parmi ceux affichés : le mode productif saute les étages de jeu.
+// loop : repart du haut après le dernier (mode écran).
+function stepFocus(dir, loop = false) {
+  const n = world.order.length;
+  for (let k = 1; k <= n; k++) {
+    let i = world.focus + dir * k;
+    if (loop) i = ((i % n) + n) % n;
+    else if (i < 0 || i >= n) return;
+    if (floorShown(world.order[i])) return setFocus(i);
+  }
+}
+// Étage regardé masqué (passage en mode productif) : on revient chez soi, sinon au premier étage affiché.
+function keepFocusShown() {
+  if (!world.order.length || floorShown(world.order[world.focus])) return;
+  const me = JSON.parse(localStorage.getItem(ME) ?? "null")?.slug, home = world.order.indexOf(`${me}:work`);
+  setFocus(home >= 0 ? home : Math.max(0, world.order.findIndex(floorShown)));
+}
 addEventListener("keydown", e => {
   if (e.target.closest?.("input, dialog")) return;
-  if (e.key === "ArrowDown") { e.preventDefault(); setFocus(world.focus + 1); }
-  if (e.key === "ArrowUp") { e.preventDefault(); setFocus(world.focus - 1); }
+  if (e.key === "ArrowDown") { e.preventDefault(); stepFocus(1); }
+  if (e.key === "ArrowUp") { e.preventDefault(); stepFocus(-1); }
 });
 
 // Clic sur un agent : sa fiche.
@@ -109,4 +127,4 @@ renderer.domElement.addEventListener("pointermove", e => {
   renderer.domElement.style.cursor = ray.intersectObjects(onFocus(), false).length || onTv() || onByte() || onGiantTv() || onPlayTarget() ? "pointer" : "";
 });
 
-export { activeTourStep, autoTour, setFocus, updateSpectatorView };
+export { activeTourStep, autoTour, keepFocusShown, setFocus, stepFocus, updateSpectatorView };
