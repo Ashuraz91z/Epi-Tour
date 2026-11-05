@@ -284,7 +284,9 @@ def usage_answer(answer):
         return None, 'erreur : ' + str(answer.get('error') or 'get_usage refusé')
     data = answer.get('response') if isinstance(answer.get('response'), dict) else {}
     if data.get('rate_limits_available') is False:
-        return None, 'sans quota'
+        # Claude Code ne lit les quotas que connecté par l'abonnement (/login), avec l'accès au profil.
+        plan = data.get('subscription_type')
+        return None, 'sans quota' + (' · abonnement ' + str(plan) if plan else ' · pas connecté par un abonnement Claude')
     limits = data.get('rate_limits') if isinstance(data.get('rate_limits'), dict) else {}
     windows = {}
     for name in ('five_hour', 'seven_day'):
@@ -332,7 +334,14 @@ def claude_quota(site, key, host):
     except (OSError, subprocess.SubprocessError) as exc:
         answer, out, error = None, '', type(exc).__name__
     usage, status = usage_answer(answer)
-    if not usage and status != 'sans quota':
+    if status and status.startswith('sans quota'):
+        # Causes connues, sans jamais lire ni envoyer leur valeur : une clé d'API prend le pas sur l'abonnement, et un
+        # jeton « claude setup-token » n'a pas l'accès au profil qui donne les quotas.
+        if os.environ.get('ANTHROPIC_API_KEY') or os.environ.get('ANTHROPIC_AUTH_TOKEN'):
+            status += ' · clé d’API dans l’environnement'
+        elif os.environ.get('CLAUDE_CODE_OAUTH_TOKEN'):
+            status += ' · jeton setup-token sans accès au profil'
+    if not usage and not (status or '').startswith('sans quota'):
         # Repli : une mini-requête, seulement si Claude Code a servi depuis la fin de la fenêtre (jamais pour l'ouvrir).
         used = now < state['resets_at'] or any(os.path.getmtime(log) > state['resets_at'] for log in journals(('.claude', 'projects'), ('*', '*.jsonl')))
         if used:
@@ -350,7 +359,7 @@ def claude_quota(site, key, host):
                 error = error or type(exc).__name__
     if not usage:
         status = status or ('erreur : ' + error if error else 'sans quota')
-        print('Quota Claude non lu (' + status + ').')
+        print('Quota Claude non lu (' + status + ') · ' + binary)
         return report(status)
     if 'resets_at' in usage.get('five_hour', {}):
         state['resets_at'] = usage['five_hour']['resets_at']
