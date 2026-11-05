@@ -311,14 +311,16 @@ function showAgent(a, s) {
 }
 
 // « Relier mes agents » : une commande selon le système, qui relie la machine ET installe l'app (Mac, Windows).
-// Partager le texte de ses demandes : un choix par machine, ajouté à la commande quand la case est cochée.
-let sharePrompts = false;
+// Options de la commande, choisies dans la fenêtre : partager le texte de ses demandes, et remplacer une ancienne
+// liaison (--replace : la machine était déjà reliée, avec une autre clé ou un autre étage ; l'ancienne configuration
+// est sauvegardée). Sans --replace, une machine déjà reliée ailleurs refuse la commande sans rien modifier.
+let sharePrompts = false, replaceLink = false;
 function installCommands(token) {
   // TLS 1.2 forcé : Windows PowerShell 5.1 ne l'active pas toujours, et irm échouerait en HTTPS. Aucun $ : la commande
   // se colle telle quelle dans PowerShell, cmd ou Win+R.
   return {
-    unix: `curl -fsSL ${location.origin}/install.sh | sh -s -- ${token}${sharePrompts ? " --partager-demandes" : ""}`,
-    win: `powershell -ExecutionPolicy Bypass -NoProfile -Command "[Net.ServicePointManager]::SecurityProtocol=[Net.ServicePointManager]::SecurityProtocol -bor 3072; & ([scriptblock]::Create((irm '${location.origin}/install.ps1'))) -Key '${token}'${sharePrompts ? " -PartagerDemandes" : ""}"`,
+    unix: `curl -fsSL ${location.origin}/install.sh | sh -s -- ${token}${replaceLink ? " --replace" : ""}${sharePrompts ? " --partager-demandes" : ""}`,
+    win: `powershell -ExecutionPolicy Bypass -NoProfile -Command "[Net.ServicePointManager]::SecurityProtocol=[Net.ServicePointManager]::SecurityProtocol -bor 3072; & ([scriptblock]::Create((irm '${location.origin}/install.ps1'))) -Key '${token}'${replaceLink ? " -Replace" : ""}${sharePrompts ? " -PartagerDemandes" : ""}"`,
   };
 }
 function installBlock(token) {
@@ -327,6 +329,10 @@ function installBlock(token) {
   const block = (title, cmd, kind, where, open) => `<details class="os-install"${open ? " open" : ""}><summary>${title}</summary>
     <p>${where}</p><div class="code" data-command="${kind}"><span>${esc(cmd)}</span><button type="button" data-copy="${esc(cmd)}">Copier</button></div></details>`;
   return `<p class="connect-intro"><strong>Une commande par machine, et c’est connecté.</strong> Ta clé est déjà dedans.</p>
+    <fieldset class="link-history"><legend>Cette machine a-t-elle déjà été reliée au penthouse ?</legend>
+      <label><input type="radio" name="linkHistory" value="new" data-token="${esc(token)}"${replaceLink ? "" : " checked"}><span>Non, c’est la première fois</span></label>
+      <label><input type="radio" name="linkHistory" value="replace" data-token="${esc(token)}"${replaceLink ? " checked" : ""}><span>Oui, avec une autre clé ou un autre étage <small>Ajoute <code>--replace</code> (Windows : <code>-Replace</code>) ; l’ancienne configuration est sauvegardée.</small></span></label>
+      <p class="extras-muted">Déjà reliée avec cette même clé ? « Non » suffit : la commande se relance sans risque.</p></fieldset>
     <label class="share-prompts"><input type="checkbox" id="sharePrompts" data-token="${esc(token)}"${sharePrompts ? " checked" : ""}>
       <span><b>Partager le texte de mes demandes</b> avec les autres résidents (sinon, ils voient que tes agents travaillent et sur quel projet, pas ce que tu leur demandes). Pour arrêter : relance la commande avec <code>--sans-demandes</code> (Windows : <code>-SansDemandes</code>).</span></label>
     ${block("🍎 Mac", unix, "unix", "Ouvre l’app Terminal, colle, Entrée. L’app Penthouse s’installe avec : coche les outils à lancer à chaque ouverture de session.", !isWindows)}
@@ -338,10 +344,11 @@ function installBlock(token) {
     <p>La clé reste dans cet onglet (ou sur cet appareil si tu as coché « se souvenir de moi ») et dans <code>~/.config/tour/secret</code> sur tes machines. Garde-la privée : elle suffit pour entrer chez toi (« J’ai déjà ma clé d’étage » à l’accueil).</p>
     <p>Le suivi lit les journaux locaux de Claude Code et Codex (nom du projet, modèle, état). Le texte de tes demandes ne part que si tu as coché la case ci-dessus ; les réponses des agents et le contenu des outils, jamais. Le quota Claude est mesuré toutes les 15 min au plus par une mini-requête (Haiku), seulement quand tu as utilisé Claude Code depuis la dernière fenêtre ; pour s’en passer, crée le fichier <code>~/.config/tour/sans-quota-claude</code>. Les hooks existants restent compatibles.</p></details>`;
 }
-// La case change les commandes affichées (et copiées) sans redessiner la fenêtre.
+// Les choix de la fenêtre changent les commandes affichées (et copiées) sans la redessiner.
 document.addEventListener("change", e => {
-  if (e.target.id !== "sharePrompts") return;
-  sharePrompts = e.target.checked;
+  if (e.target.id === "sharePrompts") sharePrompts = e.target.checked;
+  else if (e.target.name === "linkHistory") replaceLink = e.target.value === "replace";
+  else return;
   const commands = installCommands(e.target.dataset.token);
   for (const box of document.querySelectorAll("[data-command]")) {
     const cmd = commands[box.dataset.command];
