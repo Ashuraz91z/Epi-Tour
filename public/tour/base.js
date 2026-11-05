@@ -209,7 +209,7 @@ function claudeQuotaWhy(apartment) {
   if (status === "ok") return `mesure reçue de ${machine}, affichage au prochain état`;
   if (status === "introuvable") return `Claude Code introuvable sur ${machine} (ni dans le PATH ni aux emplacements habituels)`;
   if (status === "désactivé") return `mesure désactivée sur ${machine} (fichier sans-quota-claude)`;
-  if (status.startsWith("sans quota")) return `Claude Code ne donne pas de quota sur ${machine}${status.slice(10)} : il le lit seulement connecté par ton abonnement (lance « claude » puis /login), sans clé d’API ni jeton setup-token`;
+  if (status.startsWith("sans quota")) return `Claude Code ne donne pas de quota sur ${machine}${status.slice(10)} : la commande « claude » du Terminal doit être connectée à ton abonnement (lance « claude » puis /login), même si tu travailles dans l’app Claude, qui a sa propre connexion ; sans clé d’API ni jeton setup-token`;
   return `mesure impossible sur ${machine} · ${status}`;
 }
 // Quatre lignes : Claude 5 h, Claude semaine, ChatGPT 5 h, ChatGPT semaine (provider indique l'outil).
