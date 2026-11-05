@@ -3,6 +3,15 @@
 Chaque IA ajoute **en haut** une entrée par session de travail (modèle et règles dans `AGENTS.md`, section 3).
 Le plus récent d'abord. On n'efface pas les entrées des autres.
 
+## 2026-11-05 · Lucas · branche Lucas · Claude Code (7)
+**Fait :** toujours « sans quota » chez Lucas avec `get_usage`. D'après le code de Claude Code 2.1, les quotas ne sont
+lus que si la connexion est l'abonnement claude.ai (pas de clé d'API, pas d'`apiKeyHelper`) et si le jeton a le scope
+`user:profile` (un jeton `claude setup-token` ne l'a pas). La sonde précise maintenant la cause probable (abonnement
+indiqué, clé d'API ou jeton setup-token présents dans l'environnement, jamais leur valeur) et le chemin de `claude`.
+**Fichiers :** `collecteurs/tour-sync` (`usage_answer`, `claude_quota`), `public/tour/base.js` (`claudeQuotaWhy`), `test.js`.
+**À savoir :** si `/usage` dans Claude Code n'affiche pas les limites de l'abonnement, la sonde ne peut pas les lire non plus.
+**Reste à faire :** diagnostic de Lucas (chemin de claude, connexion) en cours.
+
 ## 2026-11-05 · Lucas · branche Lucas · Claude Code (6)
 **Fait :** chez Lucas, la mini-requête ne donnait aucun quota (« sans quota ») : Claude Code n'émet `rate_limit_event`
 que quand le statut change. La sonde lit maintenant les données `/usage` de Claude Code via la requête de contrôle

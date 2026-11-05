@@ -482,7 +482,8 @@ assert m.quota_windows('\\n'.join(single))[0] == {'five_hour': {'pct': 42, 'rese
 assert m.quota_windows(json.dumps({'type': 'rate_limit_event', 'rate_limit_info': {'status': 'allowed'}})) == ({}, ['status'])
 ok = {'subtype': 'success', 'response': {'rate_limits_available': True, 'rate_limits': {'five_hour': {'utilization': 37.4, 'resets_at': '2026-11-05T09:00:00Z'}, 'seven_day': {'utilization': 12, 'resets_at': None}}}}
 assert m.usage_answer(ok)[0] == {'five_hour': {'pct': 37, 'resets_at': 1793869200}, 'seven_day': {'pct': 12}}, m.usage_answer(ok)
-assert m.usage_answer({'subtype': 'success', 'response': {'rate_limits_available': False, 'rate_limits': None}}) == (None, 'sans quota')
+assert m.usage_answer({'subtype': 'success', 'response': {'rate_limits_available': False, 'rate_limits': None}}) == (None, 'sans quota · pas connecté par un abonnement Claude')
+assert m.usage_answer({'subtype': 'success', 'response': {'subscription_type': 'pro', 'rate_limits_available': False}})[1] == 'sans quota · abonnement pro'
 assert m.usage_answer({'subtype': 'error', 'error': 'Unknown subtype'})[1] == 'erreur : Unknown subtype'
 assert m.usage_answer(None) == (None, None)
 # Un faux claude qui échoue : l'erreur est envoyée au site, et pas de nouvel essai avant 15 min.
