@@ -3,7 +3,7 @@
 
 import * as THREE from "three";
 import { world } from "./state.js";
-import { FLOOR_H, quotaRows, stateOf } from "./base.js";
+import { FLOOR_H, claudeTracked, quotaRows, stateOf } from "./base.js";
 import { box, glow, instancedCrowd, mat, scene } from "./engine.js";
 
 // ---------- la ville autour ----------
@@ -164,6 +164,14 @@ function updateUsageBoard(apartments, now) {
     card(x, 157, 540, 366, "#1b2b3d");
     c.fillStyle = accent; c.beginPath(); c.arc(x + 30, 194, 6, 0, Math.PI * 2); c.fill();
     c.font = "600 36px Sora, sans-serif"; c.fillText(provider, x + 50, 206);
+    // Claude sans aucune mesure reçue : le dire, plutôt que deux jauges vides.
+    if (!k && !claudeTracked(resident?.usage)) {
+      c.fillStyle = "#f6f8fa"; c.font = "700 48px Sora, sans-serif"; c.fillText("Quota non suivi", x + 24, 320, 492);
+      c.fillStyle = "#bdcbd9"; c.font = "400 26px Sora, sans-serif";
+      c.fillText("Mesuré automatiquement après avoir", x + 24, 380, 492);
+      c.fillText("relancé la commande de l’étage.", x + 24, 416, 492);
+      return;
+    }
     rows.slice(k * 2, k * 2 + 2).forEach((row, i) => {
       const y = 247 + i * 132;
       c.fillStyle = "#b6c4d3"; c.font = "600 26px Sora, sans-serif"; c.fillText(row.label, x + 24, y);

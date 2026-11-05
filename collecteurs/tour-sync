@@ -1,6 +1,8 @@
 #!/usr/bin/env python3
-"""Synchronise les métadonnées des journaux locaux, sans lancer les outils ni lire leurs secrets.
+"""Synchronise les métadonnées des journaux locaux, sans lire les secrets des outils.
 
+Le texte des demandes ne part que si cette machine l'a choisi (fichier « partage-demandes », posé par la commande
+de l'étage avec --partager-demandes). Le quota Claude est mesuré ici aussi (claude_quota), au plus toutes les 15 min.
 Mac, Linux et Windows (Python 3.8+, bibliothèque standard seulement). Sous Windows, ~ désigne %USERPROFILE%."""
 from datetime import datetime
 import glob
@@ -8,6 +10,8 @@ import json
 import math
 import os
 from pathlib import Path
+import shutil
+import subprocess
 import sys
 import time
 import urllib.parse
@@ -26,9 +30,27 @@ def stamp(value):
         return 0
 
 
-def parse(source, lines):
+def prompt_text(source, row, payload):
+    """Texte d'une demande tapée par la personne, ou None (résultat d'outil, message système, commande locale)."""
+    if source == 'codex':
+        if row.get('type') == 'event_msg' and payload.get('type') == 'user_message' and isinstance(payload.get('message'), str):
+            return payload['message']
+        return None
+    message = row.get('message')
+    if row.get('type') != 'user' or row.get('isMeta') or not isinstance(message, dict):
+        return None
+    content = message.get('content')
+    if isinstance(content, list):
+        content = ' '.join(b.get('text', '') for b in content if isinstance(b, dict) and b.get('type') == 'text')
+    if not isinstance(content, str) or not content.strip() or content.lstrip().startswith(('<', 'Caveat:')):
+        return None
+    return content
+
+
+def parse(source, lines, share=False):
+    """share : joindre le texte de la dernière demande (300 caractères au plus), si la machine a choisi de le partager."""
     result = {'session_id': None, 'hook_event_name': None}
-    usage = None
+    usage, prompt = None, None
     for line in lines:
         try:
             row = json.loads(line)
@@ -39,6 +61,8 @@ def parse(source, lines):
         payload = row.get('payload') or {}
         if not isinstance(payload, dict):
             continue
+        if share:
+            prompt = prompt_text(source, row, payload) or prompt
         event, tool = None, None
         if source == 'codex':
             if row.get('type') == 'session_meta':
@@ -91,6 +115,8 @@ def parse(source, lines):
             result.update(hook_event_name=event, observed_at=observed, tool_name=str(tool or 'activité locale')[:80])
     if usage and source == 'codex' and usage['ts']:
         result['usage'] = {'chatgpt': usage}
+    if prompt:
+        result['prompt'] = ' '.join(prompt.split())[:300]
     return result
 
 
@@ -152,6 +178,71 @@ def exclusive(lock):
     return True
 
 
+QUOTA_EVERY = 15 * 60
+
+
+def claude_binary():
+    """Claude Code installé sur la machine : dans le PATH, ou aux emplacements habituels (cron et launchd ont un PATH réduit)."""
+    names = ('claude.exe', 'claude.cmd', 'claude') if sys.platform == 'win32' else ('claude',)
+    home = Path.home()
+    places = [shutil.which(name) for name in names] + [str(home / '.local' / 'bin' / name) for name in names] + [
+        str(home / '.claude' / 'local' / 'claude'), '/opt/homebrew/bin/claude', '/usr/local/bin/claude',
+        os.path.join(os.environ.get('APPDATA', ''), 'npm', 'claude.cmd')]
+    return next((p for p in places if p and os.path.isfile(p) and os.access(p, os.X_OK)), None)
+
+
+def claude_quota(site, key, host):
+    """Quota Claude (fenêtres 5 h et 7 jours), lu dans la réponse à une mini-requête (Haiku, sans outils, sans session
+    enregistrée). Au plus toutes les 15 min, et seulement si la fenêtre de 5 h est ouverte ou si Claude Code a servi
+    depuis sa fin : la mesure n'ouvre jamais une fenêtre à elle seule. Désactivable : fichier « sans-quota-claude »."""
+    if (CONF / 'sans-quota-claude').exists() or os.environ.get('TOUR_SKIP'):
+        return
+    state_file, now = CONF / 'usage-state.json', time.time()
+    try:
+        state = json.loads(state_file.read_text())
+        state = {'last_probe': float(state.get('last_probe', 0)), 'resets_at': float(state.get('resets_at', 0))}
+    except (OSError, ValueError, TypeError, AttributeError):
+        state = {'last_probe': 0, 'resets_at': 0}
+    if now - state['last_probe'] < QUOTA_EVERY:
+        return
+    if now >= state['resets_at']:
+        logs = journals(('.claude', 'projects'), ('*', '*.jsonl'))
+        if not any(os.path.getmtime(log) > state['resets_at'] for log in logs):
+            return
+    binary = claude_binary()
+    if not binary:
+        return
+    state['last_probe'] = now
+    state_file.write_text(json.dumps(state))  # avant la requête : jamais deux mesures en 15 min, même si elle échoue
+    try:
+        # TOUR_SKIP : les hooks éventuels ignorent cette requête, qui n'est pas une session de travail.
+        out = subprocess.run(
+            [binary, '--print', '--no-session-persistence', '--model', 'haiku', '--tools', '', '--strict-mcp-config',
+             '--mcp-config', '{"mcpServers":{}}', '--effort', 'low', '--output-format', 'stream-json', '--verbose',
+             'Réponds seulement OK.'],
+            cwd=str(Path.home()), env={**os.environ, 'TOUR_SKIP': '1'}, stdin=subprocess.DEVNULL, capture_output=True,
+            text=True, timeout=90, creationflags=getattr(subprocess, 'CREATE_NO_WINDOW', 0)).stdout
+    except (OSError, subprocess.SubprocessError):
+        return
+    for line in out.splitlines():
+        if '"rate_limit_event"' not in line:
+            continue
+        try:
+            windows = json.loads(line).get('rate_limit_info', {}).get('unifiedWindows', {})
+            usage = {name: {'pct': round(w['utilization'] * 100), 'resets_at': w['resetsAt']}
+                     for name, w in windows.items() if name in ('five_hour', 'seven_day')}
+        except (ValueError, KeyError, TypeError, AttributeError):
+            return
+        if not usage:
+            return
+        if 'five_hour' in usage:
+            state['resets_at'] = usage['five_hour']['resets_at']
+            state_file.write_text(json.dumps(state))
+        send(site, key, host, 'usage', {'hook_event_name': 'usage', 'usage': {'claude': {**usage, 'ts': now}}})
+        print('Quota Claude envoyé.')
+        return
+
+
 def main():
     CONF.mkdir(parents=True, exist_ok=True)
     # Mode « a » : ne tronque pas un fichier qu'une autre synchronisation tient verrouillé (Windows).
@@ -161,6 +252,7 @@ def main():
         site = setting('url').rstrip('/')
         key = setting('secret')
         host = setting('host')
+        share = (CONF / 'partage-demandes').exists()
         checkpoint = CONF / 'sync-state.json'
         try:
             saved = json.loads(checkpoint.read_text())
@@ -193,7 +285,7 @@ def main():
                         header = file.readline()
                         file.seek(max(0, size - 300000))
                         lines = [header] + file.readlines()
-                    payload = parse(source, lines)
+                    payload = parse(source, lines, share)
                     actions, latest = count_actions(source, lines, since)
                     if payload.get('session_id') and payload.get('observed_at', 0) > time.time() - 3600:
                         payload['sync'] = True
@@ -210,6 +302,10 @@ def main():
         os.chmod(temp, 0o600)
         os.replace(temp, checkpoint)
         print(str(count) + ' session(s) synchronisée(s).')
+        try:
+            claude_quota(site, key, host)
+        except (OSError, ValueError, ConnectionError):
+            print('Quota Claude non mesuré cette fois.')
 
 
 if __name__ == '__main__':

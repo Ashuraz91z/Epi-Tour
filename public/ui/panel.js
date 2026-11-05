@@ -15,7 +15,7 @@ import {
 import { createSportsGames } from "../sports-games.js";
 import { workLeadersHtml, workPanelHtml } from "../work-ui.js";
 import { world } from "../tour/state.js";
-import { $, CASINO_FEATURED, ME, PLACE_FR, STATE_FR, TOOLS, esc, hm, keyOf, myApt, placeOf, quotaRemaining, stateOf } from "../tour/base.js";
+import { $, CASINO_FEATURED, ME, PLACE_FR, STATE_FR, TOOLS, claudeTracked, esc, hm, keyOf, myApt, placeOf, quotaRemaining, stateOf } from "../tour/base.js";
 import { agents, floors } from "../tour/engine.js";
 import { reducedMotion } from "../tour/kit.js";
 import { updateBillboard, updateUsageBoard } from "../tour/city.js";
@@ -183,7 +183,7 @@ function render() {
       <span><i class="d" style="background:var(--auth)"></i><b>${by(a.sessions, "autorisation")}</b> ${spectator ? "attend un accord" : "attend ton accord"}</span>
       <span><i class="d" style="background:var(--wait)"></i><b>${by(a.sessions, "attend")}</b> sur le toit, attend la suite</span>
       <span><i class="d" style="background:var(--pause)"></i><b>${by(a.sessions, "fini") + by(a.sessions, "silencieux")}</b> en pause dans les étages communs</span></div>
-      <div class="meters">${meter("Claude 5 h", u.claude?.five_hour, "var(--claude)", now)}${meter("Claude semaine", u.claude?.seven_day, "var(--claude)", now)}
+      <div class="meters">${claudeTracked(u) ? meter("Claude 5 h", u.claude?.five_hour, "var(--claude)", now) + meter("Claude semaine", u.claude?.seven_day, "var(--claude)", now) : `<p class="quota-untracked">Claude · quota non suivi</p>`}
       ${meter("ChatGPT 5 h", u.chatgpt?.five_hour, "var(--codex)", now)}${meter("ChatGPT semaine", u.chatgpt?.seven_day, "var(--codex)", now)}</div>
       <div class="svcs">${svcs.length ? `Services <b style="color:${svcs.every(s => s.ok) ? "var(--work)" : "var(--auth)"}">${svcs.filter(s => s.ok).length}/${svcs.length}</b>` : ""}
       ${svcs.filter(s => !s.ok).map(s => `<span style="color:var(--auth)">${esc(s.label)} arrêté</span>`).join("")}
@@ -311,24 +311,44 @@ function showAgent(a, s) {
 }
 
 // « Relier mes agents » : une commande selon le système, qui relie la machine ET installe l'app (Mac, Windows).
-function installBlock(token) {
-  const unix = `curl -fsSL ${location.origin}/install.sh | sh -s -- ${token}`;
+// Partager le texte de ses demandes : un choix par machine, ajouté à la commande quand la case est cochée.
+let sharePrompts = false;
+function installCommands(token) {
   // TLS 1.2 forcé : Windows PowerShell 5.1 ne l'active pas toujours, et irm échouerait en HTTPS. Aucun $ : la commande
   // se colle telle quelle dans PowerShell, cmd ou Win+R.
-  const win = `powershell -ExecutionPolicy Bypass -NoProfile -Command "[Net.ServicePointManager]::SecurityProtocol=[Net.ServicePointManager]::SecurityProtocol -bor 3072; & ([scriptblock]::Create((irm '${location.origin}/install.ps1'))) -Key '${token}'"`;
+  return {
+    unix: `curl -fsSL ${location.origin}/install.sh | sh -s -- ${token}${sharePrompts ? " --partager-demandes" : ""}`,
+    win: `powershell -ExecutionPolicy Bypass -NoProfile -Command "[Net.ServicePointManager]::SecurityProtocol=[Net.ServicePointManager]::SecurityProtocol -bor 3072; & ([scriptblock]::Create((irm '${location.origin}/install.ps1'))) -Key '${token}'${sharePrompts ? " -PartagerDemandes" : ""}"`,
+  };
+}
+function installBlock(token) {
+  const { unix, win } = installCommands(token);
   const isWindows = /Windows/i.test(navigator.userAgent);
-  const block = (title, cmd, where, open) => `<details class="os-install"${open ? " open" : ""}><summary>${title}</summary>
-    <p>${where}</p><div class="code"><span>${esc(cmd)}</span><button type="button" data-copy="${esc(cmd)}">Copier</button></div></details>`;
+  const block = (title, cmd, kind, where, open) => `<details class="os-install"${open ? " open" : ""}><summary>${title}</summary>
+    <p>${where}</p><div class="code" data-command="${kind}"><span>${esc(cmd)}</span><button type="button" data-copy="${esc(cmd)}">Copier</button></div></details>`;
   return `<p class="connect-intro"><strong>Une commande par machine, et c’est connecté.</strong> Ta clé est déjà dedans.</p>
-    ${block("🍎 Mac", unix, "Ouvre l’app Terminal, colle, Entrée. L’app Penthouse s’installe avec : coche les outils à lancer à chaque ouverture de session.", !isWindows)}
-    ${block("🪟 Windows", win, "Ouvre PowerShell (menu Démarrer › « PowerShell »), colle, Entrée. L’app Penthouse s’installe avec : coche les outils à lancer à chaque ouverture de session. Python 3 est nécessaire : la commande t’explique comment l’installer s’il manque.", isWindows)}
-    ${block("🐧 Linux", unix, "Dans un terminal : suivi chaque minute via cron.", false)}
+    <label class="share-prompts"><input type="checkbox" id="sharePrompts" data-token="${esc(token)}"${sharePrompts ? " checked" : ""}>
+      <span><b>Partager le texte de mes demandes</b> avec les autres résidents (sinon, ils voient que tes agents travaillent et sur quel projet, pas ce que tu leur demandes). Pour arrêter : relance la commande avec <code>--sans-demandes</code> (Windows : <code>-SansDemandes</code>).</span></label>
+    ${block("🍎 Mac", unix, "unix", "Ouvre l’app Terminal, colle, Entrée. L’app Penthouse s’installe avec : coche les outils à lancer à chaque ouverture de session.", !isWindows)}
+    ${block("🪟 Windows", win, "win", "Ouvre PowerShell (menu Démarrer › « PowerShell »), colle, Entrée. L’app Penthouse s’installe avec : coche les outils à lancer à chaque ouverture de session. Python 3 est nécessaire : la commande t’explique comment l’installer s’il manque.", isWindows)}
+    ${block("🐧 Linux", unix, "unix", "Dans un terminal : suivi chaque minute via cron.", false)}
     <p>Ensuite, donne une tâche à Claude Code ou Codex : ton robot s’assoit à ton bureau dans les 15 secondes. Même commande sur une autre machine pour la relier au même étage.</p>
     <p class="extras-muted">Applis à télécharger à la main si tu préfères : <a href="/Penthouse.zip" download>Penthouse pour Mac</a> · <a href="/Penthouse-Windows.zip" download>Penthouse pour Windows</a>.</p>
     <details><summary>Diagnostic et clé</summary><p>Pour revérifier la connexion (Mac/Linux) :</p><div class="code"><span>python3 "$HOME/.config/tour/tour-check"</span><button type="button" data-copy='python3 "$HOME/.config/tour/tour-check"'>Copier</button></div>
     <p>La clé reste dans cet onglet (ou sur cet appareil si tu as coché « se souvenir de moi ») et dans <code>~/.config/tour/secret</code> sur tes machines. Garde-la privée : elle suffit pour entrer chez toi (« J’ai déjà ma clé d’étage » à l’accueil).</p>
-    <p>Le suivi lit les journaux locaux de Claude Code et Codex (nom du projet, modèle, état), jamais le contenu des conversations. Les hooks existants restent compatibles.</p></details>`;
+    <p>Le suivi lit les journaux locaux de Claude Code et Codex (nom du projet, modèle, état). Le texte de tes demandes ne part que si tu as coché la case ci-dessus ; les réponses des agents et le contenu des outils, jamais. Le quota Claude est mesuré toutes les 15 min au plus par une mini-requête (Haiku), seulement quand tu as utilisé Claude Code depuis la dernière fenêtre ; pour s’en passer, crée le fichier <code>~/.config/tour/sans-quota-claude</code>. Les hooks existants restent compatibles.</p></details>`;
 }
+// La case change les commandes affichées (et copiées) sans redessiner la fenêtre.
+document.addEventListener("change", e => {
+  if (e.target.id !== "sharePrompts") return;
+  sharePrompts = e.target.checked;
+  const commands = installCommands(e.target.dataset.token);
+  for (const box of document.querySelectorAll("[data-command]")) {
+    const cmd = commands[box.dataset.command];
+    box.querySelector("span").textContent = cmd;
+    box.querySelector("[data-copy]").dataset.copy = cmd;
+  }
+});
 // Onglet sans clé (navigation privée, autre navigateur, entrée avec le nom) : la clé fait apparaître les commandes.
 function keyNeededBlock() {
   const mac = `cat ~/.config/tour/secret`, win = `Get-Content "$HOME\\.config\\tour\\secret"`;
@@ -360,7 +380,7 @@ function refreshConnectionStatus() {
   const machines = seen.map(([name, m]) => `<span>${esc(name)} · reçu à ${hm(m.t)}</span>`).join("");
   const quotas = ["claude", "chatgpt"].map(provider => {
     const u = apt?.usage?.[provider];
-    return `${provider === "claude" ? "Claude" : "ChatGPT"} : ${u?.ts && [u.five_hour?.pct, u.seven_day?.pct].some(Number.isFinite) ? "mesure reçue à " + hm(u.ts) : "aucune mesure reçue"}`;
+    return `${provider === "claude" ? "Claude" : "ChatGPT"} : ${u?.ts && [u.five_hour?.pct, u.seven_day?.pct].some(Number.isFinite) ? "mesure reçue à " + hm(u.ts) : provider === "claude" ? "pas suivi (relance la commande pour l’activer)" : "aucune mesure reçue"}`;
   }).join(" · ");
   setHtml(target, `<h4>Réception des outils</h4>${tools}<div class="connect-machines">${machines || "Aucune machine reçue pour le moment."}</div><p><b>Quotas</b> · ${quotas}</p><p>Ces horaires indiquent la dernière réception, pas une connexion permanente. Les quotas sont séparés de l’activité des agents. Une session sans journal récent peut ne pas apparaître.</p>`);
 }

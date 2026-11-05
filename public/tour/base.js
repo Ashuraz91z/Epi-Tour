@@ -197,15 +197,18 @@ function quotaRemaining(window, now) {
   if (!window || !Number.isFinite(window.pct) || (window.resets_at && now >= window.resets_at)) return null;
   return Math.round(100 - Math.max(0, Math.min(100, window.pct)));
 }
+// Quota Claude reçu au moins une fois (sonde du suivi) : sinon les écrans le disent non suivi, sans cases vides.
+const claudeTracked = usage => ["five_hour", "seven_day"].some(k => Number.isFinite(usage?.claude?.[k]?.pct));
+// Quatre lignes : Claude 5 h, Claude semaine, ChatGPT 5 h, ChatGPT semaine (provider indique l'outil).
 function quotaRows(usage, now) {
   return ["claude", "chatgpt"].flatMap(provider =>
     [["five_hour", "5 HEURES"], ["seven_day", "SEMAINE"]].map(([key, label]) => {
       const q = usage?.[provider]?.[key];
-      if (!q || !Number.isFinite(q.pct)) return { label, remaining: null, reset: "Données non reçues" };
-      if (q.resets_at && now >= q.resets_at) return { label, remaining: null, reset: "Nouvelle mesure attendue" };
+      if (!q || !Number.isFinite(q.pct)) return { provider, label, remaining: null, reset: "Données non reçues" };
+      if (q.resets_at && now >= q.resets_at) return { provider, label, remaining: null, reset: "Nouvelle mesure attendue" };
       const remaining = quotaRemaining(q, now);
       const reset = q.resets_at ? "Reset " + new Date(q.resets_at * 1000).toLocaleString("fr-FR", { timeZone: "Europe/Paris", weekday: "short", hour: "2-digit", minute: "2-digit" }) : "Reset inconnu";
-      return { label, remaining, reset };
+      return { provider, label, remaining, reset };
     }));
 }
 
@@ -214,5 +217,5 @@ export {
   FLOOR_H, FLOOR_OF, GOLF_BUNKER, GOLF_GREEN, GOLF_HOLES, GOLF_MATS, GOLF_POND, GOLF_STANCE, GOLF_TABLES,
   GOLF_TEE, KEY, LANE, LIFT, ME, OPEN, P, PLACE_FR, REST_GROUPS, RES_SLOTS, S, SHARED, SHARED_SLOTS, SLOT_MOTION,
   STALLS, STATE_COLOR, STATE_FR, TENNIS_COURT, TENNIS_NPCS, TENNIS_ROWS, TENNIS_SEATS, TOOLS, VIP, around,
-  clubAnimation, esc, hash, hm, keyOf, myApt, placeOf, quotaRemaining, quotaRows, rememberKey, slotOf, stateOf,
+  claudeTracked, clubAnimation, esc, hash, hm, keyOf, myApt, placeOf, quotaRemaining, quotaRows, rememberKey, slotOf, stateOf,
 };

@@ -3,6 +3,18 @@
 Chaque IA ajoute **en haut** une entrée par session de travail (modèle et règles dans `AGENTS.md`, section 3).
 Le plus récent d'abord. On n'efface pas les entrées des autres.
 
+## 2026-11-05 · Lucas · branche Lucas · Claude Code (2)
+**Fait :** quota Claude mesuré automatiquement par `tour-sync` (mini-requête Haiku au plus toutes les 15 min, seulement si
+Claude Code a servi) : plus rien à installer à part la commande de l'étage. Sans mesure, les écrans d'usages (panneau
+des quotas, dashboard spectateur, panneau latéral) disent « Claude · quota non suivi ». Option « Partager le texte de mes
+demandes » dans « Relier mes agents » (`--partager-demandes` / `-PartagerDemandes`, arrêt : `--sans-demandes`).
+**Fichiers :** `collecteurs/tour-sync`, `public/install.sh`, `public/install.ps1`, `core.js` (`prompt` des relevés),
+`public/ui/panel.js`, `public/tour/city.js`, `public/tour/navigation.js`, `public/tour/base.js` (`claudeTracked`).
+**À savoir :** le partage est un fichier `~/.config/tour/partage-demandes` par machine ; les apps Mac/Windows relancent la
+commande sans option, donc gardent le choix. Les tests utilisent un faux `claude` dans le PATH : ne jamais laisser un test
+lancer `tour-sync` avec des journaux Claude récents sans ce faux binaire (sinon il appelle le vrai Claude Code).
+**Reste à faire :** chaque résident doit relancer une fois la commande de son étage (cocher la case s'il veut partager).
+
 ## 2026-11-05 · Lucas · branche Lucas · Claude Code
 **Fait :** `public/app.js` (6 000 lignes) découpé en modules : `public/tour/` (moteur, ville, robots, tour, animation,
 navigation), `public/tour/floors/` (un fichier par étage ou ambiance) et `public/ui/` (panneau, studio, session).
