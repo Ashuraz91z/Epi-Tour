@@ -209,7 +209,7 @@ function claudeQuotaWhy(apartment) {
   if (status === "ok") return `mesure reçue de ${machine}, affichage au prochain état`;
   if (status === "introuvable") return `Claude Code introuvable sur ${machine} (ni dans le PATH ni aux emplacements habituels)`;
   if (status === "désactivé") return `mesure désactivée sur ${machine} (fichier sans-quota-claude)`;
-  if (status === "sans quota") return `Claude Code n’a pas donné de quota sur ${machine} (connexion par clé d’API plutôt qu’abonnement ?)`;
+  if (status === "sans quota") return `Claude Code ne donne pas de quota d’abonnement sur ${machine} (connecté par clé d’API, ou pas connecté : lance « claude » puis /login)`;
   return `mesure impossible sur ${machine} · ${status}`;
 }
 // Quatre lignes : Claude 5 h, Claude semaine, ChatGPT 5 h, ChatGPT semaine (provider indique l'outil).

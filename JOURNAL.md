@@ -3,6 +3,18 @@
 Chaque IA ajoute **en haut** une entrée par session de travail (modèle et règles dans `AGENTS.md`, section 3).
 Le plus récent d'abord. On n'efface pas les entrées des autres.
 
+## 2026-11-05 · Lucas · branche Lucas · Claude Code (6)
+**Fait :** chez Lucas, la mini-requête ne donnait aucun quota (« sans quota ») : Claude Code n'émet `rate_limit_event`
+que quand le statut change. La sonde lit maintenant les données `/usage` de Claude Code via la requête de contrôle
+`get_usage` (`--input-format stream-json`), sans requête au modèle : rien n'est consommé, réponse en ~1 s. L'ancienne
+méthode reste en repli. Texte du diagnostic (`tour-check`) corrigé.
+**Fichiers :** `collecteurs/tour-sync` (`ask_usage`, `usage_answer`, `claude_quota`), `collecteurs/tour-check`,
+`public/tour/base.js`, `public/ui/panel.js`, `test.js`, `README.md`.
+**À savoir :** `get_usage` est marquée « experimental, the response shape may change » dans Claude Code 2.1.x ; la forme
+attendue est `response.rate_limits.{five_hour,seven_day}.{utilization 0–100, resets_at ISO}` et `rate_limits_available`.
+Vérifié contre le vrai binaire (non connecté : `rate_limits_available: false`), pas encore avec un abonnement.
+**Reste à faire :** Lucas relance la commande de l'étage et vérifie que les jauges Claude apparaissent.
+
 ## 2026-11-05 · Lucas · branche Lucas · Claude Code (5)
 **Fait :** quota Claude toujours « non suivi » chez Lucas. Sonde plus robuste : `claude` cherché aussi dans nvm, npm global,
 bun, volta et pnpm, lancé avec son dossier dans le PATH (cron et launchd ont un PATH réduit) ; réponse lue sous ses deux

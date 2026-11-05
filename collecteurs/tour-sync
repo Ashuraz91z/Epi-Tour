@@ -2,7 +2,7 @@
 """Synchronise les métadonnées des journaux locaux, sans lire les secrets des outils.
 
 Le texte des demandes ne part que si cette machine l'a choisi (fichier « partage-demandes », posé par la commande
-de l'étage avec --partager-demandes). Le quota Claude est mesuré ici aussi (claude_quota), au plus toutes les 15 min.
+de l'étage avec --partager-demandes). Le quota Claude est lu ici aussi (claude_quota, données /usage de Claude Code), au plus toutes les 15 min.
 Mac, Linux et Windows (Python 3.8+, bibliothèque standard seulement). Sous Windows, ~ désigne %USERPROFILE%."""
 from datetime import datetime
 import glob
@@ -10,9 +10,11 @@ import json
 import math
 import os
 from pathlib import Path
+import queue
 import shutil
 import subprocess
 import sys
+import threading
 import time
 import urllib.parse
 from tour_http import request, ConnectionError
@@ -219,11 +221,88 @@ def quota_windows(out):
     return windows, sorted(str(k) for k in seen)[:6]
 
 
+USAGE_REQUEST = 'penthouse-usage'
+CLAUDE_ARGS = ['--print', '--no-session-persistence', '--model', 'haiku', '--tools', '', '--strict-mcp-config',
+               '--mcp-config', '{"mcpServers":{}}', '--output-format', 'stream-json', '--verbose']
+
+
+def ask_usage(binary, env):
+    """Demande à Claude Code ses données /usage (requête de contrôle « get_usage » en stream-json) : quotas de
+    l'abonnement, sans requête au modèle. Renvoie (réponse ou None, sortie, erreur)."""
+    proc = subprocess.Popen([binary] + CLAUDE_ARGS + ['--input-format', 'stream-json'], cwd=str(Path.home()), env=env,
+                            stdin=subprocess.PIPE, stdout=subprocess.PIPE, stderr=subprocess.PIPE, text=True,
+                            creationflags=getattr(subprocess, 'CREATE_NO_WINDOW', 0))
+    lines = queue.Queue()
+
+    def read():
+        for line in proc.stdout:
+            lines.put(line)
+        lines.put(None)
+    threading.Thread(target=read, daemon=True).start()
+    answer, out = None, []
+    try:
+        proc.stdin.write(json.dumps({'type': 'control_request', 'request_id': USAGE_REQUEST,
+                                     'request': {'subtype': 'get_usage', 'skip_behaviors': True}}) + '\n')
+        proc.stdin.flush()
+        deadline = time.time() + 60
+        while answer is None and time.time() < deadline:
+            try:
+                line = lines.get(timeout=max(0.1, deadline - time.time()))
+            except queue.Empty:
+                break
+            if line is None:
+                break
+            out.append(line)
+            try:
+                row = json.loads(line)
+            except ValueError:
+                continue
+            response = row.get('response') if isinstance(row, dict) else None
+            if row.get('type') == 'control_response' and isinstance(response, dict) and response.get('request_id') == USAGE_REQUEST:
+                answer = response
+    except OSError:
+        pass
+    finally:
+        try:
+            proc.stdin.close()
+        except OSError:
+            pass
+        try:
+            proc.wait(timeout=10)
+        except subprocess.TimeoutExpired:
+            proc.kill()
+            proc.wait()
+    error = ' '.join((proc.stderr.read() or '').strip().splitlines()[:1])
+    return answer, ''.join(out), error
+
+
+def usage_answer(answer):
+    """Fenêtres 5 h et 7 jours d'une réponse get_usage (utilisation en %, reset en ISO 8601), ou (None, raison)."""
+    if not isinstance(answer, dict):
+        return None, None
+    if answer.get('subtype') != 'success':
+        return None, 'erreur : ' + str(answer.get('error') or 'get_usage refusé')
+    data = answer.get('response') if isinstance(answer.get('response'), dict) else {}
+    if data.get('rate_limits_available') is False:
+        return None, 'sans quota'
+    limits = data.get('rate_limits') if isinstance(data.get('rate_limits'), dict) else {}
+    windows = {}
+    for name in ('five_hour', 'seven_day'):
+        w = limits.get(name)
+        if isinstance(w, dict) and isinstance(w.get('utilization'), (int, float)):
+            windows[name] = {'pct': round(w['utilization'])}
+            reset = stamp(w.get('resets_at')) if isinstance(w.get('resets_at'), str) else w.get('resets_at')
+            if isinstance(reset, (int, float)) and reset > 0:
+                windows[name]['resets_at'] = round(reset)
+    return (windows, None) if windows else (None, 'format : ' + ','.join(sorted(map(str, limits)))[:60])
+
+
 def claude_quota(site, key, host):
-    """Quota Claude (fenêtres 5 h et 7 jours), lu dans la réponse à une mini-requête (Haiku, sans outils, sans session
-    enregistrée). Au plus toutes les 15 min, et seulement si la fenêtre de 5 h est ouverte ou si Claude Code a servi
-    depuis sa fin : la mesure n'ouvre jamais une fenêtre à elle seule. Désactivable : fichier « sans-quota-claude ».
-    Chaque essai envoie son résultat (ok, introuvable, erreur…) : le site dit pourquoi le quota manque."""
+    """Quota Claude (fenêtres 5 h et 7 jours), au plus toutes les 15 min. D'abord les données /usage de Claude Code
+    (get_usage, sans requête au modèle, rien n'est consommé) ; à défaut, les événements « rate_limit_event » d'une
+    mini-requête (Haiku, sans outils ni session), seulement si Claude Code a servi depuis la fin de la fenêtre de 5 h
+    (elle n'en ouvre jamais une). Désactivable : fichier « sans-quota-claude ». Chaque essai envoie son résultat
+    (ok, introuvable, erreur…) : le site dit pourquoi le quota manque."""
     if os.environ.get('TOUR_SKIP'):
         return
     state_file, now = CONF / 'usage-state.json', time.time()
@@ -234,16 +313,12 @@ def claude_quota(site, key, host):
         state = {'last_probe': 0, 'resets_at': 0}
     if now - state['last_probe'] < QUOTA_EVERY:
         return
+
     def report(status):
         send(site, key, host, 'usage', {'hook_event_name': 'usage', 'info': {'claude_quota': status[:90], 'claude_quota_at': now}})
-    disabled = (CONF / 'sans-quota-claude').exists()
-    if not disabled and now >= state['resets_at']:
-        logs = journals(('.claude', 'projects'), ('*', '*.jsonl'))
-        if not any(os.path.getmtime(log) > state['resets_at'] for log in logs):
-            return  # Claude Code n'a pas servi depuis la fin de la fenêtre : rien à mesurer
     state['last_probe'] = now
     state_file.write_text(json.dumps(state))  # avant la requête : jamais deux essais en 15 min, même s'il échoue
-    if disabled:
+    if (CONF / 'sans-quota-claude').exists():
         return report('désactivé')
     binary = claude_binary()
     if not binary:
@@ -251,25 +326,33 @@ def claude_quota(site, key, host):
         return report('introuvable')
     # Le dossier de claude et les dossiers habituels en tête du PATH : un claude installé par npm lance « node ».
     path = os.pathsep.join([os.path.dirname(binary), str(Path.home() / '.local' / 'bin'), '/opt/homebrew/bin', '/usr/local/bin', os.environ.get('PATH', '')])
+    env = {**os.environ, 'PATH': path, 'TOUR_SKIP': '1'}  # TOUR_SKIP : les hooks éventuels ignorent cette session
     try:
-        # TOUR_SKIP : les hooks éventuels ignorent cette requête, qui n'est pas une session de travail.
-        run = subprocess.run(
-            [binary, '--print', '--no-session-persistence', '--model', 'haiku', '--tools', '', '--strict-mcp-config',
-             '--mcp-config', '{"mcpServers":{}}', '--effort', 'low', '--output-format', 'stream-json', '--verbose',
-             'Réponds seulement OK.'],
-            cwd=str(Path.home()), env={**os.environ, 'PATH': path, 'TOUR_SKIP': '1'}, stdin=subprocess.DEVNULL,
-            capture_output=True, text=True, timeout=90, creationflags=getattr(subprocess, 'CREATE_NO_WINDOW', 0))
-    except subprocess.TimeoutExpired:
-        return report('erreur : pas de réponse en 90 s')
-    except (OSError, subprocess.SubprocessError) as error:
-        return report('erreur : ' + type(error).__name__)
-    usage, keys = quota_windows(run.stdout or '')
+        answer, out, error = ask_usage(binary, env)
+    except (OSError, subprocess.SubprocessError) as exc:
+        answer, out, error = None, '', type(exc).__name__
+    usage, status = usage_answer(answer)
+    if not usage and status != 'sans quota':
+        # Repli : une mini-requête, seulement si Claude Code a servi depuis la fin de la fenêtre (jamais pour l'ouvrir).
+        used = now < state['resets_at'] or any(os.path.getmtime(log) > state['resets_at'] for log in journals(('.claude', 'projects'), ('*', '*.jsonl')))
+        if used:
+            try:
+                run = subprocess.run([binary] + CLAUDE_ARGS + ['--effort', 'low', 'Réponds seulement OK.'], cwd=str(Path.home()), env=env,
+                                     stdin=subprocess.DEVNULL, capture_output=True, text=True, timeout=90,
+                                     creationflags=getattr(subprocess, 'CREATE_NO_WINDOW', 0))
+                usage, keys = quota_windows(run.stdout or '')
+                error = error or ' '.join((run.stderr or '').strip().splitlines()[:1])
+                if not usage and keys:
+                    status = status or 'format : ' + ','.join(keys)
+            except subprocess.TimeoutExpired:
+                error = error or 'pas de réponse en 90 s'
+            except (OSError, subprocess.SubprocessError) as exc:
+                error = error or type(exc).__name__
     if not usage:
-        problem = ' '.join((run.stderr or '').strip().splitlines()[:1])
-        status = ('erreur : ' + problem) if run.returncode and problem else ('format : ' + ','.join(keys)) if keys else 'sans quota'
+        status = status or ('erreur : ' + error if error else 'sans quota')
         print('Quota Claude non lu (' + status + ').')
         return report(status)
-    if 'five_hour' in usage:
+    if 'resets_at' in usage.get('five_hour', {}):
         state['resets_at'] = usage['five_hour']['resets_at']
         state_file.write_text(json.dumps(state))
     send(site, key, host, 'usage', {'hook_event_name': 'usage', 'usage': {'claude': {**usage, 'ts': now}},

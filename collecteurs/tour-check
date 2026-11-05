@@ -42,7 +42,7 @@ def main():
     print('Serveur joignable, diagnostic reçu pour ' + host)
     for name, installed in tools.items():
         print(name + (' : suivi des journaux actif.' if readers[name] else ' : aucun dossier de journaux détecté pour le moment.'))
-    print('Les outils restent inchangés. Aucune requête de modèle ni quota simulé.')
+    print('Les outils restent inchangés. Quota Claude lu toutes les 15 min dans les données /usage de Claude Code, sans requête au modèle.')
 
 
 if __name__ == '__main__':
