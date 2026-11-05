@@ -13,7 +13,7 @@ import { buyItem, onIngestEconomy, playCasino, playSport, questReward, setSubscr
 
 const ROOT = dirname(fileURLToPath(import.meta.url));
 // Version affichée dans le menu « ⋯ » : permet de vérifier que le site a bien repris la dernière version.
-export const VERSION = "2026-11-05.9";
+export const VERSION = "2026-11-05.10";
 const MAX_BODY = 256 * 1024;
 const MAX_APARTMENTS = 50;
 const acceptsGzip = req => /(?:^|,)\s*gzip\s*(?:,|$)/i.test(req.headers["accept-encoding"] ?? "");
@@ -43,6 +43,7 @@ const FILES = {
   "/install-sync.py": ["collecteurs/install-sync.py", "text/plain"],
   "/tour-check": ["collecteurs/tour-check", "text/plain"],
   "/cursor-notify.py": ["collecteurs/cursor-notify.py", "text/plain"],
+  "/tour-cloud-hook": ["collecteurs/tour-cloud-hook", "text/plain"], "/cloud-setup.sh": ["public/cloud-setup.sh", "text/plain"],
   "/install.sh": ["public/install.sh", "text/plain"], "/install.ps1": ["public/install.ps1", "text/plain"], "/assets/CREDITS.txt": ["public/assets/CREDITS.txt", "text/plain"],
 };
 // Modules de l'interface (public/tour/, public/ui/) : tous servis, sans les lister un par un.
