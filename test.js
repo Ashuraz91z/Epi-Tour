@@ -370,6 +370,7 @@ test("connexion : une commande, sessions importées, outils inchangés et instal
     // Quota Claude mesuré par le suivi lui-même, une seule fois en 15 min malgré deux installations.
     assert.deepEqual(db.get("installation").store.usage.claude.five_hour, { pct: 42, resets_at: 4102444800 });
     assert.equal(readFileSync(join(home, "claude-calls"), "utf8").trim().split("\n").length, 1);
+    assert.equal(db.get("installation").store.seen[host].claude_quota, "ok", "le résultat de la mesure est remonté");
     // Partage choisi sur la commande : la dernière demande devient visible ; --sans-demandes l'arrête, sans rien d'autre.
     const task = () => db.get("installation").store.sessions["claude:" + host + ":imported"].task;
     writeFileSync(log, said("Refais le panneau des quotas"), { flag: "a" });
@@ -461,6 +462,44 @@ test("mode productif : choisi sur l'appareil, étages de jeu retirés de la navi
   assert.match(html, /1 h 35|95/);
   assert.ok(!/XP|série|Prime/i.test(html), html);
   assert.match(workPanelHtml(apt, 0, s => String(s), { mine: true }), /XP/);
+});
+
+test("quota Claude : deux formats de réponse lus, et la raison d'un échec remontée au site", async () => {
+  const run = promisify(execFile);
+  const home = mkdtempSync(join(tmpdir(), "penthouse-quota-"));
+  const script = fileURLToPath(new URL("./collecteurs/tour-sync", import.meta.url));
+  const python = `
+import importlib.machinery, importlib.util, json, os, sys, time
+from pathlib import Path
+sys.path.insert(0, os.path.dirname(sys.argv[1]))
+loader = importlib.machinery.SourceFileLoader('tour_sync', sys.argv[1])
+spec = importlib.util.spec_from_loader('tour_sync', loader); m = importlib.util.module_from_spec(spec); loader.exec_module(m)
+grouped = json.dumps({'type': 'rate_limit_event', 'rate_limit_info': {'unifiedWindows': {'five_hour': {'utilization': 0.3, 'resetsAt': 2000}, 'seven_day': {'utilization': 0.5, 'resetsAt': 9000}}}})
+single = [json.dumps({'type': 'rate_limit_event', 'rate_limit_info': {'status': 'allowed', 'rateLimitType': t, 'utilization': u, 'resetsAt': r}}) for t, u, r in (('five_hour', 42, 2000), ('seven_day', 0.1, 9000))]
+assert m.quota_windows(grouped)[0] == {'five_hour': {'pct': 30, 'resets_at': 2000}, 'seven_day': {'pct': 50, 'resets_at': 9000}}
+assert m.quota_windows('\\n'.join(single))[0] == {'five_hour': {'pct': 42, 'resets_at': 2000}, 'seven_day': {'pct': 10, 'resets_at': 9000}}
+assert m.quota_windows(json.dumps({'type': 'rate_limit_event', 'rate_limit_info': {'status': 'allowed'}})) == ({}, ['status'])
+# Un faux claude qui échoue : l'erreur est envoyée au site, et pas de nouvel essai avant 15 min.
+home = Path(sys.argv[2]); m.CONF = home / '.config' / 'tour'; m.CONF.mkdir(parents=True)
+(home / '.claude' / 'projects' / 'p').mkdir(parents=True); (home / '.claude' / 'projects' / 'p' / 'a.jsonl').write_text('{}')
+fake = home / 'bin' / 'claude'; fake.parent.mkdir(); fake.write_text('#!/bin/sh\\necho "Invalid API key · Please run /login" >&2\\nexit 1\\n'); fake.chmod(0o755)
+m.claude_binary = lambda: str(fake)
+sent = []; m.send = lambda site, key, host, src, payload: sent.append(payload)
+m.claude_quota('s', 'k', 'mac')
+assert sent and sent[0]['info']['claude_quota'].startswith('erreur : Invalid API key'), sent
+m.claude_quota('s', 'k', 'mac'); assert len(sent) == 1
+# Claude Code introuvable.
+(m.CONF / 'usage-state.json').unlink(); m.claude_binary = lambda: None
+m.claude_quota('s', 'k', 'mac'); assert sent[-1]['info']['claude_quota'] == 'introuvable'
+`;
+  try { await run("python3", ["-c", python, script, home]); } finally { rmSync(home, { recursive: true, force: true }); }
+  // Le site dit pourquoi : aucune mesure reçue (relancer la commande), introuvable, ou l'erreur.
+  const { runInNewContext } = await import("node:vm");
+  const source = clientSource(), at = source.indexOf("function claudeQuotaWhy(");
+  const why = apt => runInNewContext(source.slice(at, source.indexOf("\n}\n", at) + 2) + "; claudeQuotaWhy(apt)", { apt });
+  assert.match(why({ seen: { mac: { t: 1 } } }), /relance la commande/);
+  assert.match(why({ seen: { mac: { claude_quota: "introuvable", claude_quota_at: 5 }, pc: { claude_quota: "ok", claude_quota_at: 1 } } }), /introuvable sur mac/);
+  assert.match(why({ seen: { mac: { claude_quota: "erreur : Invalid API key", claude_quota_at: 5 } } }), /mac · erreur : Invalid API key/);
 });
 
 test("journaux : un relevé ancien ne remplace pas une autorisation récente", () => {

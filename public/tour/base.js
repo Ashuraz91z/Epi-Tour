@@ -199,6 +199,19 @@ function quotaRemaining(window, now) {
 }
 // Quota Claude reçu au moins une fois (sonde du suivi) : sinon les écrans le disent non suivi, sans cases vides.
 const claudeTracked = usage => ["five_hour", "seven_day"].some(k => Number.isFinite(usage?.claude?.[k]?.pct));
+// Pourquoi le quota Claude d'un résident manque : dernier essai de la sonde (tour-sync) parmi ses machines, ou
+// aucun essai reçu (machine reliée avant la sonde : relancer la commande de l'étage). Texte court, en français.
+function claudeQuotaWhy(apartment) {
+  const tries = Object.entries(apartment?.seen ?? {}).filter(([, m]) => typeof m?.claude_quota === "string")
+    .sort((a, b) => (b[1].claude_quota_at ?? 0) - (a[1].claude_quota_at ?? 0));
+  if (!tries.length) return "pas encore mesuré : relance la commande de l’étage (« Relier mes agents ») sur la machine où tu utilises Claude Code";
+  const [machine, { claude_quota: status }] = tries[0];
+  if (status === "ok") return `mesure reçue de ${machine}, affichage au prochain état`;
+  if (status === "introuvable") return `Claude Code introuvable sur ${machine} (ni dans le PATH ni aux emplacements habituels)`;
+  if (status === "désactivé") return `mesure désactivée sur ${machine} (fichier sans-quota-claude)`;
+  if (status === "sans quota") return `Claude Code n’a pas donné de quota sur ${machine} (connexion par clé d’API plutôt qu’abonnement ?)`;
+  return `mesure impossible sur ${machine} · ${status}`;
+}
 // Quatre lignes : Claude 5 h, Claude semaine, ChatGPT 5 h, ChatGPT semaine (provider indique l'outil).
 function quotaRows(usage, now) {
   return ["claude", "chatgpt"].flatMap(provider =>
@@ -217,5 +230,5 @@ export {
   FLOOR_H, FLOOR_OF, GOLF_BUNKER, GOLF_GREEN, GOLF_HOLES, GOLF_MATS, GOLF_POND, GOLF_STANCE, GOLF_TABLES,
   GOLF_TEE, KEY, LANE, LIFT, ME, OPEN, P, PLACE_FR, REST_GROUPS, RES_SLOTS, S, SHARED, SHARED_SLOTS, SLOT_MOTION,
   STALLS, STATE_COLOR, STATE_FR, TENNIS_COURT, TENNIS_NPCS, TENNIS_ROWS, TENNIS_SEATS, TOOLS, VIP, around,
-  claudeTracked, clubAnimation, esc, hash, hm, keyOf, myApt, placeOf, quotaRemaining, quotaRows, rememberKey, slotOf, stateOf,
+  claudeQuotaWhy, claudeTracked, clubAnimation, esc, hash, hm, keyOf, myApt, placeOf, quotaRemaining, quotaRows, rememberKey, slotOf, stateOf,
 };
