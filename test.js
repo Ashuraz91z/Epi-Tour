@@ -7,7 +7,7 @@ import { execFile } from "node:child_process";
 import { promisify } from "node:util";
 import { fileURLToPath } from "node:url";
 import { test } from "node:test";
-import { createStore, describeTool, ingest, normalize, sanitizeProfile, snapshot } from "./core.js";
+import { createStore, describeTool, ingest, insightsOf, normalize, sanitizeProfile, snapshot } from "./core.js";
 import { officePublic, officeTierForLevel } from "./upgrades.js";
 import { openDb } from "./db.js";
 import { createApp, slugify, spectatorSnapshot } from "./penthouse.js";
@@ -549,6 +549,51 @@ test("Claude Code sur le web : script de démarrage, hook du conteneur, rien hor
     // Site injoignable : le script de démarrage ne bloque jamais la session.
     assert.equal((await spawnAsync("sh", [setup], { env: { ...env, PENTHOUSE_URL: "http://127.0.0.1:9" } })).status, 0);
   } finally { app.close(); rmSync(home, { recursive: true, force: true }); }
+});
+
+test("stats des résidents : demandes, agents, actions, heures, outils, pic ; noms cachés aux spectateurs", async () => {
+  const store = createStore(), t0 = Date.parse("2026-11-05T09:15:00Z") / 1000; // 10 h 15 à Paris
+  const hook = (sid, e, extra = {}, dt = 0) => ingest(store, "claude", "mac", { hook_event_name: e, session_id: sid, cwd: "/w/Epi-Tour", ...extra }, t0 + dt);
+  hook("a", "UserPromptSubmit", { prompt: "x" });
+  hook("a", "PreToolUse", { tool_name: "Bash", tool_input: { command: "npm test" } }, 10);
+  hook("a", "PreToolUse", { tool_name: "Edit" }, 20);
+  hook("b", "UserPromptSubmit", { prompt: "y", model: "opus" }, 30);
+  hook("b", "PreToolUse", { tool_name: "Bash" }, 40);
+  // Relevé du lecteur de journaux : demandes et outils comptés par la machine.
+  ingest(store, "codex", "mac", { hook_event_name: "PreToolUse", session_id: "c", sync: true, observed_at: t0 + 3600, prompts: 3, actions: 5, tools: { shell: 4, apply_patch: 1 }, cwd: "/w/AI-Trade" }, t0 + 3601);
+  const { today, week } = insightsOf(store, t0 + 3700);
+  assert.equal(today.prompts, 5);
+  assert.equal(today.actions, 8);
+  assert.equal(today.agents, 3);
+  assert.equal(today.peak, 2, "deux agents au travail en même temps");
+  assert.equal(today.hours[10], 5, "activité de 10 h (Paris)");
+  assert.equal(today.hours[11], 5);
+  assert.deepEqual(today.tools[0], ["shell", 4]);
+  assert.deepEqual(today.tools[1], ["Bash", 2]);
+  assert.equal(today.projectCount, 2);
+  assert.equal(today.first, t0);
+  assert.equal(week.length, 1);
+  assert.equal(snapshot(store, t0 + 3700).insights.today.prompts, 5, "dans l'état envoyé aux résidents");
+  // Spectateur : les nombres, pas les noms de projets ni de modèles.
+  const { spectatorSnapshot } = await import("./penthouse.js");
+  const view = spectatorSnapshot({ slug: "l", name: "L", created: 1, sessions: [], insights: snapshot(store, t0 + 3700).insights });
+  assert.equal(view.insights.today.prompts, 5);
+  assert.deepEqual(view.insights.today.projects, []);
+  assert.deepEqual(view.insights.today.models, []);
+  assert.ok(!JSON.stringify(view).includes("Epi-Tour") && !JSON.stringify(view).includes("opus"));
+  // Huit jours gardés au plus.
+  for (let d = 1; d <= 10; d++) ingest(store, "claude", "mac", { hook_event_name: "UserPromptSubmit", session_id: "z" + d }, t0 + d * 86400);
+  assert.equal(Object.keys(store.daily).length, 8);
+  // Affichage : la carte du résident et les faits du jour.
+  const { insightsPanelHtml, dayFactsHtml } = await import("./public/ui/insights.js");
+  const apt = { slug: "lucas", name: "Lucas", insights: { today, week } };
+  const html = insightsPanelHtml(apt, String, { mine: true });
+  assert.match(html, /Ta journée/); assert.match(html, /5<\/b><small>demandes/); assert.match(html, /Heure de pointe : <b>10 h/); assert.match(html, /Outil star : <b>shell/);
+  const facts = dayFactsHtml([apt, { slug: "q", name: "Quentin", insights: { today: { ...today, prompts: 9, first: t0 - 3600 } } }], String, { me: "lucas" });
+  assert.match(facts, /Le plus de demandes.*Quentin<\/b> · 9/s);
+  assert.match(facts, /Lève-tôt.*Quentin/s);
+  assert.match(facts, /Tout le penthouse.*14 demandes/s);
+  assert.equal(dayFactsHtml([{ name: "Vide", insights: { today: null } }], String), "");
 });
 
 test("journaux : un relevé ancien ne remplace pas une autorisation récente", () => {
@@ -1576,6 +1621,12 @@ codex=[{'timestamp':'2026-11-04T10:00:00Z','type':'response_item','payload':{'ty
  {'timestamp':'2026-11-04T10:00:01Z','type':'response_item','payload':{'type':'function_call_output','output':'SECRET'}},
  {'timestamp':'2026-11-04T10:00:02Z','type':'response_item','payload':{'type':'custom_tool_call','name':'apply_patch'}}]
 assert count('codex',[json.dumps(r) for r in codex],0)[0]==2
+activity=runpy.run_path(sys.argv[1])['count_activity']
+rows=[{'timestamp':'2026-11-04T10:00:00Z','type':'user','message':{'content':'Ajoute les stats SECRET'}}]+claude+[{'timestamp':'2026-11-04T10:00:10Z','type':'assistant','message':{'content':[{'type':'tool_use','name':'mcp__github__create_pr'}]}}]
+n,latest,prompts,tools=activity('claude',[json.dumps(r) for r in rows],0)
+assert (n,prompts)==(4,1), (n,prompts)
+assert tools=={'Bash':1,'Edit':1,'Read':1,'mcp · github':1}, tools
+assert 'SECRET' not in json.dumps(tools)
 `;
   await run("python3", ["-c", python, script]);
   const store = createStore();

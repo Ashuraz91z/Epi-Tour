@@ -13,7 +13,7 @@ import { buyItem, onIngestEconomy, playCasino, playSport, questReward, setSubscr
 
 const ROOT = dirname(fileURLToPath(import.meta.url));
 // Version affichée dans le menu « ⋯ » : permet de vérifier que le site a bien repris la dernière version.
-export const VERSION = "2026-11-05.10";
+export const VERSION = "2026-11-05.11";
 const MAX_BODY = 256 * 1024;
 const MAX_APARTMENTS = 50;
 const acceptsGzip = req => /(?:^|,)\s*gzip\s*(?:,|$)/i.test(req.headers["accept-encoding"] ?? "");
@@ -192,6 +192,8 @@ export function spectatorSnapshot(a) {
     sessions: a.sessions.map(s => ({ src: s.src, host: sha(s.host).slice(0, 12), sid: s.sid,
       state: s.state, started: s.started, updated: s.updated, task: "", action: "" })),
     economy: spectatorEconomy(a.economy),
+    // Stats : les nombres oui, les noms de projets et de modèles non (comme pour les sessions).
+    insights: a.insights ? { today: a.insights.today && { ...a.insights.today, models: [], projects: [] }, week: a.insights.week } : null,
     feed: [], usage, seen: {}, today: {}, health: {} };
 }
 

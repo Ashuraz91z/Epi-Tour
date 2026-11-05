@@ -69,6 +69,7 @@ Interface (`public/`, modules ES chargés tels quels, three.js 0.170 par le CDN)
 | `tour/navigation.js` | étage regardé, visite spectateur, clics |
 | `ui/panel.js` | panneau, alertes, télécommande, dialogues |
 | `ui/studio.js` | « Mon étage » : presets et studio de la salle |
+| `ui/insights.js` | stats des résidents : « Ta journée » et « Faits du jour » |
 | `ui/session.js` | entrée, flux temps réel, `tick()` |
 | `room-data.js`, `economy-data.js` | catalogues partagés avec le serveur |
 

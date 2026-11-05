@@ -122,9 +122,19 @@ def parse(source, lines, share=False):
     return result
 
 
-def count_actions(source, lines, since):
-    """Nombre d'appels d'outils écrits après `since` (horodatage) : un simple compteur, aucun contenu lu."""
-    count, latest = 0, since
+def tool_label(name):
+    """Nom d'outil court pour les stats : « Bash », « Edit », « mcp · github » (jamais ses arguments)."""
+    name = str(name or '')
+    if name.startswith('mcp__'):
+        name = 'mcp · ' + (name.split('__')[1] if len(name.split('__')) > 1 else '')
+    return name[:40]
+
+
+def count_activity(source, lines, since):
+    """Depuis `since` (horodatage) : appels d'outils, demandes tapées et nom des outils appelés. De simples compteurs :
+    ni le contenu des demandes, ni les arguments ou résultats des outils. Renvoie (actions, dernier horodatage,
+    demandes, {outil: nombre})."""
+    count, latest, prompts, tools = 0, since, 0, {}
     for line in lines:
         try:
             row = json.loads(line)
@@ -137,14 +147,29 @@ def count_actions(source, lines, since):
             continue
         latest = max(latest, at)
         payload = row.get('payload') if isinstance(row.get('payload'), dict) else {}
+        if prompt_text(source, row, payload):
+            prompts += 1
+        called = []
         if source == 'codex':
             if row.get('type') == 'response_item' and payload.get('type') in ('function_call', 'custom_tool_call'):
-                count += 1
+                called.append(payload.get('name'))
         elif row.get('type') == 'assistant' and isinstance(row.get('message'), dict):
             blocks = row['message'].get('content')
             if isinstance(blocks, list):
-                count += sum(1 for block in blocks if isinstance(block, dict) and block.get('type') == 'tool_use')
-    return min(count, 200), latest
+                called += [block.get('name') for block in blocks if isinstance(block, dict) and block.get('type') == 'tool_use']
+        count += len(called)
+        for name in called:
+            label = tool_label(name)
+            if label:
+                tools[label] = tools.get(label, 0) + 1
+    top = dict(sorted(tools.items(), key=lambda kv: -kv[1])[:10])
+    return min(count, 200), latest, min(prompts, 100), top
+
+
+def count_actions(source, lines, since):
+    """Nombre d'appels d'outils écrits après `since` (horodatage) : un simple compteur, aucun contenu lu."""
+    actions, latest, _, _ = count_activity(source, lines, since)
+    return actions, latest
 
 
 def send(site, key, host, source, payload):
@@ -412,11 +437,15 @@ def main():
                         file.seek(max(0, size - 300000))
                         lines = [header] + file.readlines()
                     payload = parse(source, lines, share)
-                    actions, latest = count_actions(source, lines, since)
+                    actions, latest, prompts, tools = count_activity(source, lines, since)
                     if payload.get('session_id') and payload.get('observed_at', 0) > time.time() - 3600:
                         payload['sync'] = True
                         if actions:
                             payload['actions'] = actions
+                        if prompts:
+                            payload['prompts'] = prompts
+                        if tools:
+                            payload['tools'] = tools
                         send(site, key, host, source, payload)
                         count += 1
                     current[name] = signature + [latest]
