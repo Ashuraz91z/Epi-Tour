@@ -38,6 +38,9 @@ controls.maxPolarAngle = Math.PI * 0.49;
 controls.minDistance = 7;
 controls.maxDistance = 60; // la ville commence à 72 : la caméra n'entre jamais dans un immeuble
 controls.target.set(0, 0.6, 0);
+// La molette zoome vers le point sous la souris (pas vers le centre de l'étage) ; le suivi d'étage garde ce cadrage
+// (animateCamera), et le point visé reste dans l'emprise de l'étage.
+controls.zoomToCursor = true;
 
 scene.add(new THREE.HemisphereLight("#8ea6ff", "#20160f", 0.9));
 scene.add(new THREE.AmbientLight("#ffffff", 0.25));

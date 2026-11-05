@@ -4,7 +4,8 @@ import * as THREE from "three";
 import { postGame, showCelebrations } from "../gamify-ui.js";
 import { parseFloorKey } from "../wings-client.js";
 import { world } from "./state.js";
-import { $, ME, claudeTracked, esc, myApt, quotaRows, stateOf } from "./base.js";
+import { $, ME, STATE_COLOR, claudeTracked, esc, myApt, quotaRows, stateOf } from "./base.js";
+import { dayFactsChipsHtml, dayStripHtml } from "../ui/insights.js";
 import { agents, camera, clock, floors, renderer } from "./engine.js";
 import { floorShown, productive } from "./mode.js";
 import { tvFrame, tvPageUrl } from "./floors/shared.js";
@@ -16,21 +17,62 @@ const ray = new THREE.Raycaster(), mouse = new THREE.Vector2();
 // Mode écran (?ecran) : tourne doucement et change d'étage toutes les 25 s.
 const autoTour = new URLSearchParams(location.search).has("ecran");
 let tourPausedAt = 0, dashboardContent = "", captionContent = "", activeTourStep = null;
+// États des agents d'un résident : pastilles de couleur et nombres (au travail, accord, en attente, en pause).
+function statesHtml(sessions, now) {
+  const by = st => sessions.filter(s => stateOf(s, now) === st).length;
+  return [["travaille", "au travail"], ["autorisation", "attend un accord"], ["attend", "attend la suite"], ["fini", "en pause"]]
+    .map(([st, label]) => [by(st) + (st === "fini" ? by("silencieux") : 0), label, STATE_COLOR[st]])
+    .filter(([n], k) => n || k === 0)
+    .map(([n, label, color]) => `<span><i class="d" style="background:${color}"></i><b>${n}</b> ${label}</span>`).join("");
+}
+// Quotas en ligne compacte : Claude (ou « non suivi ») et ChatGPT, 5 h et semaine.
+function quotasHtml(usage, now) {
+  const claude = claudeTracked(usage);
+  const rows = quotaRows(usage, now).filter(q => claude || q.provider !== "claude");
+  return `${claude ? "" : `<div class="quota-row claude untracked"><div><span>Claude</span><b>non suivi</b></div></div>`}${rows.map(q => `<div class="quota-row ${q.provider}"><div><span>${q.provider === "claude" ? "Claude" : "ChatGPT"} · ${q.label === "5 HEURES" ? "5 h" : "semaine"}</span><b>${q.remaining === null ? "—" : q.remaining + " %"}</b></div><div class="quota-track"><i style="width:${q.remaining ?? 0}%"></i></div><small>${esc(q.reset)}</small></div>`).join("")}`;
+}
+// Fiche de l'étage visité, en bas à gauche : qui, ses agents, sa journée ; pour un étage commun, qui s'y trouve.
+function floorCardHtml(key) {
+  const f = floors.get(key), now = world.data.now;
+  if (!f) return "";
+  const shown = world.order.filter(floorShown), kicker = `Étage ${shown.indexOf(key) + 1} / ${shown.length}`;
+  if (f.kind === "resident") {
+    const a = world.data.apartments.find(x => x.slug === f.residentSlug);
+    if (!a) return "";
+    const title = !productive() && a.economy?.title ? `${a.economy.title.icon ?? ""} ${a.economy.title.title ?? ""}`.trim() : "";
+    return `<p class="kicker">${kicker}${f.wingId !== "work" ? " · " + esc(f.wing?.name ?? "") : ""}</p><h2>${esc(a.name)}</h2>
+      ${title || a.profile?.tagline ? `<p class="sfc-sub">${esc([title, a.profile?.tagline].filter(Boolean).join(" · "))}</p>` : ""}
+      <p class="sfc-states">${statesHtml(a.sessions, now)}</p>${dayStripHtml(a)}`;
+  }
+  const here = [...agents.values()].filter(g => g.userData.floor === key), byRes = new Map();
+  for (const g of here) byRes.set(g.userData.apt.name, (byRes.get(g.userData.apt.name) ?? 0) + 1);
+  return `<p class="kicker">${kicker} · ${esc(f.def.kicker)}</p><h2>${f.def.icon} ${esc(f.name)}</h2>
+    <p class="sfc-states"><span><b>${here.length}</b> agent${here.length > 1 ? "s" : ""} ici</span></p>
+    ${byRes.size ? `<p class="sfc-sub">${[...byRes].sort((x, y) => y[1] - x[1]).map(([n, c]) => `${esc(n)} · ${c}`).join("   ")}</p>` : `<p class="sfc-sub">Personne pour l’instant : les agents viennent ici en pause.</p>`}`;
+}
+let floorCardContent = "";
 function updateSpectatorView(step) {
   activeTourStep = step;
   $("#spectatorDashboard").hidden = step.kind !== "dashboard";
-  const title = step.kind === "dashboard" ? `Usages de tous · ${step.page + 1}/${step.pages}`
+  // Légende : l'étape, le temps restant et une barre de progression.
+  const title = step.kind === "dashboard" ? `La journée de chacun · ${step.page + 1}/${step.pages}`
     : step.kind === "floor" ? floors.get(step.floor)?.name ?? "Étage" : step.kind === "agents" ? "Écran des agents" : "Écran des usages";
-  const caption = `${title} · suite dans ${step.remaining} s`;
-  if (caption !== captionContent) { $("#tourCaption").textContent = caption; captionContent = caption; }
+  const done = step.seconds ? Math.round((step.seconds - step.remaining) / step.seconds * 100) : 0;
+  const caption = `<span>${esc(title)} · suite dans ${step.remaining} s</span><i class="tour-progress" style="width:${done}%"></i>`;
+  if (caption !== captionContent) { $("#tourCaption").innerHTML = caption; captionContent = caption; }
+  const card = step.kind === "floor" ? floorCardHtml(step.floor) : "";
+  $("#spectatorFloorCard").hidden = !card;
+  if (card !== floorCardContent) { $("#spectatorFloorCard").innerHTML = card; floorCardContent = card; }
   if (step.kind !== "dashboard") return;
-  const list = [...world.data.apartments].sort((a, b) => a.created - b.created || a.name.localeCompare(b.name, "fr")).slice(step.page * step.pageSize, (step.page + 1) * step.pageSize);
-  const rows = list.map(a => ({ name: a.name, active: a.sessions.filter(s => stateOf(s, world.data.now) === "travaille").length, quotas: quotaRows(a.usage, world.data.now), claude: claudeTracked(a.usage) }));
-  const content = JSON.stringify([rows, step.page, step.pages]);
-  if (content === dashboardContent) return;
-  dashboardContent = content;
-  $("#spectatorDashboard").innerHTML = `<div class="dashboard-heading"><div><p class="kicker">Penthouse · vue d’ensemble</p><h1>Les usages de chacun</h1><p class="dashboard-lead">Quotas restants, par résident et par outil</p></div><span class="dashboard-page">${step.page + 1} / ${step.pages}</span></div>
-    <div class="usage-grid">${rows.map(a => `<article class="usage-card"><header><span class="resident-avatar" aria-hidden="true">${esc(a.name.slice(0, 1).toUpperCase())}</span><div><h2>${esc(a.name)}</h2><span>${a.active} agent${a.active > 1 ? "s" : ""} au travail</span></div></header>${a.claude ? "" : `<div class="quota-row claude untracked"><div><span>Claude</span><b>non suivi</b></div><small>Mesuré après avoir relancé la commande de l’étage</small></div>`}${a.quotas.filter(q => a.claude || q.provider !== "claude").map(q => `<div class="quota-row ${q.provider}"><div><span>${q.provider === "claude" ? "Claude" : "ChatGPT"} · ${q.label === "5 HEURES" ? "5 h" : "semaine"}</span><b>${q.remaining === null ? "—" : q.remaining + " %"}</b></div><div class="quota-track"><i style="width:${q.remaining ?? 0}%"></i></div><small>${esc(q.reset)}</small></div>`).join("")}</article>`).join("") || '<p>Aucun résident pour le moment.</p>'}</div>`;
+  const now = world.data.now, all = [...world.data.apartments].sort((a, b) => a.created - b.created || a.name.localeCompare(b.name, "fr"));
+  const list = all.slice(step.page * step.pageSize, (step.page + 1) * step.pageSize);
+  const html = `<div class="dashboard-heading"><div><p class="kicker">Penthouse · en direct</p><h1>La journée de chacun</h1><p class="dashboard-lead">Agents, activité du jour et quotas restants, par résident</p></div><span class="dashboard-page">${step.page + 1} / ${step.pages}</span></div>
+    ${dayFactsChipsHtml(all, esc)}
+    <div class="usage-grid">${list.map(a => `<article class="usage-card day-card"><header><span class="resident-avatar" aria-hidden="true">${esc(a.name.slice(0, 1).toUpperCase())}</span><div><h2>${esc(a.name)}</h2><p class="sfc-states">${statesHtml(a.sessions, now)}</p></div></header>
+      ${dayStripHtml(a)}<div class="card-quotas">${quotasHtml(a.usage, now)}</div></article>`).join("") || '<p>Aucun résident pour le moment.</p>'}</div>`;
+  if (html === dashboardContent) return;
+  dashboardContent = html;
+  $("#spectatorDashboard").innerHTML = html;
 }
 $("#tourPause").addEventListener("click", () => {
   world.tourPaused = !world.tourPaused;

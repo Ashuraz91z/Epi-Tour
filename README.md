@@ -102,7 +102,7 @@ quand même, sans suivi.
 
 ### Présentation en boucle
 
-Le mode spectateur démarre automatiquement : dashboard des quotas de tous les résidents (pages de 14 s, adaptées à l’écran), chaque étage pendant 12 s, panneau des agents pendant 10 s, puis panneau des usages assez longtemps pour parcourir chaque résident. Retour au dashboard à la fin. Caméra cadrée sur chaque panneau. Bouton Pause/Reprendre ; navigation manuelle pendant la pause. Les transitions caméra sont instantanées si le navigateur demande une réduction des animations. Les quotas absents ou expirés sont affichés explicitement, sans estimation.
+Le mode spectateur démarre automatiquement : tableau « La journée de chacun » (pages de 14 s, adaptées à l’écran : faits du jour en pastilles, puis par résident l’état de ses agents, demandes, agents, actions, temps de travail, tâches livrées, activité heure par heure et quotas), chaque étage pendant 12 s avec sa fiche en bas à gauche (résident, titre, agents, journée ; pour un étage commun, qui s’y trouve), panneau des agents pendant 10 s, puis panneau des usages assez longtemps pour parcourir chaque résident. La légende montre une barre de progression ; les bulles des robots disent l’outil et l’état, le fil « En direct » l’état des agents (les actions restent filtrées). Retour au dashboard à la fin. Caméra cadrée sur chaque panneau. Bouton Pause/Reprendre ; navigation manuelle pendant la pause. Les transitions caméra sont instantanées si le navigateur demande une réduction des animations. Les quotas absents ou expirés sont affichés explicitement, sans estimation.
 
 ## App Mac (Penthouse.dmg)
 

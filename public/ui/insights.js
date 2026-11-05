@@ -53,29 +53,54 @@ export function insightsPanelHtml(apartment, esc, { mine = false } = {}) {
 
 // Faits du jour du penthouse : qui a le plus demandé, la plus grosse équipe, le plus gros pic, le lève-tôt, le
 // couche-tard, l'outil le plus utilisé de tout le monde. Seulement ce qui a eu lieu aujourd'hui.
-export function dayFactsHtml(apartments, esc, { me = null } = {}) {
+// Renvoie des lignes { icon, title, who (résident ou null), value (texte) }, affichées en liste ou en pastilles.
+export function dayFacts(apartments) {
   const list = (apartments ?? []).filter(a => a?.insights?.today);
-  if (!list.length) return "";
+  if (!list.length) return [];
   const best = (value, pick = Math.max) => {
     const rows = list.map(a => [a, value(a.insights.today)]).filter(([, v]) => Number.isFinite(v) && v > 0);
     if (!rows.length) return null;
     const target = pick(...rows.map(([, v]) => v));
     return rows.find(([, v]) => v === target);
   };
-  const who = a => `<b>${esc(a.name)}</b>${a.slug === me ? " <small>(toi)</small>" : ""}`;
   const rows = [];
-  const talk = best(t => t.prompts); if (talk) rows.push(["💬", "Le plus de demandes", `${who(talk[0])} · ${nf.format(talk[1])}`]);
-  const team = best(t => t.agents); if (team) rows.push(["🤖", "La plus grosse équipe", `${who(team[0])} · ${plural(team[1], "agent", "agents")}`]);
-  const peak = best(t => t.peak); if (peak && peak[1] >= 2) rows.push(["⚡", "Le plus en parallèle", `${who(peak[0])} · ${nf.format(peak[1])} en même temps`]);
-  const early = best(t => t.first, Math.min); if (early) rows.push(["🌅", "Lève-tôt", `${who(early[0])} · dès ${hhmm(early[1])}`]);
-  const late = best(t => t.last); if (late) rows.push(["🌙", "Dernier actif", `${who(late[0])} · ${hhmm(late[1])}`]);
+  const talk = best(t => t.prompts); if (talk) rows.push({ icon: "💬", title: "Le plus de demandes", who: talk[0], value: nf.format(talk[1]) });
+  const team = best(t => t.agents); if (team) rows.push({ icon: "🤖", title: "La plus grosse équipe", who: team[0], value: plural(team[1], "agent", "agents") });
+  const peak = best(t => t.peak); if (peak && peak[1] >= 2) rows.push({ icon: "⚡", title: "Le plus en parallèle", who: peak[0], value: `${nf.format(peak[1])} en même temps` });
+  const early = best(t => t.first, Math.min); if (early) rows.push({ icon: "🌅", title: "Lève-tôt", who: early[0], value: `dès ${hhmm(early[1])}` });
+  const late = best(t => t.last); if (late) rows.push({ icon: "🌙", title: "Dernier actif", who: late[0], value: hhmm(late[1]) });
   const tools = {};
   for (const a of list) for (const [name, n] of a.insights.today.tools ?? []) tools[name] = (tools[name] ?? 0) + n;
   const star = Object.entries(tools).sort((x, y) => y[1] - x[1])[0];
-  if (star) rows.push(["🛠️", "Outil du penthouse", `<b>${esc(star[0])}</b> · ${nf.format(star[1])}×`]);
+  if (star) rows.push({ icon: "🛠️", title: "Outil du penthouse", who: null, value: `${star[0]} · ${nf.format(star[1])}×` });
   const total = list.reduce((n, a) => n + (a.insights.today.prompts ?? 0), 0);
-  if (total) rows.push(["🏢", "Tout le penthouse", `${plural(total, "demande", "demandes")} aujourd’hui`]);
+  if (total) rows.push({ icon: "🏢", title: "Tout le penthouse", who: null, value: `${plural(total, "demande", "demandes")} aujourd’hui` });
+  return rows;
+}
+
+export function dayFactsHtml(apartments, esc, { me = null } = {}) {
+  const rows = dayFacts(apartments);
   if (!rows.length) return "";
-  return `<section class="day-facts" aria-label="Faits du jour"><h4>Faits du jour</h4><ul>${rows.map(([icon, title, value]) =>
-    `<li><span class="fact-k"><span aria-hidden="true">${icon}</span> ${title}</span><span class="fact-v">${value}</span></li>`).join("")}</ul></section>`;
+  const who = a => a ? `<b>${esc(a.name)}</b>${a.slug === me ? " <small>(toi)</small>" : ""} · ` : "";
+  return `<section class="day-facts" aria-label="Faits du jour"><h4>Faits du jour</h4><ul>${rows.map(r =>
+    `<li><span class="fact-k"><span aria-hidden="true">${r.icon}</span> ${r.title}</span><span class="fact-v">${who(r.who)}${r.who ? esc(r.value) : `<b>${esc(r.value)}</b>`}</span></li>`).join("")}</ul></section>`;
+}
+
+// Pastilles des faits du jour, pour le tableau de la visite spectateur.
+export function dayFactsChipsHtml(apartments, esc) {
+  const rows = dayFacts(apartments);
+  return rows.length ? `<div class="fact-chips">${rows.map(r => `<span class="fact-chip" title="${esc(r.title)}"><span aria-hidden="true">${r.icon}</span> <small>${esc(r.title)}</small> ${r.who ? `<b>${esc(r.who.name)}</b> · ` : ""}${esc(r.value)}</span>`).join("")}</div>` : "";
+}
+
+// Version compacte de la journée d'un résident (tableau et fiche d'étage de la visite) : chiffres et barres des heures.
+export function dayStripHtml(apartment) {
+  const t = apartment?.insights?.today, w = apartment?.economy?.work?.today;
+  const minutes = Number(w?.minutes) || 0, deliveries = Number(w?.deliveries) || 0;
+  const stats = [
+    [t?.prompts ?? 0, "demandes"], [t?.agents ?? 0, "agents"], [t?.actions ?? 0, "actions"],
+    [minutes >= 60 ? `${Math.floor(minutes / 60)} h ${String(Math.round(minutes % 60)).padStart(2, "0")}` : `${Math.round(minutes)} min`, "de travail"], [deliveries, "livrées"],
+  ].map(([v, l]) => `<span><b>${typeof v === "number" ? nf.format(v) : v}</b><small>${l}</small></span>`).join("");
+  const hours = t?.hours ?? [], max = Math.max(0, ...hours);
+  const bars = max ? `<div class="strip-bars" aria-hidden="true">${hours.map(v => `<i style="height:${v ? Math.max(10, Math.round(v / max * 100)) : 0}%"></i>`).join("")}</div>` : `<div class="strip-bars empty"><small>pas encore d’activité aujourd’hui</small></div>`;
+  return `<div class="day-strip"><div class="strip-stats">${stats}</div>${bars}</div>`;
 }
