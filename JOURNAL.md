@@ -3,6 +3,17 @@
 Chaque IA ajoute **en haut** une entrée par session de travail (modèle et règles dans `AGENTS.md`, section 3).
 Le plus récent d'abord. On n'efface pas les entrées des autres.
 
+## 2026-11-05 · Lucas · branche Lucas · Claude Code (4)
+**Fait :** deux modes, choisis dans le menu « ⋯ » et gardés sur l'appareil : complet (tout) et productif (gamification
+masquée : XP, P$, missions, Entreprise, activités, paliers, rôles et salaires, Fortune, toasts, célébrations ; étages Casino,
+Tennis et Golf retirés de la liste, du clavier et de la visite ; « Travail du jour » réduit au temps, aux tâches et aux agents).
+**Fichiers :** `public/tour/mode.js` (nouveau), `public/ui/panel.js`, `public/tour/navigation.js` (`stepFocus`,
+`keepFocusShown`), `public/tour/animate.js`, `public/tour/tower.js`, `public/tour/work-fx.js`, `public/work-ui.js`,
+`public/index.html`, `public/style.css`, `test.js`.
+**À savoir :** rien n'est supprimé côté serveur. Tout nouvel élément de jeu doit tester `productive()` (règle ajoutée dans
+`AGENTS.md`) ; un nouvel étage de jeu va dans `GAME_FLOORS`. Changer d'étage au clavier passe par `stepFocus()`.
+**Reste à faire :** —
+
 ## 2026-11-05 · Lucas · branche Lucas · Claude Code (3)
 **Fait :** « Relier mes agents » demande si la machine a déjà été reliée (autre clé ou autre étage) ; « oui » ajoute
 `--replace` (Windows : `-Replace`) à la commande, avec sauvegarde de l'ancienne configuration.

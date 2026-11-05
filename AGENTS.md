@@ -55,6 +55,7 @@ Interface (`public/`, modules ES chargés tels quels, three.js 0.170 par le CDN)
 |---|---|
 | `app.js` | point d'entrée : charge les modules dans l'ordre et démarre |
 | `tour/state.js` | `world` : le seul état partagé modifiable (étage regardé, état reçu, ordre des étages…) |
+| `tour/mode.js` | mode complet ou productif choisi sur l'appareil : `productive()`, `floorShown()` |
 | `tour/base.js` | outils, constantes, plan des étages et places des agents (pas de 3D) |
 | `tour/engine.js` | rendu, scène, caméra, matériaux `mat()`/`glow()`, briques `box`/`cyl`/`sign`/`label`, fusion `bakeStatic` |
 | `tour/kit.js` | géométries et textures partagées par les étages |
@@ -87,6 +88,9 @@ Interface (`public/`, modules ES chargés tels quels, three.js 0.170 par le CDN)
   d'un étage doit être rangé dans un champ `f.*` de l'étage ou passé à `live(...)`, sinon `bakeStatic` le fusionne et il
   reste figé. Rien ne tourne sur un étage qu'on ne regarde pas. Ne change pas la résolution, l'antialiasing ni les
   réglages de rendu pour gagner des images/s.
+- **Mode productif** : tout nouvel élément de jeu visible (XP, P$, missions, mini-jeu, célébration, étage de jeu) doit
+  être masqué quand `productive()` est vrai (`tour/mode.js`) ; un nouvel étage de jeu s'ajoute à `GAME_FLOORS`. Masquer,
+  jamais supprimer : le serveur continue de tout calculer.
 - **Serveur** : le client n'envoie que des intentions ; tout ce qui touche aux P$, à l'XP et au profil est vérifié côté
   serveur, avec une liste de valeurs connues.
 - **Tests** : `npm test` doit passer avant chaque push. Ajoute un test pour toute règle serveur nouvelle. Les tests ne

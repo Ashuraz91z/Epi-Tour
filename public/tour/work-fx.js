@@ -6,6 +6,7 @@ import { world } from "./state.js";
 import { esc } from "./base.js";
 import { LightSpot, agents, box, clock, floors, glow, label, live, mat, textTexture } from "./engine.js";
 import { canvasPanel, reducedMotion } from "./kit.js";
+import { productive } from "./mode.js";
 
 // ---------- le travail en 3D : célébrations et tableau de bord ----------
 // Le serveur compte le travail (economy.work) ; la tour le fête. Un nouvel exploit dans work.events d'un résident (id
@@ -30,7 +31,7 @@ function trackWorkEvents(list, now) {
   }
 }
 function celebrateWork(a, e) {
-  if (reducedMotion.matches || document.hidden) return;
+  if (reducedMotion.matches || document.hidden || productive()) return; // mode productif : pas de fête
   const f = floors.get(world.order[world.focus]);
   if (!f || f.kind !== "resident" || f.residentSlug !== a.slug) return; // l'étage de ce résident n'est pas regardé
   const t = clock.elapsedTime;
@@ -201,13 +202,14 @@ function drawFlame(x, cx, cy, s, color) {
   x.bezierCurveTo(cx - s * 0.1, cy - s * 0.1, cx + s * 0.05, cy - s * 0.4, cx, cy - s);
   x.fill();
 }
+// Mode productif : temps de travail, tâches livrées et agents au travail, sans objectifs, série ni prime.
 function drawWorkBoard(p, apt) {
-  const w = apt?.economy?.work ?? null, full = Array.isArray(w?.objectives);
+  const zen = productive(), w = apt?.economy?.work ?? null, full = Array.isArray(w?.objectives) && !zen;
   const today = w?.today ?? {}, team = w?.team ?? {}, streak = w?.streak ?? {};
   const goal = full ? currentObjective(w.objectives) : null;
   const minutes = Math.round(Number(today.minutes) || 0), deliveries = Number(today.deliveries) || 0;
   const active = Number(team.active) || 0, bonus = Number(team.bonus) || 0, days = Number(streak.days) || 0;
-  const key = JSON.stringify([!!w, full, goal && [goal.id, goal.title, objectiveProgressText(goal), objectivePct(goal)], full && w.objectives.every(o => o.done),
+  const key = JSON.stringify([zen, !!w, full, goal && [goal.id, goal.title, objectiveProgressText(goal), objectivePct(goal)], full && w.objectives.every(o => o.done),
     minutes, deliveries, active, bonus, days, !!streak.today, Number(streak.bonus) || 0]);
   if (key === p.key) return;
   p.key = key;
@@ -220,9 +222,11 @@ function drawWorkBoard(p, apt) {
   x.fillStyle = gold; x.font = "700 46px Sora, sans-serif"; x.fillText("TRAVAIL DU JOUR", 50, 72);
   // Série en haut à droite : flamme vive si la journée compte déjà, terne sinon.
   const lit = days > 0 && (streak.today || !full);
-  drawFlame(x, W - 210, 72, 30, lit ? "#ff9a3c" : "#4a3a2a");
-  x.textAlign = "right"; x.fillStyle = lit ? "#ffd2a0" : "#8a93a6"; x.font = "800 50px Sora, sans-serif";
-  x.fillText(`${days} j`, W - 50, 74);
+  if (!zen) {
+    drawFlame(x, W - 210, 72, 30, lit ? "#ff9a3c" : "#4a3a2a");
+    x.textAlign = "right"; x.fillStyle = lit ? "#ffd2a0" : "#8a93a6"; x.font = "800 50px Sora, sans-serif";
+    x.fillText(`${days} j`, W - 50, 74);
+  }
   x.fillStyle = "#26324a"; x.fillRect(50, 120, W - 100, 3);
   x.textAlign = "left";
   if (!w) {
@@ -246,12 +250,13 @@ function drawWorkBoard(p, apt) {
     x.fillStyle = "#f4f6fb"; x.font = "800 96px Sora, sans-serif"; x.fillText(workDuration(minutes), 50, 280, W - 100);
   }
   // Trois tuiles : tâches livrées, agents au travail (et prime d'équipe), série.
+  const people = active === 1 ? "agent" : active ? "agents" : "personne";
   const tiles = [
     ["TÂCHES LIVRÉES", String(deliveries), deliveries ? "aujourd'hui" : "pas encore", "#7ee0b0"],
-    ["AU TRAVAIL", String(active), bonus > 0 ? `prime ${bonusText(bonus)}` : active === 1 ? "agent" : active ? "agents" : "personne", bonus > 0 ? "#ffd76a" : "#7ec3f0"],
-    ["SÉRIE", `${days} j`, Number(streak.bonus) > 0 ? `salaire ${bonusText(streak.bonus)}` : streak.today ? "jour compté" : "≥ 1 h par jour", "#ff9a3c"],
+    ["AU TRAVAIL", String(active), bonus > 0 && !zen ? `prime ${bonusText(bonus)}` : people, bonus > 0 && !zen ? "#ffd76a" : "#7ec3f0"],
+    ...(zen ? [] : [["SÉRIE", `${days} j`, Number(streak.bonus) > 0 ? `salaire ${bonusText(streak.bonus)}` : streak.today ? "jour compté" : "≥ 1 h par jour", "#ff9a3c"]]),
   ];
-  const tw = (W - 100 - 40) / 3;
+  const tw = (W - 100 - 20 * (tiles.length - 1)) / tiles.length;
   tiles.forEach(([title, value, sub, color], k) => {
     const tx = 50 + k * (tw + 20), ty = 420;
     x.fillStyle = "#141e33"; x.beginPath(); x.roundRect(tx, ty, tw, 250, 18); x.fill();

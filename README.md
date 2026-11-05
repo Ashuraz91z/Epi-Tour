@@ -57,6 +57,17 @@ Sur Mac, arrêt du suivi : `launchctl bootout gui/$(id -u)/xyz.ashuraz.penthouse
 
 Hermes/n8n se branchent sur leur serveur, avec les procédures du panneau ; ils ne sont pas installés automatiquement par cette commande. Conserver les ponts existants. Aucun outil réellement installé sur les machines de Lucas pendant les tests : HOME et planificateurs isolés.
 
+## Mode complet et mode productif
+
+Menu « ⋯ » › « ⚡ Mode productif (sans le jeu) » / « 🎮 Mode complet (avec le jeu) ». Le choix est gardé sur l'appareil
+(`localStorage`, `penthouse.mode`) ; il vaut aussi pour les spectateurs et le mode écran. **Complet** (par défaut) : tout,
+gamification comprise. **Productif** : barre d'XP, portefeuille et événement du jour, boutons Missions et Entreprise,
+activités à XP des ailes et des étages communs, paliers d'aménagement, rôles et salaires des agents, classement Fortune,
+toasts et célébrations (sauts, confettis) masqués ; les étages Casino, Tennis et Golf sortent de la liste, de la navigation
+au clavier et de la visite. Le panneau et le tableau du bureau ne gardent du « Travail du jour » que le temps de travail,
+les tâches livrées et les agents au travail. Rien n'est supprimé : le serveur calcule XP, salaires et missions pareil, et
+tout revient en repassant en mode complet. Code : `public/tour/mode.js` (`productive()`, `floorShown()`).
+
 ## Mode spectateur
 
 À l’entrée, « Regarder en spectateur », ou « Mode spectateur » depuis la tour : entrer **Penthouse**. Nom seul, sans code ni appartement créé. Le spectateur parcourt les résidents et les étages communs, voit les agents et leur état ; conversations, commandes, projets, modèles, machines et état des services sont filtrés côté serveur. Les pourcentages de quotas et dates de reset Claude/ChatGPT sont visibles en lecture seule. Cookie spectateur signé distinct du cookie résident ; `/api/tv`, les clés, les événements et la suppression restent protégés. « Quitter le mode spectateur » efface ce cookie. Revenir comme résident nécessite le code habituel. Une seule salle : le penthouse actuel.

@@ -14,7 +14,8 @@ import { drawArcade } from "./floors/resident.js";
 import { tickPrestige } from "./floors/prestige.js";
 import { stream, tvUrl } from "./floors/shared.js";
 import { stageFloor } from "./tower.js";
-import { autoTour, setFocus, updateSpectatorView } from "./navigation.js";
+import { autoTour, stepFocus, updateSpectatorView } from "./navigation.js";
+import { floorShown } from "./mode.js";
 import { render } from "../ui/panel.js";
 
 // ---------- animation ----------
@@ -213,8 +214,9 @@ function animateAgents(dt, t, focusKey) {
 function animateCamera(dt, t) {
   const visiting = world.data?.viewer?.role === "spectator" && !world.tourPaused;
   if (visiting) {
-    const step = spectatorStep(t - world.tourStarted, world.order, world.data.apartments.length, innerWidth < 760 ? 1 : innerWidth < 1100 ? 2 : Math.max(1, Math.min(6, Math.floor((innerHeight - 350) / 132))));
-    const desiredFocus = step.kind === "floor" ? step.index : 0;
+    // Visite : seulement les étages affichés (sans les étages de jeu en mode productif).
+    const step = spectatorStep(t - world.tourStarted, world.order.filter(floorShown), world.data.apartments.length, innerWidth < 760 ? 1 : innerWidth < 1100 ? 2 : Math.max(1, Math.min(6, Math.floor((innerHeight - 350) / 132))));
+    const desiredFocus = step.kind === "floor" ? world.order.indexOf(step.floor) : 0;
     if (world.focus !== desiredFocus) { world.focus = desiredFocus; render(); }
     const viewKey = `${step.kind}:${step.page}:${step.floor}:${step.remaining}`;
     if (viewKey !== world.lastTourViewKey || world.data !== world.lastTourData) {
@@ -233,7 +235,7 @@ function animateCamera(dt, t) {
     const fy = world.order.length ? floors.get(world.order[world.focus]).baseY : 0;
     const dy = (fy + 0.6 - controls.target.y) * Math.min(1, dt * 3);
     controls.target.y += dy; camera.position.y += dy;
-    if (autoTour && world.data?.viewer?.role !== "spectator" && t - world.lastMove > 25) { setFocus((world.focus + 1) % Math.max(world.order.length, 1)); world.lastMove = t; }
+    if (autoTour && world.data?.viewer?.role !== "spectator" && t - world.lastMove > 25) { stepFocus(1, true); world.lastMove = t; }
   }
   controls.autoRotate = autoTour && world.data?.viewer?.role !== "spectator";
   controls.autoRotateSpeed = 0.4;

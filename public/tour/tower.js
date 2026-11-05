@@ -17,6 +17,7 @@ import { endCelebration } from "./work-fx.js";
 import { buildResident, disposeFloor, removeFloor, themeKey } from "./floors/resident.js";
 import { buildShared } from "./floors/shared.js";
 import { withPreview } from "../ui/studio.js";
+import { productive } from "./mode.js";
 
 // Seuls l'étage regardé (et celui qui s'envole) sont dans la scène : les autres n'y sont plus du tout, ni parcourus
 // pour les matrices, ni par les moteurs d'étiquettes et d'écrans. En sortant, leurs éléments HTML sont masqués et une
@@ -134,7 +135,7 @@ function update(now) {
     u.ring.material.color.set(STATE_COLOR[st] ?? "#8b93a7");
     // Bulle : l'action au poste, la demande d'accord chez le résident, sinon à qui appartient l'agent.
     // Au repos, l'icône du grade de l'employé (économie du résident) précède son nom.
-    const T = TOOLS[w.s.src] ?? { name: w.s.src }, grade = staffOf(w.a, w.s.src)?.grade?.icon;
+    const T = TOOLS[w.s.src] ?? { name: w.s.src }, grade = productive() ? null : staffOf(w.a, w.s.src)?.grade?.icon;
     const text = st === "travaille" ? w.s.action : st === "autorisation" ? "Autorise-moi ?" : st === "erreur" ? "Erreur"
       : `${grade ? grade + " " : ""}${w.a.name} · ${T.name}`;
     // Tâche livrée : le texte de la célébration reste affiché quelques secondes au-dessus du robot.
