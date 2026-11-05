@@ -854,3 +854,24 @@ body[data-mode="productif"] #ecoBtn, body[data-mode="productif"] #gameCelebratio
 /* « Relier mes agents » : étapes pour Claude Code sur le web. */
 .cloud-steps { margin: 6px 0; padding-left: 20px; display: grid; gap: 8px; font-size: 13px; }
 .cloud-steps .code { margin-top: 4px; white-space: pre-wrap; }
+
+/* Stats des résidents (ui/insights.js) : « Ta journée » dans le panneau, « Faits du jour » dans le classement. */
+.insights { margin: 10px 0; padding: 10px 12px; border: 1px solid #7ec3f033; border-radius: 12px; background: #0c1422; }
+.insights h4 { margin: 0 0 8px; font-size: 12px; letter-spacing: .08em; text-transform: uppercase; color: #7ec3f0; }
+.ins-tiles { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 6px; }
+.ins-tile { display: grid; gap: 1px; padding: 6px 8px; border-radius: 8px; background: #131d31; }
+.ins-tile b { font-family: var(--mono); font-size: 16px; }
+.ins-tile small { font-size: 11px; color: var(--mute); }
+.ins-hours { margin-top: 8px; }
+.ins-bars { display: flex; align-items: flex-end; gap: 2px; height: 38px; }
+.ins-bars i { flex: 1; min-width: 0; border-radius: 2px 2px 0 0; background: #7ec3f066; }
+.ins-bars i.peak { background: #7ec3f0; }
+.ins-axis { display: flex; justify-content: space-between; font-size: 10px; color: var(--mute); margin-top: 2px; }
+.ins-note, .ins-week { margin: 6px 0 0; font-size: 12px; color: var(--mute); }
+.ins-facts { margin: 8px 0 0; padding-left: 16px; display: grid; gap: 3px; font-size: 12px; color: var(--mute); }
+.ins-facts b, .ins-week b, .ins-note b { color: var(--fg); }
+.day-facts h4 { margin: 0 0 6px; }
+.day-facts ul { list-style: none; margin: 0 0 10px; padding: 0; display: grid; gap: 4px; font-size: 12px; }
+.day-facts li { display: grid; gap: 1px; }
+.day-facts .fact-k { color: var(--mute); font-size: 11px; }
+.day-facts .fact-v b { color: var(--fg); }

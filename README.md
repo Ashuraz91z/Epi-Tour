@@ -68,6 +68,17 @@ au clavier et de la visite. Le panneau et le tableau du bureau ne gardent du « 
 les tâches livrées et les agents au travail. Rien n'est supprimé : le serveur calcule XP, salaires et missions pareil, et
 tout revient en repassant en mode complet. Code : `public/tour/mode.js` (`productive()`, `floorShown()`).
 
+## Stats des résidents
+
+Chaque étage tient un relevé du jour (`store.daily`, huit jours, `insightsOf` dans `core.js`) : des compteurs, jamais de
+contenu. Le panneau d'un résident montre « 📊 Sa journée » : demandes tapées, agents qui ont travaillé, actions d'outils,
+pic d'agents en même temps, activité heure par heure (Paris) et heure de pointe, horaires de début et de fin, actions par
+demande, outil star, répartition Claude Code / Codex…, modèle le plus utilisé, projets touchés, et les sept derniers jours
+(totaux, jours actifs, meilleur jour). Le classement ajoute les « Faits du jour » du penthouse : le plus de demandes, la plus
+grosse équipe, le plus en parallèle, le lève-tôt, le dernier actif, l'outil du penthouse, le total de demandes. Affiché
+dans les deux modes. Les demandes et les noms d'outils viennent des hooks, et du lecteur de journaux (`count_activity`)
+qui les compte sans lire leur contenu. Spectateurs : les nombres, sans noms de projets ni de modèles.
+
 ## Claude Code sur le web (cloud)
 
 Une session cloud tourne dans un conteneur d'Anthropic : le suivi de ta machine ne la voit pas. Elle se relie par un hook

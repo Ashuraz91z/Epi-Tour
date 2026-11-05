@@ -3,6 +3,17 @@
 Chaque IA ajoute **en haut** une entrée par session de travail (modèle et règles dans `AGENTS.md`, section 3).
 Le plus récent d'abord. On n'efface pas les entrées des autres.
 
+## 2026-11-05 · Lucas · branche Lucas · Claude Code (10)
+**Fait :** stats des résidents. Relevé du jour par étage (`store.daily`, `insightsOf`) : demandes, agents distincts,
+actions, heures (Paris), outils, modèles, projets, pic en parallèle, début et fin. Carte « 📊 Ta journée / Sa journée »
+dans le panneau, « Faits du jour » dans le classement. Le lecteur de journaux envoie aussi `prompts` et `tools` (compteurs).
+**Fichiers :** `core.js` (`recordDay`, `insightsOf`), `penthouse.js` (spectateurs), `collecteurs/tour-sync`
+(`count_activity`), `public/ui/insights.js` (nouveau), `public/ui/panel.js`, `public/style.css`, `test.js`, `README.md`.
+**À savoir :** les machines reliées avant ce changement n'envoient pas encore le nombre de demandes ni d'outils par leurs
+relevés (seuls les hooks le font) : relancer la commande de l'étage. Format d'heure : `Intl` en fr-FR écrit « 10 h », d'où
+`en-GB` pour lire l'heure.
+**Reste à faire :** —
+
 ## 2026-11-05 · Lucas · branche Lucas · Claude Code (9)
 **Fait :** les sessions Claude Code sur le web (cloud) apparaissent sur l'étage, machine « cloud ». Hook
 `collecteurs/tour-cloud-hook`, installé par `public/cloud-setup.sh` (setup script de l'environnement cloud) ; la clé vient

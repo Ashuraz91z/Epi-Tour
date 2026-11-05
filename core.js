@@ -94,6 +94,54 @@ export function normalize(p) {
 }
 
 const dayOf = t => new Date(t * 1000).toLocaleDateString("sv-SE"); // AAAA-MM-JJ, heure locale
+const PARIS_HOUR = new Intl.DateTimeFormat("en-GB", { timeZone: "Europe/Paris", hour: "2-digit", hourCycle: "h23" }); // « 10 », pas « 10 h »
+const parisHour = t => (parseInt(PARIS_HOUR.format(new Date(t * 1000)), 10) || 0) % 24;
+// Compteur borné (outils, modèles, projets du relevé du jour) : au-delà de 40 clés, la plus petite est oubliée.
+function bump(counts, key, n) {
+  if (typeof key !== "string" || !key || !(n > 0)) return;
+  key = key.slice(0, 40);
+  counts[key] = (counts[key] ?? 0) + n;
+  const keys = Object.keys(counts);
+  if (keys.length > 40) delete counts[keys.reduce((a, b) => counts[a] <= counts[b] ? a : b)];
+}
+const toolLabel = name => typeof name !== "string" ? "" : name.startsWith("mcp__") ? "mcp · " + (name.split("__")[1] ?? "") : name;
+
+// Relevé du jour d'un étage, pour les stats des résidents : des compteurs, jamais de contenu. Demandes tapées, appels
+// d'outils, agents distincts, activité par heure (Paris), outils, modèles et projets, pic d'agents au travail en même
+// temps, première et dernière activité. Huit jours gardés.
+function recordDay(store, { p, src, key, s, observed, actions }) {
+  const daily = (store.daily ??= {});
+  const d = (daily[dayOf(observed)] ??= { prompts: 0, actions: 0, agents: [], hours: Array(24).fill(0), tools: {}, models: {}, projects: {}, sources: {}, peak: 0, first: observed, last: observed });
+  const prompts = p.sync ? (Number.isInteger(p.prompts) ? Math.max(0, Math.min(p.prompts, 100)) : 0)
+    : ["UserPromptSubmit", "agent:start"].includes(p.hook_event_name) ? 1 : 0;
+  const weight = Math.max(1, actions);
+  d.prompts += prompts;
+  d.actions += actions;
+  if (!d.agents.includes(key) && d.agents.length < 300) d.agents.push(key);
+  d.hours[parisHour(observed)] += weight;
+  if (!p.sync && ["PreToolUse", "pre_tool_call"].includes(p.hook_event_name)) bump(d.tools, toolLabel(p.tool_name), 1);
+  if (p.sync && p.tools && typeof p.tools === "object" && !Array.isArray(p.tools))
+    for (const [name, n] of Object.entries(p.tools).slice(0, 10)) if (Number.isInteger(n)) bump(d.tools, toolLabel(name), Math.min(n, 200));
+  bump(d.models, s.model, weight);
+  bump(d.projects, s.project, weight);
+  bump(d.sources, src, weight);
+  const working = Object.values(store.sessions).filter(x => x.state === "travaille" && observed - x.updated < 600).length;
+  d.peak = Math.max(d.peak, working);
+  d.first = Math.min(d.first, observed);
+  d.last = Math.max(d.last, observed);
+  for (const old of Object.keys(daily).sort().slice(0, -8)) delete daily[old];
+}
+
+// Stats d'un étage : la journée (relevé du jour) et les sept derniers jours.
+export function insightsOf(store, now = Date.now() / 1000) {
+  const daily = store.daily ?? {}, d = daily[dayOf(now)];
+  const top = (counts, n) => Object.entries(counts ?? {}).sort((a, b) => b[1] - a[1]).slice(0, n);
+  const today = d ? { prompts: d.prompts, actions: d.actions, agents: d.agents.length, peak: d.peak, first: d.first, last: d.last,
+    hours: d.hours, tools: top(d.tools, 3), models: top(d.models, 3), projects: top(d.projects, 3), projectCount: Object.keys(d.projects).length,
+    sources: top(d.sources, 6) } : null;
+  const week = Object.keys(daily).sort().slice(-7).map(k => ({ day: k, prompts: daily[k].prompts, actions: daily[k].actions, agents: daily[k].agents.length }));
+  return { today, week };
+}
 
 // Objets libres envoyés par les collecteurs (info machine, santé des services) : bornés, sinon ignorés.
 // Ils repartent vers tous les résidents toutes les 2 s : un relais bavard ne doit pas alourdir tout le penthouse.
@@ -144,7 +192,8 @@ export function ingest(store, src, host, p, now = Date.now() / 1000) {
   day.sessions += key in store.sessions ? 0 : 1;
   // Hooks : un événement par outil appelé. Lecteur de journaux : le nombre d'appels écrits depuis le relevé précédent.
   const syncActions = p.sync && Number.isInteger(p.actions) ? Math.max(0, Math.min(p.actions, 200)) : 0;
-  day.actions += !p.sync && ["PreToolUse", "pre_tool_call"].includes(p.hook_event_name) ? 1 : syncActions;
+  const actions = !p.sync && ["PreToolUse", "pre_tool_call"].includes(p.hook_event_name) ? 1 : syncActions;
+  day.actions += actions;
   const s = (store.sessions[key] ??= { src, host, sid: n.sid.slice(0, 8), started: observed, task: "" });
   Object.assign(s, { state: n.state, action: n.action, updated: observed });
   if (n.task) s.task = n.task;
@@ -153,6 +202,7 @@ export function ingest(store, src, host, p, now = Date.now() / 1000) {
   if (typeof p.cwd === "string" && p.cwd) s.project = (p.cwd.replace(/\/+$/, "").split("/").pop() || p.cwd).slice(0, 80);
   const model = p.model || p.extra?.model;
   if (typeof model === "string" && model) s.model = model.slice(0, 40);
+  recordDay(store, { p, src, key, s, observed, actions });
   store.feed.push({ t: observed, src, host, project: s.project ?? "", state: n.state, action: n.action });
   store.feed.splice(0, store.feed.length - 150);
 }
@@ -173,6 +223,7 @@ export function snapshot(store, now = Date.now() / 1000) {
   return {
     now, sessions: sessions.filter(s => s.src !== "hermes" || hermes.includes(s)), feed: store.feed.slice(-60).reverse(),
     usage: store.usage, seen: store.seen, today: store.stats[dayOf(now)] ?? {}, health: store.health,
+    insights: insightsOf(store, now),
     profile: sanitizeProfile(store.profile),
     // L'économie avant le jeu : la mission « Jour de paie » lit les salaires du jour.
     economy: publicEconomy(store, now),

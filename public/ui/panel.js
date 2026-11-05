@@ -16,6 +16,7 @@ import { createSportsGames } from "../sports-games.js";
 import { workLeadersHtml, workPanelHtml } from "../work-ui.js";
 import { world } from "../tour/state.js";
 import { floorShown, productive, setMode } from "../tour/mode.js";
+import { dayFactsHtml, insightsPanelHtml } from "./insights.js";
 import { $, CASINO_FEATURED, ME, PLACE_FR, STATE_FR, TOOLS, claudeQuotaWhy, claudeTracked, esc, hm, keyOf, myApt, placeOf, quotaRemaining, stateOf } from "../tour/base.js";
 import { agents, floors } from "../tour/engine.js";
 import { reducedMotion } from "../tour/kit.js";
@@ -183,13 +184,13 @@ function render() {
     const wingHint = game && mine && (a.game?.wings?.length ?? 1) < 4 ? `<p class="extras-muted">Monte de niveau pour débloquer Labo (4), Ops (7), Studio (12).</p>` : "";
     const officeBlock = game && f.wingId === "work" && a.game?.office ? officePanelHtml(a.game.office, esc) : "";
     const ecoLine = game ? residentEconomyLine(a.economy, esc) : "";
-    const workBlock = f.wingId === "work" ? workPanelHtml(a, now, esc, { mine, productive: !game }) : "";
+    const workBlock = f.wingId === "work" ? workPanelHtml(a, now, esc, { mine, productive: !game }) + insightsPanelHtml(a, esc, { mine }) : "";
     setPanel(`${wingLine}<p class="kicker">${a.slug === list[0].slug && f.wingId === "work" ? "Penthouse" : esc(f.name)}${mine ? " · chez toi" : ""}</p><h2>${esc(a.name)}</h2>${tagline}${ecoLine}${workBlock}${officeBlock}${wingHint}${wingPlay}
       <div class="apt-c"><span><i class="d" style="background:var(--work)"></i><b>${by(a.sessions, "travaille")}</b> au travail</span>
       <span><i class="d" style="background:var(--auth)"></i><b>${by(a.sessions, "autorisation")}</b> ${spectator ? "attend un accord" : "attend ton accord"}</span>
       <span><i class="d" style="background:var(--wait)"></i><b>${by(a.sessions, "attend")}</b> sur le toit, attend la suite</span>
       <span><i class="d" style="background:var(--pause)"></i><b>${by(a.sessions, "fini") + by(a.sessions, "silencieux")}</b> en pause dans les étages communs</span></div>
-      <div class="meters">${claudeTracked(u) ? meter("Claude 5 h", u.claude?.five_hour, "var(--claude)", now) + meter("Claude semaine", u.claude?.seven_day, "var(--claude)", now) : `<p class="quota-untracked">Claude · quota non suivi${spectator ? "" : `<small>${esc(claudeQuotaWhy(a))}</small>`}</p>`}
+      <div class="meters">${claudeTracked(u) ? meter("Claude 5 h", u.claude?.five_hour, "var(--claude)", now) + meter("Claude semaine", u.claude?.seven_day, "var(--claude)", now) : `<p class="quota-untracked">Claude · quota non suivi${mine ? `<small>${esc(claudeQuotaWhy(a))}</small>` : ""}</p>`}
       ${meter("ChatGPT 5 h", u.chatgpt?.five_hour, "var(--codex)", now)}${meter("ChatGPT semaine", u.chatgpt?.seven_day, "var(--codex)", now)}</div>
       <div class="svcs">${svcs.length ? `Services <b style="color:${svcs.every(s => s.ok) ? "var(--work)" : "var(--auth)"}">${svcs.filter(s => s.ok).length}/${svcs.length}</b>` : ""}
       ${svcs.filter(s => !s.ok).map(s => `<span style="color:var(--auth)">${esc(s.label)} arrêté</span>`).join("")}
@@ -227,9 +228,10 @@ function render() {
   const all = list.flatMap(x => x.sessions);
   const board = activityLeaderboard(list);
   const lb = $("#leaderboardDlg"), rich = productive() ? [] : fortuneLeaders(list), workers = spectator ? "" : workLeadersHtml(list, esc, { me });
-  if ((board.length || rich.length || workers) && !spectator) {
+  const facts = spectator ? "" : dayFactsHtml(list, esc, { me });
+  if ((board.length || rich.length || workers || facts) && !spectator) {
     lb.hidden = false;
-    setHtml(lb, workers + (board.length ? `<h4>Activité du jour</h4><ol>${board.map((r, i) => `<li><b>${esc(r.name)}</b> · ${r.actions} act. / ${r.sessions} sess.</li>`).join("")}</ol>` : "")
+    setHtml(lb, facts + workers + (board.length ? `<h4>Activité du jour</h4><ol>${board.map((r, i) => `<li><b>${esc(r.name)}</b> · ${r.actions} act. / ${r.sessions} sess.</li>`).join("")}</ol>` : "")
       + (rich.length ? `<h4>Fortune</h4><ol>${rich.map(a => `<li><b>${esc(a.name)}</b> · ${esc(a.economy.title?.icon ?? "")} ${esc(money(a.slug === me ? economyUi.shownWallet(a.economy) : a.economy.wallet))}</li>`).join("")}</ol>` : ""));
   } else lb.hidden = true;
   // Libellés masquables : sur un écran moyen, l'en-tête ne garde que les pastilles et les nombres.
