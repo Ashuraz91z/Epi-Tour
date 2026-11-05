@@ -13,7 +13,7 @@ import { buyItem, onIngestEconomy, playCasino, playSport, questReward, setSubscr
 
 const ROOT = dirname(fileURLToPath(import.meta.url));
 // Version affichée dans le menu « ⋯ » : permet de vérifier que le site a bien repris la dernière version.
-export const VERSION = "2026-11-05.1";
+export const VERSION = "2026-11-05.2";
 const MAX_BODY = 256 * 1024;
 const MAX_APARTMENTS = 50;
 const acceptsGzip = req => /(?:^|,)\s*gzip\s*(?:,|$)/i.test(req.headers["accept-encoding"] ?? "");
@@ -45,12 +45,23 @@ const FILES = {
   "/cursor-notify.py": ["collecteurs/cursor-notify.py", "text/plain"],
   "/install.sh": ["public/install.sh", "text/plain"], "/install.ps1": ["public/install.ps1", "text/plain"], "/assets/CREDITS.txt": ["public/assets/CREDITS.txt", "text/plain"],
 };
+// Modules de l'interface (public/tour/, public/ui/) : tous servis, sans les lister un par un.
+for (const dir of ["tour", "tour/floors", "ui"]) {
+  for (const name of readdirSync(join(ROOT, "public", dir)).sort()) {
+    if (name.endsWith(".js")) FILES[`/${dir}/${name}`] = [`public/${dir}/${name}`, "text/javascript"];
+  }
+}
 
 // Ressources immuables pendant la vie du processus ; le déploiement redémarre l'application.
 const staticCache = new Map();
+// La page annonce tous ses modules d'un coup (modulepreload) : le navigateur les demande en parallèle au lieu de les
+// découvrir import après import (app.js, puis tour/…, puis tour/floors/…).
+const modulePreloads = () => Object.entries(FILES).filter(([, [, type]]) => type === "text/javascript")
+  .map(([path]) => `<link rel="modulepreload" href="${path.slice(1)}">`).join("\n");
 function staticResource(file, type) {
   if (!staticCache.has(file)) {
-    const body = readFileSync(join(ROOT, file));
+    let body = readFileSync(join(ROOT, file));
+    if (file === "public/index.html") body = Buffer.from(body.toString("utf8").replace("</head>", modulePreloads() + "\n</head>"));
     const etag = '"' + createHash("sha256").update(body).digest("hex") + '"';
     staticCache.set(file, { body, etag, gzip: /^(text\/|application\/javascript)/.test(type) ? gzipSync(body) : null });
   }

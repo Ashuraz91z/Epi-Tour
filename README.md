@@ -1,5 +1,8 @@
 # Penthouse — Tour de contrôle
 
+> **IA qui codez ici :** lisez d'abord `AGENTS.md` (branche au prénom du résident, organisation, règles) et
+> `JOURNAL.md`, puis ajoutez-y votre entrée après votre travail.
+
 Le site **https://agent.ashuraz.xyz** : chacun entre avec son nom, reçoit un appartement, y relie ses agents
 (Claude Code, Codex, Cursor, Grok Bot, Hermes, n8n), et tout le monde les voit travailler de pièce en pièce.
 Les agents sont aussi les employés de l'étage : ils touchent un salaire selon l'abonnement de leur IA (voir « Économie »).
@@ -9,7 +12,9 @@ Les agents sont aussi les employés de l'étage : ils touchent un salaire selon 
 - `economy.js` : rôles, salaires, carrière, boutique, casino et primes entre résidents ; catalogue partagé avec l'interface dans `public/economy-data.js`.
 - `penthouse.js` : appartements, entrée (nom + code), clés, API (voir plus bas).
 - `db.js` / `server.js` : état dans SQLite (`$DATA_DIR/penthouse.db`, par défaut `~/.tour-de-controle/`), l'ancien `state.json` est repris une fois.
-- `public/` : l'interface 3D (three.js) et `install.sh` (relie une machine à un appartement).
+- `public/` : l'interface 3D (three.js) et `install.sh` (relie une machine à un appartement). `app.js` charge les modules :
+  `tour/` (moteur, ville, robots, tour, animation), `tour/floors/` (un fichier par étage ou ambiance), `ui/` (panneau,
+  studio, session). Détail fichier par fichier dans `AGENTS.md`.
 - `collecteurs/` : scripts installés sur les machines (lecteur de journaux, hooks Claude/Codex, Cursor, pont MCP Grok, sonde de quota Claude, relais n8n, hook Hermes).
 
 ```bash
