@@ -344,8 +344,9 @@ test("connexion : une commande, sessions importées, outils inchangés et instal
     mkdirSync(join(home, ".claude/projects/demo"), { recursive: true }); mkdirSync(join(home, ".codex/sessions"), { recursive: true });
     const bin = join(home, "bin"); mkdirSync(bin);
     for (const name of ["launchctl", "crontab"]) writeFileSync(join(bin, name), "#!/bin/sh\nexit 0\n", { mode: 0o755 });
-    // Faux Claude Code (jamais le vrai) : il répond comme --output-format stream-json, avec le quota, et compte ses appels.
-    writeFileSync(join(bin, "claude"), `#!/bin/sh\necho x >> "$HOME/claude-calls"\necho '{"type":"rate_limit_event","rate_limit_info":{"unifiedWindows":{"five_hour":{"utilization":0.42,"resetsAt":4102444800},"seven_day":{"utilization":0.1,"resetsAt":4102444800}}}}'\n`, { mode: 0o755 });
+    // Faux Claude Code (jamais le vrai) : il compte ses appels.
+    // Il répond à la requête de contrôle get_usage (données /usage, sans requête au modèle) comme Claude Code.
+    writeFileSync(join(bin, "claude"), `#!/bin/sh\necho x >> "$HOME/claude-calls"\nread request\necho '{"type":"control_response","response":{"subtype":"success","request_id":"penthouse-usage","response":{"subscription_type":"max","rate_limits_available":true,"rate_limits":{"five_hour":{"utilization":42,"resets_at":"2100-01-01T00:00:00Z"},"seven_day":{"utilization":10,"resets_at":"2100-01-01T00:00:00Z"}}}}}'\n`, { mode: 0o755 });
     const eventAt = new Date().toISOString();
     const log = join(home, ".claude/projects/demo/recent.jsonl");
     const said = (text, at = new Date().toISOString()) => JSON.stringify({ type: "user", sessionId: "imported", timestamp: at, cwd: "/private/project", message: { role: "user", content: text } }) + "\n";
@@ -479,6 +480,11 @@ single = [json.dumps({'type': 'rate_limit_event', 'rate_limit_info': {'status': 
 assert m.quota_windows(grouped)[0] == {'five_hour': {'pct': 30, 'resets_at': 2000}, 'seven_day': {'pct': 50, 'resets_at': 9000}}
 assert m.quota_windows('\\n'.join(single))[0] == {'five_hour': {'pct': 42, 'resets_at': 2000}, 'seven_day': {'pct': 10, 'resets_at': 9000}}
 assert m.quota_windows(json.dumps({'type': 'rate_limit_event', 'rate_limit_info': {'status': 'allowed'}})) == ({}, ['status'])
+ok = {'subtype': 'success', 'response': {'rate_limits_available': True, 'rate_limits': {'five_hour': {'utilization': 37.4, 'resets_at': '2026-11-05T09:00:00Z'}, 'seven_day': {'utilization': 12, 'resets_at': None}}}}
+assert m.usage_answer(ok)[0] == {'five_hour': {'pct': 37, 'resets_at': 1793869200}, 'seven_day': {'pct': 12}}, m.usage_answer(ok)
+assert m.usage_answer({'subtype': 'success', 'response': {'rate_limits_available': False, 'rate_limits': None}}) == (None, 'sans quota')
+assert m.usage_answer({'subtype': 'error', 'error': 'Unknown subtype'})[1] == 'erreur : Unknown subtype'
+assert m.usage_answer(None) == (None, None)
 # Un faux claude qui échoue : l'erreur est envoyée au site, et pas de nouvel essai avant 15 min.
 home = Path(sys.argv[2]); m.CONF = home / '.config' / 'tour'; m.CONF.mkdir(parents=True)
 (home / '.claude' / 'projects' / 'p').mkdir(parents=True); (home / '.claude' / 'projects' / 'p' / 'a.jsonl').write_text('{}')
