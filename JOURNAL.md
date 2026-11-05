@@ -3,6 +3,15 @@
 Chaque IA ajoute **en haut** une entrée par session de travail (modèle et règles dans `AGENTS.md`, section 3).
 Le plus récent d'abord. On n'efface pas les entrées des autres.
 
+## 2026-11-05 · Lucas · branche Lucas · Claude Code (12)
+**Fait :** vue téléphone (≤ 760 px) : étages en bande défilante sous l'en-tête, panneau en feuille rétractable (poignée en
+tête du panneau, `body.sheet-open`), spectateur adapté (faits du jour sur une ligne, fiches d'une colonne, fiche d'étage
+compacte). Vérifié sur un iPhone 13 émulé : accueil, panneau ouvert et fermé, menu, Relier, Studio, Entreprise, spectateur.
+**Fichiers :** `public/ui/panel.js` (`setPanel` ajoute la poignée, bande des étages centrée sur l'étage choisi),
+`public/style.css`, `README.md`.
+**À savoir :** la poignée est dans le HTML du panneau à chaque rendu ; elle n'est affichée que sur téléphone.
+**Reste à faire :** —
+
 ## 2026-11-05 · Lucas · branche Lucas · Claude Code (11)
 **Fait :** vue spectateur enrichie : tableau « La journée de chacun » (faits du jour en pastilles ; par résident : états des
 agents, journée compacte, quotas), fiche de l'étage visité, barre de progression dans la légende, bulles et fil « En direct »

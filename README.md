@@ -57,6 +57,13 @@ Sur Mac, arrêt du suivi : `launchctl bootout gui/$(id -u)/xyz.ashuraz.penthouse
 
 Hermes/n8n se branchent sur leur serveur, avec les procédures du panneau ; ils ne sont pas installés automatiquement par cette commande. Conserver les ponts existants. Aucun outil réellement installé sur les machines de Lucas pendant les tests : HOME et planificateurs isolés.
 
+## Sur téléphone
+
+Sous 760 px de large : la 3D au milieu, les étages en bande qu'on fait défiler sous l'en-tête (l'étage choisi reste
+visible), le panneau en feuille rétractable en bas (poignée : agrandir ou réduire), les fenêtres en plein écran. En
+spectateur, les faits du jour défilent sur une ligne, les fiches des résidents passent sur une colonne et la fiche de
+l'étage visité se fait compacte. Le classement flottant est masqué (il recouvrirait le panneau).
+
 ## Mode complet et mode productif
 
 Menu « ⋯ » › « ⚡ Mode productif (sans le jeu) » / « 🎮 Mode complet (avec le jeu) ». Le choix est gardé sur l'appareil
