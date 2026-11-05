@@ -3,6 +3,17 @@
 Chaque IA ajoute **en haut** une entrée par session de travail (modèle et règles dans `AGENTS.md`, section 3).
 Le plus récent d'abord. On n'efface pas les entrées des autres.
 
+## 2026-11-05 · Hugo · branche Hugo · Claude Code
+**Fait :** étage de luxe réservé à l'étage `hugoat` : marbre noir veiné d'or, LED dorées et magenta, colonnes et lustres,
+bureau tout en or, billets de 100 $ au sol, balcon piscine à l'est, terrasse showroom devant l'étage avec une GT noire
+(sans logo) sur plateau tournant, et dix invitées en maillot. Aucun autre étage ne change.
+**Fichiers :** `public/tour/floors/hugoat.js` (nouveau), `public/tour/floors/resident.js` (import + un appel juste avant
+`finishFloor`), `penthouse.js` (`VERSION`).
+**À savoir :** l'appel est gardé par `apt.slug === "hugoat"`. L'étage emprunte la lumière chaude de la coque
+(`f.warmSpot`) et deux `LightSpot` (piscine, showroom). Le balcon et la terrasse dépassent de la coque (x > 10,4 et z > 6,5).
+L'ancienne branche `Hugo` (étage écrit dans l'ancien `app.js`) est remplacée par ce portage, sans force-push.
+**Reste à faire :** vue téléphone non vérifiée pour cet étage.
+
 ## 2026-11-05 · Lucas · branche Lucas · Claude Code (13)
 **Fait :** spectateur : le bouton « Pause visite » devient un choix « 🎬 Visite auto / 🧭 Explorer » (gardé sur
 l'appareil, `penthouse.visite`). En exploration : liste des étages, panneau, agents cliquables, zoom, et un bouton

@@ -19,6 +19,7 @@ import { put, shell, walls } from "./shell.js";
 import { CYBER, cyberpunk, neonScreen, screenTexts } from "./cyberpunk.js";
 import { bankerLamp, prestigeBoss, prestigeCans, prestigeChandeliers, prestigeDesk, prestigeFloor, prestigeMaterials } from "./prestige.js";
 import { ROOM_LIGHTS, roomFloor, roomObjects, roomWalls } from "./room.js";
+import { hugoat } from "./hugoat.js";
 import { streamUrl } from "./shared.js";
 
 // ---------- étage d'un résident ----------
@@ -427,6 +428,7 @@ function buildResident(apt, wing, officeTier) {
   // Lustres (Prestige ou studio) et canettes des bureaux de ministre : une série d'instances chacun.
   if (bulbs.length) prestigeChandeliers(g, prestigeMaterials(), bulbs, drops);
   if (deskCans.length) prestigeCans(g, prestigeMaterials(), deskCans);
+  if (wingId === "work" && apt.slug === "hugoat") hugoat(f);
   return finishFloor(f);
 }
 
