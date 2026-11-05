@@ -89,7 +89,7 @@ $("#showPermission").addEventListener("click", () => {
 
 // Panneau latéral : pas de redessin sous les doigts de quelqu'un qui saisit (lien perso de la télé).
 // Le HTML n'est réécrit que s'il a changé : un bouton n'est pas remplacé sous le pointeur toutes les deux secondes.
-let panelHtml = "";
+let panelHtml = "", lastNavFocus = -1;
 // Le rendu tourne à chaque état reçu (toutes les deux secondes) : un bloc n'est réécrit que si son HTML a changé,
 // sans recalcul de mise en page ni bouton remplacé sous le pointeur.
 const writtenHtml = new WeakMap();
@@ -99,12 +99,20 @@ function setHtml(el, html) {
   el.innerHTML = html;
 }
 const setText = (el, text) => { if (el && el.textContent !== text) el.textContent = text; };
+// Sur téléphone, le panneau est une feuille en bas de l'écran : la poignée l'agrandit ou le réduit (CSS, body.sheet-open).
+const SHEET_HANDLE = `<button type="button" class="sheet-handle" data-sheet-toggle aria-label="Agrandir ou réduire le panneau"><span aria-hidden="true"></span></button>`;
 function setPanel(html) {
   const panel = $("#aptPanel"), typing = panel.contains(document.activeElement) && document.activeElement.matches("input, textarea");
+  html = SHEET_HANDLE + html;
   if (typing || html === panelHtml) return;
   panel.innerHTML = html;
   panelHtml = html;
 }
+$("#aptPanel").addEventListener("click", e => {
+  if (!e.target.closest("[data-sheet-toggle]")) return;
+  const open = document.body.classList.toggle("sheet-open");
+  if (!open) $("#aptPanel").scrollTop = 0;
+});
 
 // En-tête : portefeuille, titre et événement du jour ; bouton Entreprise ; primes reçues d'un autre résident.
 let ecoHeaderHtml = "", tipWatch = { slug: null, seen: null };
@@ -165,6 +173,11 @@ function render() {
     return `<button type="button" data-floor="${i}" class="${i === world.focus ? "on" : ""}${isMe ? " me" : ""}${f.kind === "shared" ? " shared" : ""}${f.wingId && f.wingId !== "work" ? " wing-extra" : ""}" aria-current="${i === world.focus}">
       <span class="lvl">${floorLabel(i)}</span><span class="nm">${esc(f.name)}</span><span class="ct">${alert && f.wingId === "work" ? '<i class="d auth"></i>' : ""}${busy}</span></button>`;
   }).join(""));
+  // Téléphone : la liste des étages est une bande qu'on fait défiler ; l'étage choisi y reste visible.
+  if (lastNavFocus !== world.focus && matchMedia("(max-width: 760px)").matches) {
+    lastNavFocus = world.focus;
+    $("#floorNav .on")?.scrollIntoView({ block: "nearest", inline: "center" });
+  }
 
   const f = floors.get(world.order[world.focus]);
   if (f?.kind === "resident") {

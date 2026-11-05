@@ -912,3 +912,41 @@ body:not(.spectator-presentation) .spectator-floor-card { display: none; }
   .spectator-floor-card { left: 8px; right: 8px; width: auto; bottom: 96px; padding: 12px 14px; }
   .fact-chips { margin-top: 0; }
 }
+
+/* ---------- Téléphone : la 3D au milieu, les étages en bande en haut, le panneau en feuille rétractable en bas ---------- */
+.sheet-handle { display: none; }
+@media (max-width: 760px) {
+  .floornav { left: 8px; right: 8px; top: calc(var(--top-h, 52px) + 6px); display: flex; gap: 6px; overflow-x: auto; overflow-y: hidden;
+    max-height: none; padding: 2px 2px 6px; scroll-snap-type: x proximity; scrollbar-width: none; -webkit-overflow-scrolling: touch; }
+  .floornav::-webkit-scrollbar { display: none; }
+  .floornav button, .floornav button.wing-extra { flex: none; min-width: 0; grid-template-columns: auto auto auto; gap: 6px; padding: 7px 10px; scroll-snap-align: center; }
+  .floornav .nm { display: inline; max-width: 92px; font-size: 12px; }
+  .floornav .ct { display: inline; font-size: 11px; }
+  .floornav .lvl { font-size: 12px; }
+  .panel { bottom: 44px; left: 8px; right: 8px; max-height: 112px; overflow: hidden; padding: 14px 14px 10px; transition: max-height .25s ease;
+    border-radius: 16px 16px 12px 12px; }
+  body.sheet-open .panel { max-height: min(62dvh, calc(100dvh - var(--top-h, 52px) - 110px)); overflow: auto; }
+  .sheet-handle { display: grid; place-items: center; position: sticky; top: -14px; z-index: 1; width: calc(100% + 28px); margin: -14px -14px 4px;
+    height: 26px; padding: 0; border: 0; background: linear-gradient(#0f1320, #0f1320e6); cursor: pointer; }
+  .sheet-handle span { width: 44px; height: 4px; border-radius: 4px; background: #8e95aa88; }
+  .panel h2 { font-size: 18px; margin-bottom: 4px; }
+  .panel .kicker { font-size: 10px; }
+  /* Spectateur : faits du jour sur une ligne qui défile, fiches d'une colonne, quotas sur deux. */
+  .fact-chips { flex-wrap: nowrap; overflow-x: auto; scrollbar-width: none; padding-bottom: 4px; margin: 0 -18px 14px; padding-left: 18px; padding-right: 18px; }
+  .fact-chips::-webkit-scrollbar { display: none; }
+  .fact-chip { flex: none; }
+  .spectator-dashboard { top: calc(var(--top-h, 52px) + 8px); max-height: calc(100dvh - var(--top-h, 52px) - 112px); }
+  .spectator-dashboard h1 { font-size: 22px; }
+  .dashboard-lead { display: none; }
+  .day-card .card-quotas { grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 10px; }
+  .strip-stats { gap: 10px; }
+  .strip-stats b { font-size: 15px; }
+}
+@media (max-width: 760px) {
+  /* Fiche de l'étage visité (spectateur) : compacte, pour laisser voir l'étage. */
+  .spectator-floor-card { bottom: 100px; padding: 10px 12px; border-radius: 12px; }
+  .spectator-floor-card h2 { font-size: 17px; }
+  .spectator-floor-card .kicker { font-size: 9px; }
+  .spectator-floor-card .strip-bars { display: none; }
+  .spectator-floor-card .day-strip { margin-top: 6px; }
+}
