@@ -18,6 +18,7 @@ import {
   agentRoleText, createEconomyUi, decorKeyOf, eventChipHtml, fortuneLeaders, freshTipsIn, money, residentEconomyLine, staffOf, walletChipHtml,
 } from "./economy-ui.js";
 import { createSportsGames } from "./sports-games.js";
+import { ROOM_DEFAULT, ROOM_OPTIONS, ROOM_PRESETS, cleanRoom, presetOf } from "./room-data.js";
 import { bonusText, currentObjective, objectivePct, objectiveProgressText, workDuration, workEventText, workLeadersHtml, workPanelHtml } from "./work-ui.js";
 import { OrbitControls } from "three/addons/controls/OrbitControls.js";
 import { CSS2DObject, CSS2DRenderer } from "three/addons/renderers/CSS2DRenderer.js";
@@ -471,7 +472,7 @@ function stageFloor(f, shown) {
   f.group.traverse(o => { if (o.isCSS2DObject || o.isCSS3DObject) o.element.style.display = "none"; });
   if (f.tv && f.tv.shown !== "about:blank") { f.tv.shown = "about:blank"; f.tv.iframe.src = "about:blank"; }
 }
-// Petits groupes animés (voitures, avions, oiseaux) : leurs pièces sont dessinées en instances, une série par matériau.
+// Petits groupes animés (avions, oiseaux) : leurs pièces sont dessinées en instances, une série par matériau.
 // Les groupes eux-mêmes restent hors de la scène et gardent leur animation ; sync() recopie leurs matrices.
 function instancedCrowd(groups, parent) {
   const byMaterial = new Map();
@@ -498,28 +499,55 @@ function instancedCrowd(groups, parent) {
 // ---------- la ville autour ----------
 // Les fenêtres sont calculées par le shader d'après la position dans le monde : toute la ville tient en un seul
 // maillage instancié (un appel de dessin), et les fenêtres de la tour s'alignent sur ses étages.
-function cityMaterial(cellW, cellH, lit) {
-  const m = new THREE.MeshStandardMaterial({ color: "#0d1120", roughness: 0.9 });
+// Les immeubles ne reçoivent que le ciel, l'ambiance et la lune : sur une face plate, cette lumière est la même en
+// chaque point. Elle est donc calculée une fois par sommet (matériau de base, sans éclairage par pixel), au lieu de
+// faire passer chaque pixel de la ville, qui couvre la moitié de l'écran, par le modèle physique et les lampes des
+// étages, qui ne l'atteignent pas. Même rendu (ciel, sol, lune et ambiance de la scène), bien moins de calcul.
+const SKY_LIGHT = { sky: "#8ea6ff", ground: "#20160f", hemi: 0.9, ambient: "#ffffff", ambientI: 0.25, moon: "#c9d6ff", moonI: 1.1, moonAt: [-30, 60, 20] };
+const cityLightUniforms = (() => {
+  const lin = (c, k) => new THREE.Color(c).multiplyScalar(k / Math.PI); // BRDF de Lambert, comme le matériau standard
+  return {
+    uSky: { value: lin(SKY_LIGHT.sky, SKY_LIGHT.hemi) }, uGround: { value: lin(SKY_LIGHT.ground, SKY_LIGHT.hemi) },
+    uAmb: { value: lin(SKY_LIGHT.ambient, SKY_LIGHT.ambientI) }, uMoon: { value: lin(SKY_LIGHT.moon, SKY_LIGHT.moonI) },
+    uMoonDir: { value: new THREE.Vector3(...SKY_LIGHT.moonAt).normalize() },
+  };
+})();
+// Sans fenêtres (cellW nul) : sol, chaussées et trottoirs, éclairés de la même façon.
+function cityMaterial(cellW, cellH, lit, color = "#0d1120") {
+  const m = new THREE.MeshBasicMaterial({ color });
   m.onBeforeCompile = sh => {
-    Object.assign(sh.uniforms, { uCell: { value: new THREE.Vector2(cellW, cellH) }, uLit: { value: lit } });
-    sh.vertexShader = sh.vertexShader.replace("#include <common>", "#include <common>\nvarying vec3 vCityP;\nvarying vec3 vCityN;")
+    Object.assign(sh.uniforms, cityLightUniforms, { uCell: { value: new THREE.Vector2(cellW, cellH) }, uLit: { value: lit } });
+    sh.vertexShader = sh.vertexShader.replace("#include <common>", `#include <common>
+        varying vec3 vCityP;\nvarying vec3 vCityN;\nvarying vec3 vCityL;
+        uniform vec3 uSky, uGround, uAmb, uMoon, uMoonDir;`)
       .replace("#include <project_vertex>", `#include <project_vertex>
         mat4 cityM = modelMatrix;
         #ifdef USE_INSTANCING
           cityM = modelMatrix * instanceMatrix;
         #endif
         vCityP = (cityM * vec4(transformed, 1.0)).xyz;
-        vCityN = normalize(mat3(cityM) * objectNormal);`);
-    sh.fragmentShader = sh.fragmentShader.replace("#include <common>", "#include <common>\nvarying vec3 vCityP;\nvarying vec3 vCityN;\nuniform vec2 uCell;\nuniform float uLit;")
-      .replace("#include <emissivemap_fragment>", `
+        vCityN = normalize(mat3(cityM) * normal);
+        vCityL = uAmb + mix(uGround, uSky, 0.5 * vCityN.y + 0.5) + uMoon * max(dot(vCityN, uMoonDir), 0.0);`);
+    sh.fragmentShader = sh.fragmentShader.replace("#include <common>", "#include <common>\nvarying vec3 vCityP;\nvarying vec3 vCityN;\nvarying vec3 vCityL;\nuniform vec2 uCell;\nuniform float uLit;")
+      .replace("#include <aomap_fragment>", "reflectedLight.indirectDiffuse *= vCityL;")
+      .replace("#include <envmap_fragment>", !cellW ? "" : `
         vec2 cw = vec2(abs(vCityN.x) > 0.5 ? vCityP.z : vCityP.x, vCityP.y) / uCell;
         vec2 cid = floor(cw), cf = fract(cw);
         float rr = fract(sin(dot(cid, vec2(12.9898, 78.233))) * 43758.5453);
         float win = step(0.22, cf.x) * step(cf.x, 0.78) * step(0.28, cf.y) * step(cf.y, 0.82) * step(rr, uLit) * step(abs(vCityN.y), 0.5);
-        totalEmissiveRadiance += win * mix(vec3(1.0, 0.78, 0.45), vec3(0.62, 0.78, 1.0), step(0.78, rr / uLit)) * 0.7;`);
+        outgoingLight += win * mix(vec3(1.0, 0.78, 0.45), vec3(0.62, 0.78, 1.0), step(0.78, rr / uLit)) * 0.7;`);
   };
   return m;
 }
+// Boîte d'immeuble sans sa face du dessous (jamais vue), posée sur sa base.
+const CITY_BOX = (() => {
+  const g = new THREE.BoxGeometry(1, 1, 1).translate(0, 0.5, 0), index = g.index.array;
+  g.setIndex([...index].filter((_, i) => Math.floor(i / 6) !== 3)); // faces : +x, -x, +y, -y, +z, -z
+  g.clearGroups();
+  return g;
+})();
+// La ville est dessinée après les étages (renderOrder) : ce que l'étage regardé cache n'est plus calculé du tout.
+const BEHIND = 1;
 const GROUND = -150, CELL = 18;
 const AD_SITE = { x: -2 * CELL, z: -3 * CELL }, USAGE_SITE = { x: 18, z: -54 };
 const beacons = new THREE.MeshBasicMaterial({ color: "#ff3030", fog: false });
@@ -534,27 +562,31 @@ const BEACON_ON = new THREE.Color("#ff3030"), BEACON_OFF = new THREE.Color("#3a0
     if (d < 72 || d > 255 || [AD_SITE, USAGE_SITE].some(site => site.x === x && site.z === z)) continue;
     spots.push([x + (rnd() - 0.5) * 2, z + (rnd() - 0.5) * 2, 8 + rnd() * 2, 8 + rnd() * 2, 45 + rnd() ** 1.6 * 175]);
   }
+  // Les plus proches d'abord : ils cachent ceux de derrière, dont les pixels sont alors écartés avant d'être calculés.
+  spots.sort((a, b) => Math.hypot(a[0], a[1]) - Math.hypot(b[0], b[1]));
   const m4 = new THREE.Matrix4();
-  const town = new THREE.InstancedMesh(new THREE.BoxGeometry(1, 1, 1).translate(0, 0.5, 0), cityMaterial(1.2, 2.4, 0.33), spots.length);
+  const town = new THREE.InstancedMesh(CITY_BOX, cityMaterial(1.2, 2.4, 0.33), spots.length);
   spots.forEach(([x, z, w, d, h], k) => town.setMatrixAt(k, m4.makeScale(w, h, d).setPosition(x, GROUND, z)));
+  town.renderOrder = BEHIND;
   scene.add(town);
   // Feux rouges sur les plus hauts toits
   const tall = spots.filter(s => GROUND + s[4] > -45);
   const lights = new THREE.InstancedMesh(new THREE.SphereGeometry(0.5, 8, 6), beacons, tall.length);
   tall.forEach(([x, z, , , h], k) => lights.setMatrixAt(k, m4.makeTranslation(x, GROUND + h + 0.6, z)));
+  lights.renderOrder = BEHIND;
   scene.add(lights);
-  // Le sol et ses rues éclairées, entre les îlots
-  box(scene, 560, 1, 560, mat("#05070d"), 0, GROUND - 0.5, 0);
-  // Même grille que les voitures : chaussées pleines, trottoirs et marquage, au niveau du sol.
-  const roads = new THREE.InstancedMesh(new THREE.BoxGeometry(1, 1, 1), mat("#303644"), 58);
-  const sidewalks = new THREE.InstancedMesh(new THREE.BoxGeometry(1, 1, 1), mat("#555966"), 58);
+  // Le sol et ses rues, entre les îlots : presque entièrement caché par les immeubles, dessiné en dernier.
+  box(scene, 560, 1, 560, cityMaterial(0, 0, 0, "#05070d"), 0, GROUND - 0.5, 0).renderOrder = BEHIND + 2;
+  // Chaussées pleines, trottoirs et marquage, au niveau du sol.
+  const roads = new THREE.InstancedMesh(CITY_BOX, cityMaterial(0, 0, 0, "#303644"), 58);
+  const sidewalks = new THREE.InstancedMesh(CITY_BOX, cityMaterial(0, 0, 0, "#555966"), 58);
   const markings = [];
   for (let i = -14; i <= 14; i++) {
     const lane = i * CELL + CELL / 2, k = (i + 14) * 2;
-    roads.setMatrixAt(k, m4.makeScale(540, 0.12, 5).setPosition(0, GROUND + 0.12, lane));
-    roads.setMatrixAt(k + 1, m4.makeScale(5, 0.12, 540).setPosition(lane, GROUND + 0.12, 0));
-    sidewalks.setMatrixAt(k, m4.makeScale(540, 0.12, 7).setPosition(0, GROUND + 0.02, lane));
-    sidewalks.setMatrixAt(k + 1, m4.makeScale(7, 0.12, 540).setPosition(lane, GROUND + 0.02, 0));
+    roads.setMatrixAt(k, m4.makeScale(540, 0.12, 5).setPosition(0, GROUND + 0.06, lane));
+    roads.setMatrixAt(k + 1, m4.makeScale(5, 0.12, 540).setPosition(lane, GROUND + 0.06, 0));
+    sidewalks.setMatrixAt(k, m4.makeScale(540, 0.12, 7).setPosition(0, GROUND - 0.04, lane));
+    sidewalks.setMatrixAt(k + 1, m4.makeScale(7, 0.12, 540).setPosition(lane, GROUND - 0.04, 0));
     for (let j = -44; j <= 44; j++) {
       const p = j * 6;
       // Laisser les carrefours libres de pointillés.
@@ -563,97 +595,31 @@ const BEACON_ON = new THREE.Color("#ff3030"), BEACON_OFF = new THREE.Color("#3a0
         lane, GROUND + 0.19, p - 1, lane, GROUND + 0.19, p + 1);
     }
   }
+  sidewalks.renderOrder = roads.renderOrder = BEHIND + 1;
   scene.add(sidewalks, roads);
   const roadLines = new THREE.BufferGeometry();
   roadLines.setAttribute("position", new THREE.Float32BufferAttribute(markings, 3));
-  scene.add(new THREE.LineSegments(roadLines, new THREE.LineBasicMaterial({ color: "#c7bfa3" })));
+  const lines = new THREE.LineSegments(roadLines, new THREE.LineBasicMaterial({ color: "#c7bfa3" }));
+  lines.renderOrder = BEHIND + 1;
+  scene.add(lines);
   const stars = new THREE.BufferGeometry(), pts = [];
   for (let i = 0; i < 700; i++) {
     const a = rnd() * Math.PI * 2, e = 0.15 + rnd() * 1.2, R = 400;
     pts.push(Math.cos(a) * Math.cos(e) * R, Math.sin(e) * R - 60, Math.sin(a) * Math.cos(e) * R);
   }
   stars.setAttribute("position", new THREE.Float32BufferAttribute(pts, 3));
-  scene.add(new THREE.Points(stars, new THREE.PointsMaterial({ color: "#cfd8ff", size: 1.2, sizeAttenuation: false, fog: false })));
+  const sky = new THREE.Points(stars, new THREE.PointsMaterial({ color: "#cfd8ff", size: 1.2, sizeAttenuation: false, fog: false }));
   const moonBall = new THREE.Mesh(new THREE.SphereGeometry(9, 24, 16), new THREE.MeshBasicMaterial({ color: "#f3efe0", fog: false }));
   moonBall.position.set(-160, 120, -260);
-  scene.add(moonBall);
-})();
-
-// Les îlots dégagés autour de la tour deviennent des jardins, plutôt que des cases noires.
-(function parksAndStreetlights() {
-  // Bancs, allées, fontaines et terrains : quelques centaines de petits blocs, fusionnés par matériau à la fin.
-  const park = new THREE.Group();
-  scene.add(park);
-  const gardens = [], trees = [], lamps = [];
-  for (let i = -3; i <= 3; i++) for (let j = -3; j <= 3; j++) {
-    if ((!i && !j) || [AD_SITE, USAGE_SITE].some(site => site.x === i * CELL && site.z === j * CELL) || Math.hypot(i * CELL, j * CELL) >= 72) continue;
-    const x = i * CELL, z = j * CELL, kind = (i * i + j * j + i + 12) % 4;
-    if (kind) {
-      box(park, 12, 0.2, 12, mat(kind === 1 ? "#77756b" : kind === 2 ? "#263f50" : "#30343c"), x, GROUND + 0.16, z);
-      if (kind === 1) {
-        cyl(park, 2.8, 0.6, mat("#9b9d9b"), x, GROUND + 0.5, z);
-        cyl(park, 2.4, 0.08, glow("#4b9db0", 0.5), x, GROUND + 0.84, z);
-        cyl(park, 0.25, 1.5, mat("#b6b9b4"), x, GROUND + 1.3, z);
-        for (const dx of [-4, 4]) box(park, 0.8, 0.5, 3, mat("#96724c"), x + dx, GROUND + 0.6, z);
-      } else if (kind === 2) {
-        for (const dx of [-5, 0, 5]) box(park, 0.12, 0.04, 10, glow("#c5d8cb", 0.4), x + dx, GROUND + 0.3, z);
-        for (const dz of [-5, 5]) {
-          box(park, 10, 0.04, 0.12, glow("#c5d8cb", 0.4), x, GROUND + 0.3, z + dz);
-          box(park, 0.12, 3, 0.12, mat("#a5abb2"), x, GROUND + 1.7, z + dz);
-          box(park, 1.8, 1, 0.1, mat("#dbdcd2"), x, GROUND + 3, z + dz);
-        }
-      } else {
-        for (const dx of [-4, 0, 4]) {
-          box(park, 0.1, 0.04, 10, mat("#b2b1a1"), x + dx, GROUND + 0.3, z);
-          box(park, 1.5, 0.8, 3, mat(dx ? "#687d91" : "#974b45"), x + dx + 1, GROUND + 0.7, z + 2);
-          box(park, 1.2, 0.4, 1.5, mat("#152537"), x + dx + 1, GROUND + 1.25, z + 2);
-        }
-      }
-      continue;
-    }
-    gardens.push([x, z]);
-    for (const [dx, dz] of [[-4, -4], [4, -4], [-4, 4], [4, 4]]) trees.push([i * CELL + dx, j * CELL + dz]);
-  }
-  const m = new THREE.Matrix4();
-  const grass = new THREE.InstancedMesh(new THREE.BoxGeometry(12, 0.2, 12), glow("#204b36", 0.3), gardens.length);
-  const trunks = new THREE.InstancedMesh(new THREE.CylinderGeometry(0.25, 0.35, 2, 6), mat("#6d513c"), trees.length);
-  const crowns = new THREE.InstancedMesh(new THREE.IcosahedronGeometry(1.8, 1), glow("#356b47", 0.25), trees.length);
-  gardens.forEach(([x, z], k) => {
-    grass.setMatrixAt(k, m.makeTranslation(x, GROUND + 0.16, z));
-    box(park, 1.1, 0.05, 12, mat("#958a70"), x, GROUND + 0.3, z);
-    box(park, 12, 0.05, 1.1, mat("#958a70"), x, GROUND + 0.31, z);
-    for (const dx of [-2, 2]) {
-      box(park, 0.7, 0.5, 2, mat("#96724c"), x + dx, GROUND + 0.6, z + 2);
-      box(park, 0.15, 0.9, 2, mat("#96724c"), x + dx + Math.sign(dx) * 0.3, GROUND + 0.8, z + 2);
-    }
-  });
-  trees.forEach(([x, z], k) => {
-    trunks.setMatrixAt(k, m.makeTranslation(x, GROUND + 1.2, z));
-    crowns.setMatrixAt(k, m.makeTranslation(x, GROUND + 3, z));
-  });
-  for (let i = -7; i <= 7; i++) for (let j = -7; j <= 7; j++)
-    lamps.push([i * CELL + 6, j * CELL]);
-  const poles = new THREE.InstancedMesh(new THREE.CylinderGeometry(0.09, 0.15, 4, 5), mat("#6c737e"), lamps.length);
-  const bulbs = new THREE.InstancedMesh(new THREE.SphereGeometry(0.35, 6, 4), new THREE.MeshBasicMaterial({ color: "#ffe0a0" }), lamps.length);
-  const lightCanvas = document.createElement("canvas"); lightCanvas.width = lightCanvas.height = 64;
-  const ctx = lightCanvas.getContext("2d"), gradient = ctx.createRadialGradient(32, 32, 0, 32, 32, 32);
-  gradient.addColorStop(0, "rgba(255,210,125,0.45)"); gradient.addColorStop(1, "rgba(255,210,125,0)");
-  ctx.fillStyle = gradient; ctx.fillRect(0, 0, 64, 64);
-  // Halos au sol instanciés : rues lisibles sans des centaines de lumières dynamiques.
-  const pools = new THREE.InstancedMesh(new THREE.PlaneGeometry(12, 12), new THREE.MeshBasicMaterial({ map: new THREE.CanvasTexture(lightCanvas), transparent: true, depthWrite: false, blending: THREE.AdditiveBlending }), lamps.length);
-  const transform = new THREE.Object3D(); transform.rotation.x = -Math.PI / 2;
-  lamps.forEach(([x, z], k) => {
-    poles.setMatrixAt(k, m.makeTranslation(x, GROUND + 2.2, z));
-    bulbs.setMatrixAt(k, m.makeTranslation(x, GROUND + 4.3, z));
-    transform.position.set(x + 2, GROUND + 0.22, z); transform.updateMatrix(); pools.setMatrixAt(k, transform.matrix);
-  });
-  scene.add(grass, trunks, crowns, poles, bulbs, pools);
-  bakeStatic(park);
+  sky.renderOrder = moonBall.renderOrder = BEHIND + 3;
+  scene.add(sky, moonBall);
+  // Rien de tout cela ne bouge : leurs matrices sont calculées une fois.
+  for (const o of [town, lights, roads, sidewalks, lines, sky, moonBall]) { o.updateMatrix(); o.matrixAutoUpdate = false; }
 })();
 
 // Immeuble voisin : une vraie enseigne sur le toit, avec le classement issu du direct.
 const neighbour = new THREE.Group(); neighbour.position.set(AD_SITE.x, 0, AD_SITE.z); scene.add(neighbour);
-box(neighbour, 13, 135, 13, cityMaterial(1.2, 2.4, 0.4), 0, -82.5, 0);
+box(neighbour, 13, 135, 13, cityMaterial(1.2, 2.4, 0.4), 0, -82.5, 0).renderOrder = BEHIND;
 box(neighbour, 14, 0.4, 14, mat("#343b49"), 0, -15, 0);
 for (const x of [-5, 5]) box(neighbour, 0.4, 5, 0.4, mat("#7d8591"), x, -12.5, 3);
 box(neighbour, 20.6, 10.6, 0.5, mat("#b49a65", { metalness: 0.6 }), 0, -5, 3);
@@ -749,25 +715,11 @@ function updateBillboard(apartments, now) {
 }
 updateBillboard([], 0);
 
-// Un peu de vie à l'extérieur : circulation sur les rues entre les îlots et avions lointains.
+// Un peu de vie à l'extérieur : avions lointains et oiseaux autour de la tour (les voitures, les parcs et les lampadaires
+// du pied de la tour ont été retirés : invisibles depuis l'étage regardé, ils coûtaient une dizaine d'appels de dessin).
 const outside = new THREE.Group();
 scene.add(outside);
 const reducedOutsideMotion = matchMedia("(prefers-reduced-motion: reduce)");
-const traffic = [];
-for (let i = 0; i < 24; i++) {
-  const car = new THREE.Group(), direction = i % 2 ? 1 : -1;
-  const axis = i % 3 ? "x" : "z", lane = (Math.floor(i / 3) - 6) * CELL + CELL / 2;
-  box(car, 1.1, 0.6, 2.5, mat(["#344b65", "#a58b62", "#713d45"][i % 3]), 0, 0.5, 0);
-  box(car, 0.85, 0.45, 1.2, mat("#172337"), 0, 1, 0);
-  for (const x of [-0.38, 0.38]) {
-    box(car, 0.22, 0.18, 0.08, glow("#fff0ce"), x, 0.6, 1.28);
-    box(car, 0.22, 0.16, 0.08, glow("#e34d48"), x, 0.6, -1.28);
-  }
-  car.rotation.y = axis === "x" ? direction * Math.PI / 2 : direction < 0 ? Math.PI : 0;
-  car.position.y = GROUND + 0.18;
-  car.position[axis === "x" ? "z" : "x"] = lane + direction * 1.1;
-  traffic.push({ car, axis, direction, start: i * 14, speed: 5 + i % 5 });
-}
 const planes = [];
 for (let i = 0; i < 2; i++) {
   const plane = new THREE.Group();
@@ -785,15 +737,12 @@ for (let i = 0; i < 6; i++) {
   const wings = [-1, 1].map(side => box(bird, 0.45, 0.04, 0.15, mat("#a8b1c6"), side * 0.22, 0, 0));
   birds.push({ bird, wings });
 }
-// Voitures, avions et oiseaux restent des groupes animés hors scène ; on en dessine les pièces en instances
-// (une dizaine d'appels de dessin au lieu de près de 170).
-const outsideCrowds = [instancedCrowd(traffic.map(c => c.car), outside), instancedCrowd(planes, outside), instancedCrowd(birds.map(b => b.bird), outside)];
+// Avions et oiseaux restent des groupes animés hors scène ; on en dessine les pièces en instances.
+const outsideCrowds = [instancedCrowd(planes, outside), instancedCrowd(birds.map(b => b.bird), outside)];
 const syncOutside = () => { for (const sync of outsideCrowds) sync(); };
 function animateOutside(t) {
   // Le temps est figé si le visiteur demande moins de mouvement.
   const time = reducedOutsideMotion.matches ? 0 : t;
-  for (const { car, axis, direction, start, speed } of traffic)
-    car.position[axis] = direction * ((start + time * speed) % 500 - 250);
   birds.forEach(({ bird, wings }, i) => {
     const angle = time * 0.12 + i * 0.16;
     bird.position.set(Math.cos(angle) * (29 + i), 5 + Math.sin(angle * 2 + i) * 1.2, Math.sin(angle) * (29 + i));
@@ -805,12 +754,13 @@ function animateOutside(t) {
 
 // La tour sous l'étage regardé, jusqu'au sol : ses fenêtres tombent sur les étages.
 const tower = new THREE.Mesh(new THREE.BoxGeometry(20.6, 1, 12.8).translate(0, -0.5, 0), cityMaterial(1.3, FLOOR_H / 2, 0.45));
+tower.renderOrder = BEHIND;
 scene.add(tower);
 let towerTop = -0.5;
 
 // ---------- un étage : la coque commune (dalle, vitres, ascenseur) ----------
 // Vitres, porte d'ascenseur et alarme : matériaux et géométries communs à tous les étages, créés une fois.
-const GLASS = new THREE.MeshPhysicalMaterial({ color: "#8fb6ff", transparent: true, opacity: 0.07, roughness: 0.05, metalness: 0.1, depthWrite: false, side: THREE.DoubleSide });
+const GLASS = new THREE.MeshStandardMaterial({ color: "#8fb6ff", transparent: true, opacity: 0.07, roughness: 0.05, metalness: 0.1, depthWrite: false, side: THREE.DoubleSide });
 const GLASS_BACK = new THREE.PlaneGeometry(20.8, FLOOR_H - 0.5), GLASS_SIDE = new THREE.PlaneGeometry(13, FLOOR_H - 0.5);
 const ELEV_OFF = mat("#2a3042", { metalness: 0.6, roughness: 0.25 }), ELEV_ON = glow("#f1cd85", 0.9);
 const ALARM_OFF = mat("#3a3f52"), ALARM_ON = glow("#ff3b3b", 3);
@@ -887,6 +837,7 @@ function disposeFloor(f) {
   f.group.traverse(o => {
     if (o.isCSS2DObject || o.isCSS3DObject) o.element.remove();
     if (o.geometry?.userData.baked) o.geometry.dispose();
+    if (o.isInstancedMesh && o !== confetti.mesh) o.dispose(); // tampons de ses instances (sa géométrie, partagée, reste)
   });
 }
 
@@ -939,6 +890,10 @@ function buildResident(apt, wing, officeTier) {
   const cyber = (wing.id ?? "work") === "work" && apt.profile?.theme === "cyberpunk";
   const prestige = (wing.id ?? "work") === "work" && apt.profile?.theme === "prestige";
   const PM = prestige ? prestigeMaterials() : null, deskCans = [], bulbs = [], drops = [];
+  // Studio de la salle : seulement sur l'aile principale ; « auto » partout ailleurs.
+  const room = cleanRoom((wing.id ?? "work") === "work" ? apt.profile?.room : null);
+  const accent = apt.profile?.accent ?? wing.accent ?? "#f1cd85";
+  const ministre = room.bureaux === "ministre" || (room.bureaux === "auto" && prestige);
   const f = shell(cyber ? CYBER.floor : prestige ? "#17110d" : wing.floor ?? officeTier.open ?? "#232a39");
   const g = f.group;
   const wingId = wing.id ?? "work";
@@ -950,12 +905,12 @@ function buildResident(apt, wing, officeTier) {
   const openMat = cyber ? CYBER.open : wingId === "work" ? officeTier.open : "#2a3142";
   const bossMat = cyber ? CYBER.boss : wingId === "work" ? officeTier.boss : "#3a3029";
   const c = P(OPEN.x + OPEN.w / 2, OPEN.y + OPEN.h / 2), b = P(BOSS.x + BOSS.w / 2, BOSS.y + BOSS.h / 2);
-  if (prestige) prestigeFloor(f, g, PM, bulbs, drops);
+  if (prestige) prestigeFloor(f, g, PM, bulbs, drops, room);
   else {
-    box(g, OPEN.w * S, 0.03, OPEN.h * S, mat(openMat), c.x, 0.05, c.z);
-    box(g, BOSS.w * S, 0.03, BOSS.h * S, mat(bossMat), b.x, 0.05, b.z);
+    box(g, OPEN.w * S, 0.03, OPEN.h * S, room.sol !== "auto" ? roomFloor(room.sol, OPEN) : mat(openMat), c.x, 0.05, c.z);
+    box(g, BOSS.w * S, 0.03, BOSS.h * S, room.solBureau !== "auto" ? roomFloor(room.solBureau, BOSS) : mat(bossMat), b.x, 0.05, b.z);
   }
-  const wallStyle = prestige ? { m: PM.walnut, trim: PM.gold } : null;
+  const wallStyle = roomWalls(room.murs, accent) ?? (prestige ? { m: PM.walnut, trim: PM.gold } : null);
   walls(g, OPEN, ["w", "e"], wallStyle);
   walls(g, BOSS, ["w"], wallStyle);
   f.roomTags = [label(g, "Open space", "room-tag", P(OPEN.x, 0).x + 0.25, 0.08, P(0, OPEN.y).z + 0.4),
@@ -968,7 +923,6 @@ function buildResident(apt, wing, officeTier) {
   } else if (wing.sign) {
     sign(g, wing.sign, 5, 1.1, { color: wing.accent ?? "#9ab4ff", font: "700 90px Sora, sans-serif", w: 720, h: 140 }, 0, 3.35, -6.35);
   }
-  const accent = apt.profile?.accent ?? wing.accent ?? "#f1cd85";
   f.accentGlow = box(g, 7, 0.06, 0.06, glow(accent, 0.75 + officeTier.id * 0.12), 0, 2.6, -6.42);
   f.profileAccent = accent;
   if (wingId === "ops") {
@@ -990,7 +944,7 @@ function buildResident(apt, wing, officeTier) {
 
   // Open space : 12 postes. L'agent s'assoit au nord du bureau, face à son écran (vers la caméra).
   f.screens = DESKS.map((d, k) => {
-    if (prestige) return prestigeDesk(g, PM, d, k, deskCans); // bureau de ministre, mêmes places et même assise
+    if (ministre) return prestigeDesk(g, prestigeMaterials(), d, k, deskCans); // bureau de ministre, mêmes places et même assise
     const dc = P(d.cx, d.cy), ch = P(d.cx, d.cy - 52);
     const ds = wingId === "work" ? officeTier.deskScale : 2;
     const cs = wingId === "work" ? officeTier.chairScale : 1;
@@ -1270,7 +1224,11 @@ function buildResident(apt, wing, officeTier) {
   if (wingId === "work") { placeDecor(g, f, apt); buildWorkBoard(f, g); }
   if (wingId === "work" && apt.profile?.tv) giantTv(f, apt.profile.tv);
   if (cyber) cyberpunk(f, apt);
-  if (prestige) { prestigeChandeliers(g, PM, bulbs, drops); prestigeCans(g, PM, deskCans); }
+  roomObjects(f, g, room, accent, bulbs, drops, prestige);
+  if (room.lumiere !== "auto") f.warmSpot.color.set(ROOM_LIGHTS[room.lumiere]);
+  // Lustres (Prestige ou studio) et canettes des bureaux de ministre : une série d'instances chacun.
+  if (bulbs.length) prestigeChandeliers(g, prestigeMaterials(), bulbs, drops);
+  if (deskCans.length) prestigeCans(g, prestigeMaterials(), deskCans);
   return finishFloor(f);
 }
 
@@ -1456,7 +1414,7 @@ function giantTv(f, tv) {
 // ---------- ambiance cyberpunk ----------
 // Néons magenta et cyan, sol à grille, salle serveurs, borne d'arcade et hologramme ; les écrans affichent les textes du résident.
 const CYBER = { floor: "#07060f", open: "#0d0b1c", boss: "#150c24", pink: "#ff2bd6", cyan: "#00e5ff", violet: "#8b5cff" };
-const themeKey = a => JSON.stringify([a.profile?.theme ?? "classique", a.profile?.screens ?? [], a.profile?.tv ?? null]);
+const themeKey = a => JSON.stringify([a.profile?.theme ?? "classique", a.profile?.screens ?? [], a.profile?.tv ?? null, a.profile?.accent ?? null, cleanRoom(a.profile?.room)]);
 const screenTexts = a => {
   const own = a.profile?.screens?.length ? a.profile.screens : [a.name];
   return [0, 1, 2].map(k => own[k % own.length]);
@@ -2374,10 +2332,10 @@ function prestigeBoss(f, g, M, drops, bulbs) {
   f.prestige = { table, flag, flagBase: Float32Array.from(flagGeo.attributes.position.array) };
 }
 // Tout l'étage Prestige (aile principale) : sols, boiseries, tapis, lustres, lumière chaude.
-function prestigeFloor(f, g, M, bulbs, drops) {
+function prestigeFloor(f, g, M, bulbs, drops, room) {
   const c = P(OPEN.x + OPEN.w / 2, OPEN.y + OPEN.h / 2), b = P(BOSS.x + BOSS.w / 2, BOSS.y + BOSS.h / 2);
-  box(g, OPEN.w * S, 0.03, OPEN.h * S, M.parquet, c.x, 0.05, c.z);
-  box(g, BOSS.w * S, 0.03, BOSS.h * S, M.marble, b.x, 0.05, b.z);
+  box(g, OPEN.w * S, 0.03, OPEN.h * S, room.sol !== "auto" ? roomFloor(room.sol, OPEN) : M.parquet, c.x, 0.05, c.z);
+  box(g, BOSS.w * S, 0.03, BOSS.h * S, room.solBureau !== "auto" ? roomFloor(room.solBureau, BOSS) : M.marble, b.x, 0.05, b.z);
   // Grands tapis sous les deux rangées de bureaux, hors de l'allée centrale.
   for (const [y0, y1] of [[62, 290], [335, 592]]) {
     const a = P(62, y0), e = P(612, y1);
@@ -2403,6 +2361,153 @@ function tickPrestige(p, dt, t) {
   const pos = p.flag.geometry.attributes.position, base = p.flagBase;
   for (let i = 0; i < pos.count; i++) { const x = base[i * 3]; pos.array[i * 3 + 2] = Math.sin(x * 14 - t * 5) * 0.035 * (x / 0.3); }
   pos.needsUpdate = true;
+}
+
+// ---------- studio de la salle ----------
+// Choix du résident (profile.room, voir room-data.js) posés sur son ambiance : sols de l'open space et du bureau,
+// cloisons, bureaux, couleur de la lumière et quelques objets gratuits. « auto » garde ce que l'ambiance fait.
+// Textures dessinées une fois, matériaux partagés par tous les étages : l'étage fusionné reste aussi léger.
+// Guirlande : fil et ampoules partagés par tous les étages (l'aperçu du studio reconstruit l'étage à chaque choix).
+const GARLAND_WIRE = new THREE.LineBasicMaterial({ color: "#2a2620" }), GARLAND_BULB = new THREE.MeshBasicMaterial({ color: "#ffd47e" });
+// Géométries propres à un étage : libérées avec lui (disposeFloor).
+const own = geometry => { geometry.userData.baked = true; return geometry; };
+const ROOM_LIGHTS = { chaude: "#ffc98a", naturelle: "#fff3e0", froide: "#bcd6ff", neon: "#ff5fd9", coucher: "#ff9255", aurore: "#6ff0c4" };
+// Taille réelle (m) d'une répétition de chaque texture de sol.
+const ROOM_TILE = { chene: 1.6, chevrons: 2.8, marbre: 1.6, beton: 3, tatami: 1.8, damier: 1.2, gazon: 2 };
+let roomKit = null;
+function roomTextures() {
+  if (roomKit) return roomKit;
+  const rand = (() => { let r = 11; return () => (r = (r * 16807) % 2147483647) / 2147483647; })();
+  const PM = prestigeMaterials();
+  roomKit = {
+    // Lames de chêne clair, longueurs décalées, fil du bois.
+    chene: drawnTexture(512, 512, (x, W, H) => {
+      const tones = ["#c8a06e", "#bf9563", "#d1aa79", "#b88b58", "#c49a66"];
+      for (let row = 0; row < 8; row++) {
+        let at = -rand() * 200;
+        while (at < W) {
+          const len = 160 + rand() * 180;
+          x.fillStyle = tones[Math.floor(rand() * tones.length)]; x.fillRect(at, row * 64, len, 64);
+          x.strokeStyle = "rgba(110,72,38,0.18)"; x.lineWidth = 1;
+          for (let k = 0; k < 5; k++) { const y = row * 64 + 8 + rand() * 48; x.beginPath(); x.moveTo(at, y); x.bezierCurveTo(at + len / 3, y + rand() * 6 - 3, at + len * 2 / 3, y + rand() * 6 - 3, at + len, y); x.stroke(); }
+          x.fillStyle = "rgba(70,44,22,0.45)"; x.fillRect(at, row * 64, 2, 64);
+          at += len;
+        }
+        x.fillStyle = "rgba(70,44,22,0.5)"; x.fillRect(0, row * 64, W, 2);
+      }
+    }),
+    // Béton ciré : gris nuancé, taches douces et joints de coulage.
+    beton: drawnTexture(512, 512, (x, W, H) => {
+      x.fillStyle = "#8a8c8f"; x.fillRect(0, 0, W, H);
+      for (let k = 0; k < 40; k++) {
+        const gx = rand() * W, gy = rand() * H, r = 30 + rand() * 90, gr = x.createRadialGradient(gx, gy, 0, gx, gy, r);
+        gr.addColorStop(0, rand() > 0.5 ? "rgba(255,255,255,0.08)" : "rgba(30,30,34,0.1)"); gr.addColorStop(1, "rgba(0,0,0,0)");
+        x.fillStyle = gr; x.fillRect(gx - r, gy - r, r * 2, r * 2);
+      }
+      for (let k = 0; k < 2500; k++) { x.fillStyle = `rgba(${rand() > 0.5 ? "255,255,255" : "20,20,24"},${(0.04 + rand() * 0.08).toFixed(2)})`; x.fillRect(rand() * W, rand() * H, 1.5, 1.5); }
+      x.fillStyle = "rgba(40,40,44,0.5)"; x.fillRect(0, 0, W, 3); x.fillRect(0, 0, 3, H);
+    }),
+    // Tatamis : deux nattes paille, tressage fin, bordures de tissu sombre sur les grands côtés.
+    tatami: drawnTexture(512, 512, (x, W, H) => {
+      for (const y0 of [0, H / 2]) {
+        x.fillStyle = "#c9c58d"; x.fillRect(0, y0, W, H / 2);
+        for (let k = 0; k < H / 2; k += 4) { x.fillStyle = k % 8 ? "rgba(120,118,60,0.16)" : "rgba(255,255,220,0.12)"; x.fillRect(0, y0 + k, W, 2); }
+        x.fillStyle = "#2c3a2a"; x.fillRect(0, y0, W, 14); x.fillRect(0, y0 + H / 2 - 14, W, 14);
+        x.fillStyle = "rgba(90,80,40,0.45)"; x.fillRect(0, y0, 3, H / 2);
+      }
+    }),
+    // Damier noir et crème, joints fins.
+    damier: drawnTexture(256, 256, (x, W) => {
+      for (let i = 0; i < 2; i++) for (let j = 0; j < 2; j++) { x.fillStyle = (i + j) % 2 ? "#151515" : "#e6dfcf"; x.fillRect(i * W / 2, j * W / 2, W / 2, W / 2); }
+      x.strokeStyle = "rgba(90,84,74,0.6)"; x.lineWidth = 2; x.strokeRect(0, 0, W, W); x.beginPath(); x.moveTo(W / 2, 0); x.lineTo(W / 2, W); x.moveTo(0, W / 2); x.lineTo(W, W / 2); x.stroke();
+    }),
+    chevrons: PM.parquet.map, marbre: PM.marble.map, gazon: PM.green.map,
+    floors: new Map(),
+  };
+  return roomKit;
+}
+const ROOM_FLOOR_FINISH = { chene: { roughness: 0.55 }, chevrons: { roughness: 0.42, metalness: 0.05 }, marbre: { roughness: 0.24, metalness: 0.05 },
+  beton: { roughness: 0.7 }, tatami: { roughness: 0.9 }, damier: { roughness: 0.3, metalness: 0.05 }, gazon: { roughness: 0.95 } };
+// Matériau d'un sol pour une pièce (open space ou bureau) : la texture garde sa taille réelle quelle que soit la pièce.
+function roomFloor(kind, r) {
+  if (kind === "resine") return mat("#0b0c10", { roughness: 0.12, metalness: 0.3 });
+  const K = roomTextures(), w = r.w * S, h = r.h * S, key = `${kind}:${w}:${h}`;
+  if (!K.floors.has(key)) {
+    const t = K[kind].clone();
+    t.wrapS = t.wrapT = THREE.RepeatWrapping; t.repeat.set(w / ROOM_TILE[kind], h / ROOM_TILE[kind]); t.needsUpdate = true;
+    K.floors.set(key, new THREE.MeshStandardMaterial({ map: t, ...ROOM_FLOOR_FINISH[kind] }));
+  }
+  return K.floors.get(key);
+}
+// Cloisons : matériau et liseré (comme la boiserie Prestige), null pour garder ceux de l'ambiance.
+function roomWalls(kind, accent) {
+  const PM = kind === "noyer" || kind === "noir" ? prestigeMaterials() : null;
+  switch (kind) {
+    case "ardoise": return { m: mat("#39415a") };
+    case "noyer": return { m: PM.walnut, trim: PM.gold };
+    case "blanc": return { m: mat("#e7e3db", { roughness: 0.65 }), trim: mat("#b8b3a8", { roughness: 0.5 }) };
+    case "beton": return { m: mat("#7c7e81", { roughness: 0.95 }) };
+    case "noir": return { m: mat("#141518", { roughness: 0.4 }), trim: PM.brass };
+    case "neon": return { m: mat("#0d0b1c", { roughness: 0.5 }), trim: glow(accent, 2.2) };
+    default: return null;
+  }
+}
+// Objets gratuits du studio, dans des places libres : jamais sur un poste, l'allée, le décor acheté ni les enseignes.
+function roomObjects(f, g, room, accent, bulbs, drops, prestige) {
+  const has = new Set(room.objets);
+  if (has.has("lustres") && !prestige) {
+    const PM = prestigeMaterials();
+    for (const x of [250, 420]) chandelier(g, PM, P(x, LANE).x, P(x, LANE).z, 0.55, bulbs, drops);
+  }
+  if (has.has("guirlande")) {
+    // Guirlande guinguette le long de la vitre du fond, au-dessus du nom : quatre arcs, ampoules en une série d'instances.
+    const points = [], spans = 4, per = 9;
+    for (let s = 0; s < spans; s++) for (let k = 0; k <= per; k++) {
+      if (s && !k) continue;
+      const u = k / per, x = -10.2 + (s + u) * 20.4 / spans;
+      points.push(new THREE.Vector3(x, 4.66 - Math.sin(u * Math.PI) * 0.22, -6.18));
+    }
+    g.add(new THREE.Line(own(new THREE.BufferGeometry().setFromPoints(points)), GARLAND_WIRE));
+    const garland = new THREE.InstancedMesh(orbGeometry, GARLAND_BULB, points.length), m4 = new THREE.Matrix4();
+    points.forEach((p, i) => garland.setMatrixAt(i, m4.makeScale(0.75, 1, 0.75).setPosition(p.x, p.y - 0.07, p.z)));
+    g.add(garland);
+  }
+  if (has.has("bambous")) {
+    // Deux jardinières de bambous contre la cloison du fond de l'open space, entre les colonnes de postes.
+    const stone = mat("#2b2d30", { roughness: 0.8 }), stalk = mat("#8fae4f", { roughness: 0.6 }), node = mat("#6c8a37"), leaf = mat("#4f8f3e", { roughness: 0.8 });
+    for (const px of [250, 420]) {
+      const p = P(px, 33);
+      box(g, 0.95, 0.34, 0.3, stone, p.x, 0.17, p.z);
+      box(g, 0.9, 0.02, 0.25, mat("#3b2a1c"), p.x, 0.34, p.z);
+      for (let k = 0; k < 6; k++) {
+        const x = p.x - 0.36 + k * 0.145, hgt = 1.7 + ((k * 7) % 5) * 0.16;
+        cyl(g, 0.022, hgt, stalk, x, 0.34 + hgt / 2, p.z + ((k % 2) - 0.5) * 0.08, 6);
+        for (let y = 0.7; y < hgt; y += 0.42) cyl(g, 0.027, 0.02, node, x, 0.34 + y, p.z + ((k % 2) - 0.5) * 0.08, 6);
+        for (let j = 0; j < 3; j++) {
+          const l = new THREE.Mesh(ballGeometry, leaf); l.scale.set(0.16, 0.035, 0.06);
+          l.position.set(x + (j - 1) * 0.08, 0.34 + hgt - j * 0.18, p.z + ((k + j) % 2 - 0.5) * 0.12); l.rotation.y = k + j * 1.7; l.rotation.z = (j - 1) * 0.5; g.add(l);
+        }
+      }
+    }
+  }
+  if (has.has("affiches")) {
+    // Trois affiches rétro encadrées sur la vitre du fond de l'open space, à gauche du nom de l'étage.
+    const PM = prestigeMaterials(), planes = [];
+    [-9.35, -8.45, -7.55].forEach((x, i) => {
+      const plane = new THREE.PlaneGeometry(0.76, 1.0), uv = plane.attributes.uv;
+      for (let k = 0; k < uv.count; k++) uv.setX(k, (i + uv.getX(k)) / 3);
+      planes.push(plane.translate(x, 3.75, -6.37));
+      box(g, 0.82, 1.06, 0.03, mat("#1a1a1d", { roughness: 0.5 }), x, 3.75, -6.4);
+    });
+    g.add(new THREE.Mesh(own(mergeGeometries(planes)), PM.posters));
+  }
+  if (has.has("neons")) {
+    // Néons à la couleur du résident : au pied et en haut des vitres, et le long des cloisons de l'open space.
+    const tube = glow(accent, 2.2);
+    box(g, 20.4, 0.04, 0.04, tube, 0, 0.06, -6.3);
+    box(g, 20.4, 0.04, 0.04, tube, 0, 4.62, -6.3);
+    for (const x of [-10.25, 10.25]) { box(g, 0.04, 0.04, 12.4, tube, x, 0.06, 0); box(g, 0.04, 0.04, 12.4, tube, x, 4.62, 0); }
+  }
 }
 
 // ---------- étages communs ----------
@@ -4485,7 +4590,8 @@ function syncFloors(list) {
   residents = list;
   const residentKeys = list.flatMap(a => wingsOf(a).map(w => `${a.slug}:${w.id}`));
   order = [...SHARED.filter(d => d.top).map(d => d.id), ...residentKeys, ...SHARED.filter(d => !d.top).map(d => d.id)];
-  for (const a of list) {
+  for (const a0 of list) {
+    const a = withPreview(a0); // studio ouvert : l'étage du résident suit le formulaire
     for (const w of wingsOf(a)) {
       const k = `${a.slug}:${w.id}`;
       const tier = w.id === "work" ? officeTierForLevel(a.game?.level ?? 1) : null;
@@ -5754,28 +5860,88 @@ $("#moreWrap").addEventListener("focusout", e => { if (!$("#moreWrap").contains(
 // Hauteur réelle de l'en-tête (une ou deux lignes) : les panneaux se placent juste dessous.
 new ResizeObserver(() => document.documentElement.style.setProperty("--top-h", `${$("#topBar").offsetHeight}px`)).observe($("#topBar"));
 
+// ---------- studio de mon étage ----------
+// Aperçu en direct : tant que le studio est ouvert, l'étage du résident est construit avec les choix du formulaire
+// (roomPreview), par-dessus l'état reçu du serveur. Fermer sans enregistrer le remet tel qu'il était. Le studio ne
+// bloque pas la tour : on peut tourner autour de son étage pendant qu'on le compose.
+let roomPreview = null;
+function withPreview(a) {
+  return roomPreview?.slug === a.slug ? { ...a, profile: { ...a.profile, ...roomPreview.profile } } : a;
+}
+const studioForm = $("#customizeForm"), studioDlg = $("#customizeDlg");
+for (const select of studioForm.querySelectorAll("select[data-room]"))
+  select.innerHTML = ROOM_OPTIONS[select.dataset.room].map(([v, l]) => `<option value="${v}">${esc(l)}</option>`).join("");
+$("#roomObjects").innerHTML = ROOM_OPTIONS.objets.map(([v, l]) =>
+  `<label class="object-chip"><input type="checkbox" name="objets" value="${v}"><span>${esc(l)}</span></label>`).join("");
+$("#roomPresets").innerHTML = ROOM_PRESETS.map(p => `<button type="button" class="preset-card" data-preset="${p.id}" aria-pressed="false">
+  <span class="preset-icon" aria-hidden="true">${p.icon}</span><b>${esc(p.name)}</b><small>${esc(p.desc)}</small></button>`).join("");
+function studioDraft() {
+  const fd = new FormData(studioForm);
+  return {
+    theme: fd.get("theme"), accent: fd.get("accent"),
+    room: cleanRoom({ sol: fd.get("sol"), solBureau: fd.get("solBureau"), murs: fd.get("murs"), bureaux: fd.get("bureaux"), lumiere: fd.get("lumiere"), objets: fd.getAll("objets") }),
+  };
+}
+function fillStudio(theme, room) {
+  const r = cleanRoom(room);
+  studioForm.theme.value = theme;
+  for (const k of ["sol", "solBureau", "murs", "bureaux", "lumiere"]) studioForm[k].value = r[k];
+  for (const box of studioForm.querySelectorAll('input[name="objets"]')) box.checked = r.objets.includes(box.value);
+}
+function markPreset() {
+  const d = studioDraft(), id = presetOf(d.theme, d.room);
+  for (const b of $("#roomPresets").children) b.setAttribute("aria-pressed", String(b.dataset.preset === id));
+}
+function previewStudio() {
+  const slug = myApt()?.slug;
+  if (!slug) return;
+  roomPreview = { slug, profile: studioDraft() };
+  markPreset();
+  if (data) { syncFloors(data.apartments); render(); }
+}
 function showCustomize() {
-  const me = JSON.parse(localStorage.getItem(ME) ?? "null");
-  const apt = data?.apartments.find(a => a.slug === me?.slug);
+  const apt = myApt();
   if (!apt) return;
-  const form = $("#customizeForm");
-  form.accent.value = apt.profile?.accent ?? "#e8c27a";
-  form.tagline.value = apt.profile?.tagline ?? "";
-  form.theme.value = apt.profile?.theme ?? "classique";
-  form.screens.value = (apt.profile?.screens ?? []).join(" / ");
-  form.tv.value = apt.profile?.tv ? tvLinks(apt.profile.tv).page : "";
-  $("#customizeDlg").showModal();
+  studioForm.accent.value = apt.profile?.accent ?? "#e8c27a";
+  studioForm.tagline.value = apt.profile?.tagline ?? "";
+  studioForm.screens.value = (apt.profile?.screens ?? []).join(" / ");
+  studioForm.tv.value = apt.profile?.tv ? tvLinks(apt.profile.tv).page : "";
+  fillStudio(apt.profile?.theme ?? "classique", apt.profile?.room);
+  markPreset();
+  $("#customizeErr").textContent = "";
+  // On regarde son propre étage pendant qu'on le compose.
+  const home = order.indexOf(`${apt.slug}:work`);
+  if (home >= 0 && home !== focus) setFocus(home);
+  studioDlg.show();
 }
 $("#customizeBtn").addEventListener("click", showCustomize);
-$("#customizeForm").addEventListener("submit", async e => {
+// Les textes et la télé ne changent pas l'étage en direct : ils s'appliquent à l'enregistrement.
+studioForm.addEventListener("change", e => { if (!e.target.closest(".studio-more")) previewStudio(); });
+$("#roomPresets").addEventListener("click", e => {
+  const preset = ROOM_PRESETS.find(p => p.id === e.target.closest("[data-preset]")?.dataset.preset);
+  if (!preset) return;
+  fillStudio(preset.theme, { ...ROOM_DEFAULT, ...preset.room });
+  previewStudio();
+});
+$("#customizeCancel").addEventListener("click", () => studioDlg.close());
+studioDlg.addEventListener("keydown", e => { if (e.key === "Escape") studioDlg.close(); });
+studioDlg.addEventListener("close", () => {
+  if (!roomPreview) return;
+  roomPreview = null;
+  if (data) { syncFloors(data.apartments); render(); }
+});
+studioForm.addEventListener("submit", async e => {
   e.preventDefault();
   const token = sessionStorage.getItem("penthouse.cle");
   if (!token) { $("#customizeErr").textContent = "Clé requise : ouvre Relier mes agents."; return; }
-  const fields = Object.fromEntries(new FormData(e.currentTarget));
+  const fields = Object.fromEntries(new FormData(e.currentTarget)), draft = studioDraft();
   $("#customizeErr").textContent = "";
   try {
-    await saveProfile(token, { accent: fields.accent, tagline: fields.tagline, theme: fields.theme, screens: fields.screens, tv: fields.tv });
-    $("#customizeDlg").close();
+    const profile = await saveProfile(token, { accent: fields.accent, tagline: fields.tagline, theme: draft.theme, room: draft.room, screens: fields.screens, tv: fields.tv });
+    // L'état local prend tout de suite le profil enregistré : l'étage ne repasse pas par l'ancien décor.
+    const apt = myApt();
+    if (apt && profile) apt.profile = profile;
+    studioDlg.close();
     await tick();
   } catch (error) { $("#customizeErr").textContent = error.message; }
 });

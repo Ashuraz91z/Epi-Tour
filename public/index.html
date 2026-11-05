@@ -117,16 +117,29 @@
   <button type="button" class="ghost" id="historyCsvBtn">Exporter CSV</button>
 </dialog>
 
-<dialog id="customizeDlg" class="dlg">
+<dialog id="customizeDlg" class="dlg room-studio" aria-labelledby="customizeTitle">
   <form method="dialog"><button class="x" aria-label="Fermer">×</button></form>
-  <h3>Personnaliser mon étage</h3>
+  <h3 id="customizeTitle">🎨 Studio de mon étage</h3>
+  <p class="studio-lead">Choisis un preset ou compose ta salle : l’étage change en direct derrière, rien n’est gardé avant « Enregistrer ».</p>
   <form id="customizeForm" class="customize-form">
-    <label>Couleur d’accent<input name="accent" type="color" value="#e8c27a"></label>
-    <label>Phrase sur ton panneau<input name="tagline" maxlength="80" placeholder="ex. Full stack la nuit"></label>
-    <label>Ambiance de l’étage<select name="theme"><option value="classique">Classique</option><option value="cyberpunk">Cyberpunk</option><option value="prestige">Prestige</option></select></label>
-    <label>Texte des écrans<input name="screens" maxlength="80" placeholder="ex. TikTok Shop / Toksy / toksy.fr"></label>
-    <label>Télé géante (lien YouTube ou Twitch, vide pour l’éteindre)<input name="tv" type="url" maxlength="500" placeholder="ex. https://www.youtube.com/watch?v=…"></label>
-    <button type="submit">Enregistrer</button>
+    <fieldset class="studio-presets"><legend>Presets</legend><div id="roomPresets" class="preset-grid"></div></fieldset>
+    <label>Ambiance de base<select name="theme"><option value="classique">Classique</option><option value="cyberpunk">Cyberpunk</option><option value="prestige">Prestige</option></select></label>
+    <div class="studio-grid">
+      <label>Sol de l’open space<select name="sol" data-room="sol"></select></label>
+      <label>Sol de ton bureau<select name="solBureau" data-room="sol"></select></label>
+      <label>Cloisons<select name="murs" data-room="murs"></select></label>
+      <label>Bureaux<select name="bureaux" data-room="bureaux"></select></label>
+      <label>Lumière<select name="lumiere" data-room="lumiere"></select></label>
+      <label>Couleur d’accent<input name="accent" type="color" value="#e8c27a"></label>
+    </div>
+    <fieldset class="studio-objects"><legend>Objets</legend><div id="roomObjects" class="object-grid"></div></fieldset>
+    <details class="studio-more">
+      <summary>Textes et télé</summary>
+      <label>Phrase sur ton panneau<input name="tagline" maxlength="80" placeholder="ex. Full stack la nuit"></label>
+      <label>Texte des écrans<input name="screens" maxlength="80" placeholder="ex. TikTok Shop / Toksy / toksy.fr"></label>
+      <label>Télé géante (lien YouTube ou Twitch, vide pour l’éteindre)<input name="tv" type="url" maxlength="500" placeholder="ex. https://www.youtube.com/watch?v=…"></label>
+    </details>
+    <div class="studio-actions"><button type="button" class="ghost" id="customizeCancel">Annuler</button><button type="submit">Enregistrer</button></div>
     <p class="err" id="customizeErr" role="alert"></p>
   </form>
 </dialog>

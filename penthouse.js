@@ -13,7 +13,7 @@ import { buyItem, onIngestEconomy, playCasino, playSport, questReward, setSubscr
 
 const ROOT = dirname(fileURLToPath(import.meta.url));
 // Version affichée dans le menu « ⋯ » : permet de vérifier que le site a bien repris la dernière version.
-export const VERSION = "2026-11-04.8";
+export const VERSION = "2026-11-05.1";
 const MAX_BODY = 256 * 1024;
 const MAX_APARTMENTS = 50;
 const acceptsGzip = req => /(?:^|,)\s*gzip\s*(?:,|$)/i.test(req.headers["accept-encoding"] ?? "");
@@ -28,6 +28,7 @@ const FILES = {
   "/upgrades-client.js": ["public/upgrades-client.js", "text/javascript"],
   "/wings-client.js": ["public/wings-client.js", "text/javascript"],
   "/economy-data.js": ["public/economy-data.js", "text/javascript"],
+  "/room-data.js": ["public/room-data.js", "text/javascript"],
   "/economy-ui.js": ["public/economy-ui.js", "text/javascript"],
   "/sports-games.js": ["public/sports-games.js", "text/javascript"],
   "/work-ui.js": ["public/work-ui.js", "text/javascript"],

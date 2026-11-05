@@ -127,6 +127,13 @@ Chaque outil relié est un employé de l'étage. Tout est calculé par le serveu
   et lustres, douze bureaux de ministre (noyer, cuir, lampe de banquier, canette Red Bull, balle de golf), bureau présidentiel,
   vitrine à trophées, green de putting, affiches rétro de Grand Prix et un spider italien rouge des années 60 (sans marque)
   sur plateau tournant.
+- **Studio de mon étage** (« 🎨 Mon étage ») : chacun compose sa salle par-dessus l'ambiance — sol de l'open space et sol du
+  bureau (chêne, chevrons, marbre, béton ciré, tatamis, damier, résine noire, gazon), cloisons (ardoise, noyer, blanc, béton,
+  noir et laiton, néon à sa couleur), bureaux (modernes ou de ministre), couleur de la lumière et objets gratuits (lustres,
+  guirlande, bambous, affiches rétro, néons). Huit presets d'un clic : Classique, Cyberpunk, **Prestige (l'étage de
+  Paul-Adrien)**, Zen, Loft, Minimal, Club privé, Néon Tokyo. L'étage change en direct derrière la fenêtre (non modale : on
+  tourne autour), rien n'est gardé avant « Enregistrer ». Catalogue partagé client/serveur dans `public/room-data.js` ;
+  le serveur n'accepte que ses valeurs (`profile.room`). Les objets ne remplacent ni les paliers d'aménagement ni la boutique.
 - **Événement du jour**, commun à tous et tiré d'après la date : double paie, Black Friday, nuit blanche, jackpot progressif…
 - Les missions du jour rapportent aussi des P$ ; la mission « Jour de paie » demande 100 P$ de salaires.
 - Les spectateurs voient fortune, titre, paie du jour et rôles, jamais le relevé ni les abonnements.
@@ -150,6 +157,14 @@ voitures/avions/oiseaux en instances, trois lampes partagées prêtées aux éta
 textures générées une fois, DOM écrit seulement s'il change, 3D en pause pendant les dialogues de jeu, aucun flou
 d'arrière-plan au-dessus du canvas. **Règle pour la suite** : tout objet de décor animé après la construction d'un étage
 doit être rangé dans un champ `f.*` de l'étage ou passé à `live(...)`, sinon il est fusionné et reste figé.
+
+Ville (5 novembre 2026) : voitures, parcs, arbres, lampadaires et halos au pied de la tour retirés (invisibles depuis
+l'étage regardé). Les ~580 immeubles restent, mais ne sont plus éclairés pixel par pixel : la lumière du ciel, de
+l'ambiance et de la lune est calculée par sommet (matériau de base + shader des fenêtres), la ville est dessinée après les
+étages (ce qu'ils cachent n'est plus calculé), les immeubles proches d'abord, sans face du dessous ; sol, rues et trottoirs
+idem. Mesure (Chromium logiciel, 1440×900, 4 résidents, 40 agents, 9 étages) : images/s ×1,5 à ×4 selon l'étage
+(ex. Club 1,1 → 4,7, étage résident 1,7 → 3,4–5), triangles −15 à −25 %, environ dix appels de dessin de moins. Même
+résolution, même antialiasing, mêmes réglages.
 
 Benchmark reproductible, local et sans contact avec les comptes/outils réels : `node benchmark.mjs`. Maquette 20 résidents/600 sessions, 40 lectures après échauffement. Le 3 novembre 2026 : ancien chemin SQLite simulé 2,59 ms/requête, nouveau 1,40 ms ; JS 40 936 octets gzip ; état 3,3 Ko gzip. Le 4 novembre 2026, sur une autre machine (environ 5 fois plus lente sur l'ancien chemin), avec la gamification et l'économie : 14,1 ms contre 11,5 ms ; état 8,4 Ko gzip ; app.js 60 Ko gzip (plus economy-ui.js, chargé à part). Mesures locales indicatives, pas une mesure des FPS sur les appareils des utilisateurs.
 

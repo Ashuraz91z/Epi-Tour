@@ -246,22 +246,23 @@ test("extérieur : trajectoires bornées et réduction des animations", async ()
   const { runInNewContext } = await import("node:vm");
   const source = readFileSync(new URL("./public/app.js", import.meta.url), "utf8");
   const motion = source.slice(source.indexOf("function animateOutside(t)"), source.indexOf("// La tour sous l'étage"));
-  const car = { position: {} }, plane = { position: {} };
+  const plane = { position: {} };
   const bird = { position: { set(...v) { this.values = v; } }, rotation: {} };
   const wings = [{ rotation: {} }, { rotation: {} }];
-  const context = { traffic: [{ car, axis: "x", direction: -1, start: 0, speed: 5 }], planes: [plane], birds: [{ bird, wings }], reducedOutsideMotion: { matches: false } };
+  const context = { planes: [plane], birds: [{ bird, wings }], reducedOutsideMotion: { matches: false } };
   runInNewContext(motion + "; animateOutside(1e6)", context);
-  assert.ok(Math.abs(car.position.x) <= 250);
   assert.ok(Math.abs(plane.position.x) <= 320);
   assert.ok(bird.position.values.every(Number.isFinite));
   context.reducedOutsideMotion.matches = true;
   runInNewContext("animateOutside(0)", context);
-  const frozen = JSON.stringify([car, plane, bird, wings]);
+  const frozen = JSON.stringify([plane, bird, wings]);
   runInNewContext("animateOutside(123)", context);
-  assert.equal(JSON.stringify([car, plane, bird, wings]), frozen);
+  assert.equal(JSON.stringify([plane, bird, wings]), frozen);
+  // Plus de voitures, de parcs ni de lampadaires au pied de la tour : invisibles depuis l'étage regardé, coûteux.
+  for (const gone of ["const traffic", "parksAndStreetlights", "const lamps"]) assert.ok(!source.includes(gone), gone);
 });
 
-test("ville : chaque voie de circulation repose sur une chaussée", async () => {
+test("ville : chaque rue a sa chaussée, posée sur son trottoir au niveau du sol", async () => {
   const { runInNewContext } = await import("node:vm");
   const source = readFileSync(new URL("./public/app.js", import.meta.url), "utf8");
   const meshes = [];
@@ -272,17 +273,20 @@ test("ville : chaque voie de circulation repose sur une chaussée", async () => 
   const m4 = { makeScale(...scale) { this.scale = scale; return this; }, setPosition(...position) { this.position = position; return this; } };
   runInNewContext(source.slice(source.indexOf("  const roads ="), source.indexOf("  const stars =")), {
     THREE: { InstancedMesh: Instances, BoxGeometry: class {}, BufferGeometry: class { setAttribute() {} }, Float32BufferAttribute: class {}, LineSegments: class {}, LineBasicMaterial: class {} },
-    mat() {}, scene: { add() {} }, m4, GROUND: -150, CELL: 18,
+    mat() {}, cityMaterial() {}, CITY_BOX: {}, BEHIND: 1, scene: { add() {} }, m4, GROUND: -150, CELL: 18,
   });
-  assert.equal(meshes[0].matrices.length, 58);
-  for (let i = 0; i < 24; i++) {
-    const axis = i % 3 ? 0 : 2, across = axis === 0 ? 2 : 0;
-    const lane = (Math.floor(i / 3) - 6) * 18 + 9;
-    const road = meshes[0].matrices.find(m => m.position[across] === lane && m.scale[axis] === 540);
-    assert.ok(road);
-    assert.ok(250 + 1.25 < road.scale[axis] / 2, "voiture entière sur la route, même en bout de trajet");
-    assert.ok(1.1 + 0.55 < road.scale[across] / 2, "voie et carrosserie dans la chaussée");
-    assert.equal(road.position[1] + road.scale[1] / 2, -150 + 0.18);
+  const [roads, sidewalks] = meshes;
+  assert.equal(roads.matrices.length, 58);
+  assert.equal(sidewalks.matrices.length, 58);
+  // Boîtes posées sur leur base (CITY_BOX) : le haut de la chaussée est à 0,18 m, sous le marquage (0,19 m).
+  for (let i = -14; i <= 14; i++) for (const axis of [0, 2]) {
+    const across = axis === 0 ? 2 : 0, lane = i * 18 + 9;
+    const road = roads.matrices.find(m => m.position[across] === lane && m.scale[axis] === 540);
+    const walk = sidewalks.matrices.find(m => m.position[across] === lane && m.scale[axis] === 540);
+    assert.ok(road && walk);
+    assert.ok(Math.abs(road.position[1] + road.scale[1] - (-150 + 0.18)) < 1e-9);
+    assert.ok(walk.position[1] + walk.scale[1] < road.position[1] + road.scale[1], "trottoir sous la chaussée");
+    assert.ok(walk.scale[across] > road.scale[across], "trottoir plus large que la chaussée");
   }
 });
 
@@ -1603,6 +1607,47 @@ test("thème Prestige : choisi dans « Mon étage », gardé, et un thème incon
   assert.equal(prestige.theme, "prestige");
   assert.equal(sanitizeProfile({ tagline: "Golf & GT" }, prestige).theme, "prestige", "un autre réglage ne change pas le thème");
   assert.equal(sanitizeProfile({ theme: "ferrari" }, prestige).theme, "prestige", "valeur inconnue : thème précédent gardé");
+});
+
+test("studio de la salle : choix vérifiés, gardés d'un enregistrement à l'autre, presets valides", async () => {
+  const { ROOM_OPTIONS, ROOM_PRESETS, ROOM_DEFAULT, cleanRoom, presetOf } = await import("./public/room-data.js");
+  const { THEMES } = await import("./core.js");
+  assert.deepEqual(createStore().profile.room, ROOM_DEFAULT, "nouvel étage : tout selon l'ambiance");
+  const room = sanitizeProfile({ room: { sol: "tatami", murs: "blanc", objets: ["bambous", "bambous", "piscine", 3] } }).room;
+  assert.equal(room.sol, "tatami");
+  assert.equal(room.murs, "blanc");
+  assert.equal(room.solBureau, "auto");
+  assert.deepEqual(room.objets, ["bambous"], "objets inconnus et doublons écartés");
+  const kept = sanitizeProfile({ tagline: "autre", room: { sol: "lave", lumiere: "froide" } }, { room });
+  assert.equal(kept.room.sol, "tatami", "valeur inconnue : choix précédent gardé");
+  assert.equal(kept.room.lumiere, "froide");
+  assert.deepEqual(sanitizeProfile({ tagline: "x" }, kept).room, kept.room, "un autre réglage ne touche pas la salle");
+  assert.deepEqual(cleanRoom("n'importe quoi"), ROOM_DEFAULT);
+  // Presets : ambiance connue, choix valides, reconnus une fois appliqués ; Prestige (Paul-Adrien) proposé à tous.
+  const ids = new Set();
+  for (const p of ROOM_PRESETS) {
+    assert.ok(!ids.has(p.id)); ids.add(p.id);
+    assert.ok(THEMES.includes(p.theme), p.id);
+    for (const [k, v] of Object.entries(p.room)) {
+      const list = k === "solBureau" ? "sol" : k;
+      if (k === "objets") assert.ok(v.every(o => ROOM_OPTIONS.objets.some(([id]) => id === o)), p.id);
+      else assert.ok(ROOM_OPTIONS[list].some(([id]) => id === v), `${p.id}.${k}`);
+    }
+    assert.equal(presetOf(p.theme, { ...ROOM_DEFAULT, ...p.room }), p.id);
+  }
+  assert.equal(ROOM_PRESETS.find(p => p.id === "prestige").theme, "prestige");
+  // Enregistré par l'API avec la clé, relu dans l'état.
+  const { app, url, call } = await open();
+  try {
+    const join = await call("/api/join", { name: "Decoratrice", code: "porte" }, { "X-Forwarded-For": "10.0.0.77" });
+    const { slug, token } = await join.json();
+    const cookie = join.headers.get("set-cookie").split(";")[0];
+    const zen = ROOM_PRESETS.find(p => p.id === "zen");
+    const saved = await (await call("/api/profile", { profile: { theme: zen.theme, room: zen.room } }, { Cookie: cookie, "X-Tour-Token": token })).json();
+    assert.deepEqual(saved.profile.room, cleanRoom(zen.room));
+    const state = await (await fetch(url + "/api/state", { headers: { cookie } })).json();
+    assert.equal(presetOf(state.apartments.find(a => a.slug === slug).profile.theme, state.apartments.find(a => a.slug === slug).profile.room), "zen");
+  } finally { app.close(); }
 });
 
 test("migration des doublons : trois étages de Paul en un, Linnix dans Arthur, Danny et les autres intacts, une seule fois", async () => {

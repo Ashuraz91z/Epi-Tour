@@ -791,3 +791,40 @@ dialog::backdrop { background: #000000b8; }
 .os-install summary { cursor: pointer; font-weight: 600; }
 .key-needed { border: 1px solid var(--gold); border-radius: 12px; padding: 12px 14px; margin: 8px 0 12px; }
 .key-needed .reuse-key { display: grid; gap: 8px; }
+
+/* Studio de mon étage : fenêtre non modale à droite (l'étage reste visible et se tourne pendant qu'on le compose),
+   feuille du bas sur téléphone. */
+.dlg.room-studio { position: fixed; inset: 64px 16px 16px auto; margin: 0; width: min(400px, calc(100vw - 32px));
+  max-height: calc(100dvh - 80px); overflow: auto; z-index: 30; padding: 18px 18px 14px; }
+.room-studio h3 { padding-right: 36px; }
+.room-studio .studio-lead { margin: 0 0 4px; font-size: 13px; }
+.room-studio label { display: grid; gap: 4px; font-size: 13px; color: var(--mute); }
+.room-studio select, .room-studio input:not([type="checkbox"]) { font: inherit; font-size: 14px; color: var(--fg); background: #0c0f19;
+  border: 1px solid var(--line); border-radius: 8px; padding: 7px 9px; min-height: 36px; }
+.room-studio select, .room-studio input:not([type="checkbox"]) { width: 100%; min-width: 0; }
+.room-studio input[type="color"] { padding: 2px 4px; }
+.room-studio fieldset { border: 0; margin: 0; padding: 0; min-width: 0; }
+.room-studio legend { font-size: 12px; letter-spacing: .08em; text-transform: uppercase; color: var(--gold); margin-bottom: 6px; padding: 0; }
+.preset-grid { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 8px; }
+.customize-form .preset-card { display: grid; grid-template-columns: auto 1fr; gap: 0 8px; align-items: center; text-align: left;
+  padding: 8px 10px; background: #0c0f19; color: var(--fg); border: 1px solid var(--line); border-radius: 10px; font-weight: 400; }
+.preset-card .preset-icon { grid-row: span 2; font-size: 22px; }
+.preset-card b { font-size: 13px; }
+.preset-card small { font-size: 11px; line-height: 1.3; color: var(--mute); }
+.customize-form .preset-card:hover { border-color: #e8c27a88; }
+.customize-form .preset-card[aria-pressed="true"] { border-color: var(--gold); background: #e8c27a1c; }
+.studio-grid { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 10px; }
+.object-grid { display: flex; flex-wrap: wrap; gap: 6px; }
+.room-studio .object-chip { display: inline-flex; align-items: center; gap: 6px; padding: 6px 10px; border: 1px solid var(--line);
+  border-radius: 999px; background: #0c0f19; color: var(--fg); cursor: pointer; }
+.object-chip:has(input:checked) { border-color: var(--gold); background: #e8c27a1c; }
+.object-chip input { margin: 0; accent-color: var(--gold); }
+.room-studio .studio-more { border-top: 1px solid var(--line); padding: 8px 0 0; display: grid; gap: 10px; }
+.room-studio .studio-more[open] { gap: 10px; }
+.room-studio .studio-more > label { margin-top: 8px; }
+.studio-actions { display: grid; grid-template-columns: 1fr 2fr; gap: 8px; position: sticky; bottom: -14px; padding: 8px 0 2px; background: #161a26; }
+.customize-form .studio-actions .ghost { background: transparent; color: var(--gold); border: 1px solid #e8c27a55; }
+@media (max-width: 760px) {
+  .dlg.room-studio { inset: auto 8px 8px 8px; width: auto; max-height: 58dvh; }
+  .preset-card small { display: none; }
+}

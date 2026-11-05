@@ -2,12 +2,13 @@
 // Repris de la v1 Python (srv/tour/tour.py), sans l'interface.
 import { createGame, publicGame } from "./gamify.js";
 import { createEconomy, publicEconomy } from "./economy.js";
+import { ROOM_DEFAULT, cleanRoom } from "./public/room-data.js";
 
 export function createStore() {
   // sessions : par clé "src:machine:session" ; usage : quotas par fournisseur ;
   // seen : dernier signe de vie par machine ; stats : compteurs par jour ; health : services d'Hermes.
   return { sessions: {}, feed: [], usage: {}, seen: {}, stats: {}, health: {},
-    profile: { accent: "#e8c27a", tagline: "", theme: "classique", screens: [] }, game: createGame(), economy: createEconomy() };
+    profile: { accent: "#e8c27a", tagline: "", theme: "classique", screens: [], room: { ...ROOM_DEFAULT } }, game: createGame(), economy: createEconomy() };
 }
 
 const ACCENT = /^#[0-9a-fA-F]{6}$/;
@@ -22,7 +23,9 @@ export function sanitizeProfile(raw, previous = {}) {
     : Array.isArray(previous.screens) ? previous.screens : [];
   // Télé géante de l'étage : déjà normalisée par le serveur (parseTvLink) ; null l'éteint.
   const tv = raw && "tv" in raw ? cleanTv(raw.tv) : cleanTv(previous.tv);
-  return { accent, tagline, theme, screens, tv };
+  // Studio de la salle (sols, cloisons, bureaux, lumière, objets) : valeurs connues seulement, sinon les précédentes.
+  const room = cleanRoom(raw && "room" in raw ? raw.room : previous.room, previous.room);
+  return { accent, tagline, theme, screens, tv, room };
 }
 const cleanTv = tv => tv?.kind === "youtube" && /^[A-Za-z0-9_-]{11}$/.test(tv.id ?? "") ? { kind: "youtube", id: tv.id }
   : tv?.kind === "twitch" && /^[a-z0-9_]{3,25}$/.test(tv.channel ?? "") ? { kind: "twitch", channel: tv.channel } : null;
