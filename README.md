@@ -68,6 +68,23 @@ au clavier et de la visite. Le panneau et le tableau du bureau ne gardent du « 
 les tâches livrées et les agents au travail. Rien n'est supprimé : le serveur calcule XP, salaires et missions pareil, et
 tout revient en repassant en mode complet. Code : `public/tour/mode.js` (`productive()`, `floorShown()`).
 
+## Claude Code sur le web (cloud)
+
+Une session cloud tourne dans un conteneur d'Anthropic : le suivi de ta machine ne la voit pas. Elle se relie par un hook
+Claude Code installé au démarrage du conteneur (« Relier mes agents › ☁️ Claude Code sur le web »). Dans les réglages de
+l'environnement cloud (menu de l'environnement dans la barre de titre d'une session › Modifier) :
+1. **Accès réseau** : autoriser le domaine du site (`agent.ashuraz.xyz`), en gardant les gestionnaires de paquets ;
+2. **Variables d'environnement** : `PENTHOUSE_KEY=<clé de l'étage>` (et `PENTHOUSE_PARTAGER_DEMANDES=1` pour montrer les
+   demandes ; `PENTHOUSE_URL` pour un autre site) ;
+3. **Setup script** : `curl -fsSL https://agent.ashuraz.xyz/cloud-setup.sh | sh`.
+
+`public/cloud-setup.sh` télécharge `collecteurs/tour-cloud-hook` et l'ajoute une fois par événement à
+`~/.claude/settings.json` du conteneur : tous les dépôts de l'environnement sont suivis, machine « cloud ». Le script de
+démarrage ne voit pas les variables de l'environnement : c'est le hook qui lit `PENTHOUSE_KEY` à chaque événement. Il ne
+fait rien hors du cloud (`CLAUDE_CODE_REMOTE`) ni sans clé, rend la main tout de suite, n'envoie que le résumé des outils
+(jamais leur contenu) et le texte des demandes seulement si le partage est activé. Site injoignable : la session démarre
+quand même, sans suivi.
+
 ## Mode spectateur
 
 À l’entrée, « Regarder en spectateur », ou « Mode spectateur » depuis la tour : entrer **Penthouse**. Nom seul, sans code ni appartement créé. Le spectateur parcourt les résidents et les étages communs, voit les agents et leur état ; conversations, commandes, projets, modèles, machines et état des services sont filtrés côté serveur. Les pourcentages de quotas et dates de reset Claude/ChatGPT sont visibles en lecture seule. Cookie spectateur signé distinct du cookie résident ; `/api/tv`, les clés, les événements et la suppression restent protégés. « Quitter le mode spectateur » efface ce cookie. Revenir comme résident nécessite le code habituel. Une seule salle : le penthouse actuel.

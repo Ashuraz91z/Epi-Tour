@@ -326,11 +326,14 @@ function installCommands(token) {
   // se colle telle quelle dans PowerShell, cmd ou Win+R.
   return {
     unix: `curl -fsSL ${location.origin}/install.sh | sh -s -- ${token}${replaceLink ? " --replace" : ""}${sharePrompts ? " --partager-demandes" : ""}`,
+    // Claude Code sur le web : variables à coller dans l'environnement cloud (la clé, et le partage des demandes s'il est coché).
+    cloudEnv: `PENTHOUSE_KEY=${token}${sharePrompts ? "\nPENTHOUSE_PARTAGER_DEMANDES=1" : ""}${location.origin === "https://agent.ashuraz.xyz" ? "" : `\nPENTHOUSE_URL=${location.origin}`}`,
     win: `powershell -ExecutionPolicy Bypass -NoProfile -Command "[Net.ServicePointManager]::SecurityProtocol=[Net.ServicePointManager]::SecurityProtocol -bor 3072; & ([scriptblock]::Create((irm '${location.origin}/install.ps1'))) -Key '${token}'${replaceLink ? " -Replace" : ""}${sharePrompts ? " -PartagerDemandes" : ""}"`,
   };
 }
 function installBlock(token) {
-  const { unix, win } = installCommands(token);
+  const { unix, win, cloudEnv } = installCommands(token);
+  const cloudSetup = `curl -fsSL ${location.origin}/cloud-setup.sh | sh`;
   const isWindows = /Windows/i.test(navigator.userAgent);
   const block = (title, cmd, kind, where, open) => `<details class="os-install"${open ? " open" : ""}><summary>${title}</summary>
     <p>${where}</p><div class="code" data-command="${kind}"><span>${esc(cmd)}</span><button type="button" data-copy="${esc(cmd)}">Copier</button></div></details>`;
@@ -344,6 +347,14 @@ function installBlock(token) {
     ${block("🍎 Mac", unix, "unix", "Ouvre l’app Terminal, colle, Entrée. L’app Penthouse s’installe avec : coche les outils à lancer à chaque ouverture de session.", !isWindows)}
     ${block("🪟 Windows", win, "win", "Ouvre PowerShell (menu Démarrer › « PowerShell »), colle, Entrée. L’app Penthouse s’installe avec : coche les outils à lancer à chaque ouverture de session. Python 3 est nécessaire : la commande t’explique comment l’installer s’il manque.", isWindows)}
     ${block("🐧 Linux", unix, "unix", "Dans un terminal : suivi chaque minute via cron.", false)}
+    <details class="os-install"><summary>☁️ Claude Code sur le web (cloud)</summary>
+      <p>Les sessions cloud tournent dans un conteneur, pas sur ta machine : elles se relient par un hook installé au démarrage. Sur claude.ai/code, ouvre le menu de l’environnement (barre de titre d’une session) › <b>Modifier</b>, puis :</p>
+      <ol class="cloud-steps">
+        <li><b>Accès réseau</b> : ajoute <code>${esc(location.hostname)}</code> aux domaines autorisés (en gardant les gestionnaires de paquets).</li>
+        <li><b>Variables d’environnement</b> : colle <div class="code" data-command="cloudEnv"><span>${esc(cloudEnv)}</span><button type="button" data-copy="${esc(cloudEnv)}">Copier</button></div></li>
+        <li><b>Setup script</b> : ajoute la ligne <div class="code"><span>${esc(cloudSetup)}</span><button type="button" data-copy="${esc(cloudSetup)}">Copier</button></div></li>
+      </ol>
+      <p>Les nouvelles sessions de cet environnement apparaissent sur ton étage, machine « cloud », pour tous les dépôts. Sans la clé ou hors du cloud, le hook ne fait rien.</p></details>
     <p>Ensuite, donne une tâche à Claude Code ou Codex : ton robot s’assoit à ton bureau dans les 15 secondes. Même commande sur une autre machine pour la relier au même étage.</p>
     <p class="extras-muted">Applis à télécharger à la main si tu préfères : <a href="/Penthouse.zip" download>Penthouse pour Mac</a> · <a href="/Penthouse-Windows.zip" download>Penthouse pour Windows</a>.</p>
     <details><summary>Diagnostic et clé</summary><p>Pour revérifier la connexion (Mac/Linux) :</p><div class="code"><span>python3 "$HOME/.config/tour/tour-check"</span><button type="button" data-copy='python3 "$HOME/.config/tour/tour-check"'>Copier</button></div>

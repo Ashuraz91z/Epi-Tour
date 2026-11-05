@@ -1,0 +1,75 @@
+#!/usr/bin/env python3
+"""Hook Claude Code pour les sessions dans le cloud (Claude Code sur le web) : relaie chaque événement vers l'étage.
+
+Installé dans le conteneur par cloud-setup.sh (script de démarrage de l'environnement cloud). Ne fait rien hors du
+cloud (CLAUDE_CODE_REMOTE absent) ni sans clé. Réglages lus dans les variables de l'environnement cloud :
+  PENTHOUSE_KEY                 clé de l'étage (obligatoire)
+  PENTHOUSE_URL                 site du penthouse (défaut https://agent.ashuraz.xyz)
+  PENTHOUSE_PARTAGER_DEMANDES   1 pour montrer le texte des demandes aux autres résidents (sinon non envoyé)
+Machine affichée : « cloud ». Rend la main tout de suite : l'agent n'attend jamais le réseau.
+"""
+import json
+import os
+import sys
+import urllib.parse
+import urllib.request
+
+KEEP = ("command", "cmd", "file_path", "path", "pattern", "url", "query", "description", "goal")
+
+
+def payload_of(raw, share):
+    """Ce qui part vers le site : le résumé de l'outil (commande, fichier, recherche), jamais son contenu ni son résultat."""
+    event = json.loads(raw)
+    if not isinstance(event, dict):
+        return None
+    name = event.get("hook_event_name")
+    keep = {k: event[k] for k in ("hook_event_name", "session_id", "tool_name", "cwd", "message", "agent_type", "model") if k in event}
+    if name != "PostToolUse" and isinstance(event.get("tool_input"), dict):
+        keep["tool_input"] = {k: str(v)[:200] for k, v in event["tool_input"].items() if k in KEEP}
+    if name == "UserPromptSubmit" and share and isinstance(event.get("prompt"), str):
+        keep["prompt"] = event["prompt"][:2000]
+    for k, v in list(keep.items()):
+        if isinstance(v, str):
+            keep[k] = v[:2000]
+    return keep
+
+
+def site_url(value):
+    """HTTPS imposé, http seulement vers la machine elle-même (essais)."""
+    url = (value or "https://agent.ashuraz.xyz").rstrip("/")
+    host = urllib.parse.urlparse(url).hostname or ""
+    if url.startswith("https://") or (url.startswith("http://") and host in ("localhost", "127.0.0.1", "::1")):
+        return url
+    return None
+
+
+def main():
+    raw = sys.stdin.buffer.read()
+    key = os.environ.get("PENTHOUSE_KEY", "").strip()
+    if os.environ.get("CLAUDE_CODE_REMOTE") != "true" or not key or os.environ.get("TOUR_SKIP"):
+        return
+    url = site_url(os.environ.get("PENTHOUSE_URL"))
+    if not url:
+        return
+    try:
+        payload = payload_of(raw, os.environ.get("PENTHOUSE_PARTAGER_DEMANDES") == "1")
+    except ValueError:
+        return
+    if not payload or not payload.get("hook_event_name"):
+        return
+    if hasattr(os, "fork") and os.fork():
+        return  # le parent rend la main ; l'enfant envoie
+    try:
+        body = json.dumps(payload, ensure_ascii=False).encode()
+        query = urllib.parse.urlencode({"src": "claude", "host": "cloud"})
+        req = urllib.request.Request(f"{url}/e?{query}", body, {"Content-Type": "application/json", "X-Tour-Token": key})
+        urllib.request.urlopen(req, timeout=5)
+    except Exception:
+        pass
+    finally:
+        if hasattr(os, "fork"):
+            os._exit(0)
+
+
+if __name__ == "__main__":
+    main()

@@ -3,6 +3,17 @@
 Chaque IA ajoute **en haut** une entrée par session de travail (modèle et règles dans `AGENTS.md`, section 3).
 Le plus récent d'abord. On n'efface pas les entrées des autres.
 
+## 2026-11-05 · Lucas · branche Lucas · Claude Code (9)
+**Fait :** les sessions Claude Code sur le web (cloud) apparaissent sur l'étage, machine « cloud ». Hook
+`collecteurs/tour-cloud-hook`, installé par `public/cloud-setup.sh` (setup script de l'environnement cloud) ; la clé vient
+de la variable `PENTHOUSE_KEY` de l'environnement. Marche à suivre dans « Relier mes agents › ☁️ Claude Code sur le web ».
+**Fichiers :** `collecteurs/tour-cloud-hook`, `public/cloud-setup.sh`, `penthouse.js` (`FILES`), `public/ui/panel.js`,
+`public/style.css`, `test.js`, `README.md`.
+**À savoir :** le domaine du site doit être autorisé dans l'accès réseau de l'environnement (bloqué par défaut). Le script de
+démarrage ne lit pas les variables : seul le hook le fait. Les tests qui lancent des scripts contre le serveur de test doivent
+utiliser `spawn` asynchrone (le serveur tourne dans le même processus ; `spawnSync` le bloque).
+**Reste à faire :** Lucas configure son environnement cloud (réseau, variable, setup script).
+
 ## 2026-11-05 · Lucas · branche Lucas · Claude Code (8)
 **Fait :** quota Claude de Lucas reçu. Cause du « sans quota » : ses sessions tournaient dans l'app Claude (journaux sous
 `~/.claude/projects/-Users-…-Library-Application-Support-Claude-scratch-workspaces-…`), qui a sa propre connexion ; la

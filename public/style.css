@@ -850,3 +850,7 @@ dialog::backdrop { background: #000000b8; }
 /* Mode productif (menu « ⋯ », tour/mode.js) : la gamification est masquée, pas supprimée. */
 body[data-mode="productif"] #xpHost, body[data-mode="productif"] #ecoHost, body[data-mode="productif"] #missionsBtn,
 body[data-mode="productif"] #ecoBtn, body[data-mode="productif"] #gameCelebrations, body[data-mode="productif"] .lvl-game { display: none !important; }
+
+/* « Relier mes agents » : étapes pour Claude Code sur le web. */
+.cloud-steps { margin: 6px 0; padding-left: 20px; display: grid; gap: 8px; font-size: 13px; }
+.cloud-steps .code { margin-top: 4px; white-space: pre-wrap; }

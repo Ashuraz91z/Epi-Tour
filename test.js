@@ -509,6 +509,48 @@ m.claude_quota('s', 'k', 'mac'); assert sent[-1]['info']['claude_quota'] == 'int
   assert.match(why({ seen: { mac: { claude_quota: "erreur : Invalid API key", claude_quota_at: 5 } } }), /mac · erreur : Invalid API key/);
 });
 
+test("Claude Code sur le web : script de démarrage, hook du conteneur, rien hors du cloud ni sans clé", async () => {
+  const { spawn } = await import("node:child_process");
+  // Asynchrone : le serveur de test tourne dans ce même processus et doit pouvoir répondre pendant ce temps.
+  const spawnAsync = (cmd, args, { input, env }) => new Promise(resolve => {
+    const child = spawn(cmd, args, { env, stdio: ["pipe", "ignore", "ignore"] });
+    child.stdin.end(input ?? "");
+    child.on("close", status => resolve({ status }));
+  });
+  const { app, url, call, db } = await open();
+  const home = mkdtempSync(join(tmpdir(), "penthouse-cloud-"));
+  try {
+    const { token } = await (await call("/api/join", { name: "Nuage", code: "porte" }, { "X-Forwarded-For": "10.7.7.7" })).json();
+    const setup = fileURLToPath(new URL("./public/cloud-setup.sh", import.meta.url));
+    const env = { ...process.env, HOME: home, PENTHOUSE_URL: url };
+    for (let i = 0; i < 2; i++) assert.equal((await spawnAsync("sh", [setup], { env })).status, 0);
+    const hooks = JSON.parse(readFileSync(join(home, ".claude/settings.json"), "utf8")).hooks;
+    for (const event of ["SessionStart", "UserPromptSubmit", "PreToolUse", "Stop"]) assert.equal(hooks[event].length, 1, `${event} une seule fois`);
+    const hook = join(home, ".config/tour/tour-cloud-hook");
+    // Le hook rend la main tout de suite et envoie depuis un processus détaché : on attend l'arrivée sur le site.
+    const settle = () => new Promise(r => setTimeout(r, 700));
+    const fire = async (event, extra = {}) => { await spawnAsync("python3", [hook], { input: JSON.stringify(event), env: { ...env, CLAUDE_CODE_REMOTE: "true", PENTHOUSE_KEY: token, ...extra } }); await settle(); };
+    const sessions = () => db.get("nuage").store.sessions;
+    await fire({ hook_event_name: "UserPromptSubmit", session_id: "web1", cwd: "/home/user/Epi-Tour", prompt: "DEMANDE CLOUD PRIVEE" });
+    await fire({ hook_event_name: "PreToolUse", session_id: "web1", tool_name: "Bash", tool_input: { command: "npm test", secret: "CONTENU" } });
+    const s = sessions()["claude:cloud:web1"];
+    assert.ok(s, "session cloud reçue");
+    assert.equal(s.project, "Epi-Tour");
+    assert.match(s.action, /Bash · npm test/);
+    assert.ok(!JSON.stringify(db.get("nuage").store).includes("DEMANDE CLOUD PRIVEE"), "demande non partagée par défaut");
+    assert.ok(!JSON.stringify(db.get("nuage").store).includes("CONTENU"));
+    await fire({ hook_event_name: "UserPromptSubmit", session_id: "web1", prompt: "Refais le golf" }, { PENTHOUSE_PARTAGER_DEMANDES: "1" });
+    assert.equal(sessions()["claude:cloud:web1"].task, "Refais le golf");
+    // Hors du cloud (session locale du même dépôt) ou sans clé : rien n'est envoyé.
+    await spawnAsync("python3", [hook], { input: JSON.stringify({ hook_event_name: "SessionStart", session_id: "local" }), env: { ...env, PENTHOUSE_KEY: token, CLAUDE_CODE_REMOTE: "" } });
+    await settle();
+    await fire({ hook_event_name: "SessionStart", session_id: "nokey" }, { PENTHOUSE_KEY: "" });
+    assert.deepEqual(Object.keys(sessions()), ["claude:cloud:web1"]);
+    // Site injoignable : le script de démarrage ne bloque jamais la session.
+    assert.equal((await spawnAsync("sh", [setup], { env: { ...env, PENTHOUSE_URL: "http://127.0.0.1:9" } })).status, 0);
+  } finally { app.close(); rmSync(home, { recursive: true, force: true }); }
+});
+
 test("journaux : un relevé ancien ne remplace pas une autorisation récente", () => {
   const store = createStore();
   ingest(store, "codex", "mac", { hook_event_name: "PermissionRequest", session_id: "same", tool_name: "Bash" }, 1000);
