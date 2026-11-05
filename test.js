@@ -389,6 +389,14 @@ test("connexion : une commande, sessions importées, outils inchangés et instal
     writeFileSync(join(home, ".codex/hooks.json"), "bad json");
     await run("sh", [script, token], { env });
     assert.equal(readFileSync(join(home, ".codex/hooks.json"), "utf8"), "bad json", "les fichiers des outils ne sont ni lus ni modifiés");
+    // Machine déjà reliée à un autre étage : refus sans rien toucher, puis --replace (proposé dans la fenêtre) avec sauvegarde.
+    const { token: other } = await (await call("/api/join", { name: "Autre etage", code: "porte" }, { "X-Forwarded-For": "10.9.9.9" })).json();
+    await assert.rejects(run("sh", [script, other], { env }));
+    assert.equal(readFileSync(join(home, ".config/tour/secret"), "utf8").trim(), token);
+    await run("sh", [script, other, "--replace", "--partager-demandes"], { env });
+    assert.equal(readFileSync(join(home, ".config/tour/secret"), "utf8").trim(), other);
+    assert.ok(readdirSync(join(home, ".config")).some(n => n.startsWith("tour.backup-")), "ancienne configuration sauvegardée");
+    await assert.rejects(run("sh", [script, other, "--inconnue"], { env }), "option inconnue refusée");
   } finally { app.close(); rmSync(home, { recursive: true, force: true }); }
 });
 

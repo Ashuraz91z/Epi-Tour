@@ -3,6 +3,13 @@
 Chaque IA ajoute **en haut** une entrée par session de travail (modèle et règles dans `AGENTS.md`, section 3).
 Le plus récent d'abord. On n'efface pas les entrées des autres.
 
+## 2026-11-05 · Lucas · branche Lucas · Claude Code (3)
+**Fait :** « Relier mes agents » demande si la machine a déjà été reliée (autre clé ou autre étage) ; « oui » ajoute
+`--replace` (Windows : `-Replace`) à la commande, avec sauvegarde de l'ancienne configuration.
+**Fichiers :** `public/ui/panel.js` (`installCommands`), `public/style.css`, `test.js` (refus sans `--replace`, puis remplacement).
+**À savoir :** les options de la commande se combinent dans n'importe quel ordre après la clé ; une option inconnue est refusée.
+**Reste à faire :** —
+
 ## 2026-11-05 · Lucas · branche Lucas · Claude Code (2)
 **Fait :** quota Claude mesuré automatiquement par `tour-sync` (mini-requête Haiku au plus toutes les 15 min, seulement si
 Claude Code a servi) : plus rien à installer à part la commande de l'étage. Sans mesure, les écrans d'usages (panneau
