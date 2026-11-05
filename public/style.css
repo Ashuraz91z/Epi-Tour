@@ -950,3 +950,13 @@ body:not(.spectator-presentation) .spectator-floor-card { display: none; }
   .spectator-floor-card .strip-bars { display: none; }
   .spectator-floor-card .day-strip { margin-top: 6px; }
 }
+
+/* Spectateur : « Visite auto » ou « Explorer », côte à côte. */
+.tour-switch { display: inline-flex; padding: 2px; border: 1px solid #e8c27a55; border-radius: 999px; background: #06081299; }
+.tour-switch button { border: 0; background: none; color: var(--mute); padding: 6px 12px; border-radius: 999px; font-size: 13px; white-space: nowrap; }
+.tour-switch button[aria-pressed="true"] { background: #e8c27a; color: #1a1305; font-weight: 600; }
+#dayBoardBtn[aria-pressed="true"] { background: #e8c27a24; }
+@media (max-width: 760px) {
+  .tour-switch button { padding: 6px 9px; font-size: 12px; }
+  #dayBoardBtn { font-size: 12px; }
+}

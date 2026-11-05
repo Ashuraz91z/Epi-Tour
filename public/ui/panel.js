@@ -27,7 +27,7 @@ import { drawJackpot, showBlackjack, spinMachine, spinRoulette } from "../tour/f
 import { startTennisMatch } from "../tour/floors/tennis.js";
 import { puttResult } from "../tour/floors/golf.js";
 import { floorLabel, syncFloors, update } from "../tour/tower.js";
-import { activeTourStep, keepFocusShown, setFocus, updateSpectatorView } from "../tour/navigation.js";
+import { activeTourStep, keepFocusShown, setFocus, showDayBoard, updateSpectatorView } from "../tour/navigation.js";
 import { enterWithKey, tick } from "./session.js";
 
 function agentsOnFloor(floorKey) {
@@ -258,7 +258,8 @@ function render() {
     || "<span>En attente d'activité…</span>");
   const waiting = by(all, "autorisation"), title = (waiting ? `(${waiting} !) ` : "") + "Penthouse";
   if (document.title !== title) document.title = title;
-  if (spectator && world.tourPaused && activeTourStep?.kind === "dashboard") updateSpectatorView(activeTourStep);
+  // Exploration : le tableau ouvert à la main suit l'état reçu.
+  if (spectator && world.tourPaused && !$("#spectatorDashboard").hidden) showDayBoard();
 }
 function remote() {
   const now = tvChannel(), name = c => esc(CHANNEL_NAMES[c] ?? c), spectator = world.data?.viewer?.role === "spectator", custom = tvCustomNow();

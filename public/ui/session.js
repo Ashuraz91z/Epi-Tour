@@ -5,6 +5,7 @@ import { world } from "../tour/state.js";
 import { $, KEY, ME, rememberKey } from "../tour/base.js";
 import { clock } from "../tour/engine.js";
 import { previousApprovals, refreshConnectionStatus, render, setText, showLink } from "./panel.js";
+import { applyTourMode, savedTourMode } from "../tour/navigation.js";
 
 applyKioskFromUrl();
 // Flux temps réel : ouvert une fois l'entrée acceptée et les modèles 3D chargés (sinon les étages se construiraient
@@ -138,9 +139,11 @@ function applyLoadedState() {
   if (spectator && !document.body.dataset.spectating) {
     world.tourStarted = clock.elapsedTime; world.tourPaused = false;
     document.body.dataset.spectating = "true";
+    applyTourMode(savedTourMode() === "free"); // la façon de regarder choisie la dernière fois sur cet appareil
   }
   if (!spectator) delete document.body.dataset.spectating;
-  $("#tourPause").hidden = !spectator;
+  $("#tourSwitch").hidden = !spectator;
+  if (!spectator) $("#dayBoardBtn").hidden = true;
   $("#tourCaption").hidden = !spectator || world.tourPaused;
   document.body.classList.toggle("spectator-presentation", spectator && !world.tourPaused);
   if (!spectator) $("#spectatorDashboard").hidden = true;
