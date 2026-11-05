@@ -1,6 +1,6 @@
 // Vérifie la collecte et le penthouse : node --test
 import assert from "node:assert/strict";
-import { mkdtempSync, rmSync, readFileSync, mkdirSync, writeFileSync } from "node:fs";
+import { mkdtempSync, rmSync, readFileSync, readdirSync, mkdirSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { execFile } from "node:child_process";
@@ -11,6 +11,15 @@ import { createStore, describeTool, ingest, normalize, sanitizeProfile, snapshot
 import { officePublic, officeTierForLevel } from "./upgrades.js";
 import { openDb } from "./db.js";
 import { createApp, slugify, spectatorSnapshot } from "./penthouse.js";
+
+// Code de l'interface, découpé en modules (public/app.js, public/tour/, public/ui/) : certains tests en exécutent
+// des extraits. Les fichiers sont mis bout à bout, dans l'ordre des dossiers.
+function clientSource() {
+  const files = ["app.js"];
+  for (const dir of ["tour", "tour/floors", "ui"])
+    for (const name of readdirSync(new URL(`./public/${dir}/`, import.meta.url)).sort()) if (name.endsWith(".js")) files.push(`${dir}/${name}`);
+  return files.map(f => readFileSync(new URL(`./public/${f}`, import.meta.url), "utf8")).join("\n");
+}
 
 async function open() {
   const db = openDb(":memory:");
@@ -244,7 +253,7 @@ test("Codex : autorisation puis reprise sur la même session", async () => {
 // Exerce les trajectoires sans WebGL : les mobiles restent finis et la préférence de mouvement est respectée.
 test("extérieur : trajectoires bornées et réduction des animations", async () => {
   const { runInNewContext } = await import("node:vm");
-  const source = readFileSync(new URL("./public/app.js", import.meta.url), "utf8");
+  const source = clientSource();
   const motion = source.slice(source.indexOf("function animateOutside(t)"), source.indexOf("// La tour sous l'étage"));
   const plane = { position: {} };
   const bird = { position: { set(...v) { this.values = v; } }, rotation: {} };
@@ -264,7 +273,7 @@ test("extérieur : trajectoires bornées et réduction des animations", async ()
 
 test("ville : chaque rue a sa chaussée, posée sur son trottoir au niveau du sol", async () => {
   const { runInNewContext } = await import("node:vm");
-  const source = readFileSync(new URL("./public/app.js", import.meta.url), "utf8");
+  const source = clientSource();
   const meshes = [];
   class Instances {
     constructor() { this.matrices = []; meshes.push(this); }
@@ -292,7 +301,7 @@ test("ville : chaque rue a sa chaussée, posée sur son trottoir au niveau du so
 
 test("panneau : classement en direct, sessions silencieuses exclues et égalités stables", async () => {
   const { runInNewContext } = await import("node:vm");
-  const source = readFileSync(new URL("./public/app.js", import.meta.url), "utf8");
+  const source = clientSource();
   const rank = source.slice(source.indexOf("function agentRanking("), source.indexOf("function updateBillboard("));
   const context = { stateOf: (s, now) => s.state === "travaille" && now - s.updated > 600 ? "silencieux" : s.state,
     apartments: [
@@ -308,8 +317,9 @@ test("panneau : classement en direct, sessions silencieuses exclues et égalité
 
 test("panneau quotas : restants bornés, absence et reset expiré explicites", async () => {
   const { runInNewContext } = await import("node:vm");
-  const source = readFileSync(new URL("./public/app.js", import.meta.url), "utf8");
-  const fn = source.slice(source.indexOf("function quotaRemaining("), source.indexOf("function updateUsageBoard("));
+  const source = clientSource();
+  const end = name => { const at = source.indexOf(`function ${name}(`); return source.slice(at, source.indexOf("\n}\n", at) + 2); };
+  const fn = end("quotaRemaining") + end("quotaRows");
   const context = { usage: { claude: { five_hour: { pct: 27, resets_at: 2000 }, seven_day: { pct: 50, resets_at: 900 } }, chatgpt: { five_hour: { pct: 120 } } } };
   const lines = runInNewContext(fn + "; quotaRows(usage, 1000)", context);
   assert.equal(lines[0].remaining, 73);
@@ -468,7 +478,7 @@ test("visite spectateur : tous les usages, tous les étages, deux écrans et ret
 
 test("quota hebdomadaire : même reste dans le dashboard et la fiche résident", async () => {
   const { runInNewContext } = await import("node:vm");
-  const source = readFileSync(new URL("./public/app.js", import.meta.url), "utf8");
+  const source = clientSource();
   const helper = source.slice(source.indexOf("function quotaRemaining("), source.indexOf("function quotaRows("));
   const meter = source.slice(source.indexOf("function meter("), source.indexOf("let previousApprovals"));
   const context = { w: { pct: 12, resets_at: 2000 } };
@@ -545,7 +555,7 @@ test("ressources : gzip, revalidation 304 et API compressée sans cache public",
 
 test("géométries : boîtes et cylindres partagés avec dimensions propres", async () => {
   const { runInNewContext } = await import('node:vm');
-  const source = readFileSync(new URL('./public/app.js', import.meta.url), 'utf8');
+  const source = clientSource();
   const snippet = source.slice(source.indexOf('const boxGeometry ='), source.indexOf('function textTexture'));
   let allocations = 0;
   class Geometry { constructor() { allocations++; } }
@@ -561,7 +571,7 @@ test("géométries : boîtes et cylindres partagés avec dimensions propres", as
 
 test("départ d’un agent : libère ses ressources sans détruire celles partagées", async () => {
   const { runInNewContext } = await import('node:vm');
-  const source = readFileSync(new URL('./public/app.js', import.meta.url), 'utf8');
+  const source = clientSource();
   const snippet = source.slice(source.indexOf('  for (const [key, g] of agents) if (!want.has(key))'), source.indexOf('  // Écrans allumés aux postes'));
   let disposed = 0, bones = 0, stopped = 0, uncached = 0, removed = 0;
   const own = () => ({ dispose() { disposed++; } });
@@ -580,7 +590,7 @@ test("départ d’un agent : libère ses ressources sans détruire celles partag
 
 test("rendu : cadence plafonnée et travail suspendu en arrière-plan", async () => {
   const { runInNewContext } = await import('node:vm');
-  const source = readFileSync(new URL('./public/app.js', import.meta.url), 'utf8');
+  const source = clientSource();
   const prefix = source.slice(source.indexOf('function animate(frameTime'), source.indexOf('  const dt = Math.min(clock.getDelta()', source.indexOf('function animate(frameTime')));
   const frames = [], document = { hidden: false }; let scheduled = 0, hiddenTicks = 0;
   const context = { frames, document, performance: { now: () => 0 }, clock: { getDelta() { hiddenTicks++; } }, requestAnimationFrame() { scheduled++; } };
@@ -661,7 +671,7 @@ test("Grok Bot MCP : protocole, états réels reçus et clé refusée sans faux 
 
 test("frigo : reste dans la pièce et affiche 40 canettes avec cinq photos fruitées", async () => {
   const { runInNewContext } = await import('node:vm');
-  const source = readFileSync(new URL('./public/app.js', import.meta.url), 'utf8');
+  const source = clientSource();
   const editionsCode = source.slice(source.indexOf('const redBullEditions ='), source.indexOf('const redBullTextures ='));
   const block = source.slice(source.indexOf('  // Grand frigo vitré'), source.indexOf('  // Salon privé'));
   const boxes = [], instances = [];
@@ -740,8 +750,9 @@ test("pauses : réservation des places, pas de doublons et trajet en cours respe
 test("pauses : travail, attente et autorisation restent prioritaires", async () => {
   const { runInNewContext } = await import('node:vm');
   const { breakVisit } = await import('./public/break-motion.js');
-  const source = readFileSync(new URL('./public/app.js', import.meta.url), 'utf8');
-  const fn = source.slice(source.indexOf('function placeOf('), source.indexOf('// ---------- moteur'));
+  const source = clientSource();
+  const at = source.indexOf('function placeOf(');
+  const fn = source.slice(at, source.indexOf('\n}\n', at) + 2);
   const context = { breakVisit, hash: () => 12, stateOf: s => s.state, s: { src: 'codex', host: 'test', sid: 's', updated: 0 } };
   for (const [state, expected] of [['travaille','open'], ['autorisation','boss'], ['attend','smoke'], ['erreur','open']]) {
     context.s.state = state;
@@ -891,19 +902,23 @@ test("flux SSE : premier paquet d'état pour un résident", async () => {
 test("client : chaque module importé par la page est servi (sinon la page entière reste vide)", async () => {
   const { app, url } = await open();
   try {
-    const { readdirSync } = await import("node:fs");
     const publicDir = new URL("./public/", import.meta.url);
     const wanted = new Set();
     const html = readFileSync(new URL("index.html", publicDir), "utf8");
     for (const [, src] of html.matchAll(/<script[^>]+src="([^"]+)"/g)) wanted.add("/" + src.replace(/^\.?\//, ""));
     for (const [, href] of html.matchAll(/<link[^>]+rel="stylesheet"[^>]+href="([^"h][^"]*)"/g)) wanted.add("/" + href.replace(/^\.?\//, ""));
-    for (const file of readdirSync(publicDir).filter(f => f.endsWith(".js"))) {
-      const source = readFileSync(new URL(file, publicDir), "utf8");
-      for (const [, path] of source.matchAll(/^\s*import\b[^"']*["'](\.\/[^"']+)["']/gm)) wanted.add(path.slice(1));
-      for (const [, path] of source.matchAll(/\bimport\(\s*["'](\.\/[^"']+)["']\s*\)/g)) wanted.add(path.slice(1));
+    // Chaque module de la page (public/, tour/, tour/floors/, ui/) et ce qu'il importe en relatif (./ ou ../).
+    for (const dir of ["", "tour/", "tour/floors/", "ui/"]) for (const file of readdirSync(new URL(dir, publicDir)).filter(f => f.endsWith(".js"))) {
+      const at = new URL(dir + file, publicDir), source = readFileSync(at, "utf8");
+      const add = path => wanted.add(new URL(path, at).pathname.slice(publicDir.pathname.length - 1));
+      for (const [, path] of source.matchAll(/^\s*(?:import|export)\b[^"';]*?["'](\.\.?\/[^"']+)["']/gm)) add(path);
+      for (const [, path] of source.matchAll(/\bimport\(\s*["'](\.\.?\/[^"']+)["']\s*\)/g)) add(path);
     }
-    assert.ok(wanted.has("/wings-client.js") && wanted.has("/app.js"));
+    assert.ok(wanted.has("/wings-client.js") && wanted.has("/app.js") && wanted.has("/tour/floors/resident.js") && wanted.has("/room-data.js"));
     for (const path of wanted) assert.equal((await fetch(url + path)).status, 200, `${path} doit être servi`);
+    // La page précharge ses modules (sinon le navigateur les découvre en cascade, import après import).
+    const page = await (await fetch(url + "/")).text();
+    for (const path of wanted) if (path.endsWith(".js")) assert.ok(page.includes(`<link rel="modulepreload" href="${path.slice(1)}">`), `${path} préchargé`);
   } finally { app.close(); }
 });
 

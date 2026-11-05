@@ -27,7 +27,13 @@ try {
     results[mode + 'AverageMs'] = +((performance.now() - start) / 40).toFixed(2);
   }
   const compressed = await read('gzip');
-  const script = await fetch(url + '/app.js', { headers: { 'Accept-Encoding': 'gzip' } });
-  const plainScript = await script.text();
-  console.log(JSON.stringify({ residents: 20, sessions: 600, ...results, stateGzipBytes: Number(compressed.headers.get('content-length')), jsRawBytes: Buffer.byteLength(plainScript), jsGzipBytes: Number(script.headers.get('content-length')) }, null, 2));
+  // Tout le code de la page : app.js et ses modules (tour/, tour/floors/, ui/).
+  const { readdirSync } = await import('node:fs');
+  const paths = ['/app.js', ...['tour', 'tour/floors', 'ui'].flatMap(d => readdirSync(new URL('./public/' + d + '/', import.meta.url)).filter(f => f.endsWith('.js')).map(f => `/${d}/${f}`))];
+  let jsRaw = 0, jsGzip = 0;
+  for (const path of paths) {
+    const r = await fetch(url + path, { headers: { 'Accept-Encoding': 'gzip' } });
+    jsRaw += Buffer.byteLength(await r.text()); jsGzip += Number(r.headers.get('content-length'));
+  }
+  console.log(JSON.stringify({ residents: 20, sessions: 600, ...results, stateGzipBytes: Number(compressed.headers.get('content-length')), jsModules: paths.length, jsRawBytes: jsRaw, jsGzipBytes: jsGzip }, null, 2));
 } finally { app.close(); }
