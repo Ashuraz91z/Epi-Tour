@@ -16,7 +16,7 @@ import { createSportsGames } from "../sports-games.js";
 import { workLeadersHtml, workPanelHtml } from "../work-ui.js";
 import { world } from "../tour/state.js";
 import { floorShown, productive, setMode } from "../tour/mode.js";
-import { $, CASINO_FEATURED, ME, PLACE_FR, STATE_FR, TOOLS, claudeTracked, esc, hm, keyOf, myApt, placeOf, quotaRemaining, stateOf } from "../tour/base.js";
+import { $, CASINO_FEATURED, ME, PLACE_FR, STATE_FR, TOOLS, claudeQuotaWhy, claudeTracked, esc, hm, keyOf, myApt, placeOf, quotaRemaining, stateOf } from "../tour/base.js";
 import { agents, floors } from "../tour/engine.js";
 import { reducedMotion } from "../tour/kit.js";
 import { updateBillboard, updateUsageBoard } from "../tour/city.js";
@@ -189,7 +189,7 @@ function render() {
       <span><i class="d" style="background:var(--auth)"></i><b>${by(a.sessions, "autorisation")}</b> ${spectator ? "attend un accord" : "attend ton accord"}</span>
       <span><i class="d" style="background:var(--wait)"></i><b>${by(a.sessions, "attend")}</b> sur le toit, attend la suite</span>
       <span><i class="d" style="background:var(--pause)"></i><b>${by(a.sessions, "fini") + by(a.sessions, "silencieux")}</b> en pause dans les étages communs</span></div>
-      <div class="meters">${claudeTracked(u) ? meter("Claude 5 h", u.claude?.five_hour, "var(--claude)", now) + meter("Claude semaine", u.claude?.seven_day, "var(--claude)", now) : `<p class="quota-untracked">Claude · quota non suivi</p>`}
+      <div class="meters">${claudeTracked(u) ? meter("Claude 5 h", u.claude?.five_hour, "var(--claude)", now) + meter("Claude semaine", u.claude?.seven_day, "var(--claude)", now) : `<p class="quota-untracked">Claude · quota non suivi${spectator ? "" : `<small>${esc(claudeQuotaWhy(a))}</small>`}</p>`}
       ${meter("ChatGPT 5 h", u.chatgpt?.five_hour, "var(--codex)", now)}${meter("ChatGPT semaine", u.chatgpt?.seven_day, "var(--codex)", now)}</div>
       <div class="svcs">${svcs.length ? `Services <b style="color:${svcs.every(s => s.ok) ? "var(--work)" : "var(--auth)"}">${svcs.filter(s => s.ok).length}/${svcs.length}</b>` : ""}
       ${svcs.filter(s => !s.ok).map(s => `<span style="color:var(--auth)">${esc(s.label)} arrêté</span>`).join("")}
@@ -393,7 +393,7 @@ function refreshConnectionStatus() {
   const machines = seen.map(([name, m]) => `<span>${esc(name)} · reçu à ${hm(m.t)}</span>`).join("");
   const quotas = ["claude", "chatgpt"].map(provider => {
     const u = apt?.usage?.[provider];
-    return `${provider === "claude" ? "Claude" : "ChatGPT"} : ${u?.ts && [u.five_hour?.pct, u.seven_day?.pct].some(Number.isFinite) ? "mesure reçue à " + hm(u.ts) : provider === "claude" ? "pas suivi (relance la commande pour l’activer)" : "aucune mesure reçue"}`;
+    return `${provider === "claude" ? "Claude" : "ChatGPT"} : ${u?.ts && [u.five_hour?.pct, u.seven_day?.pct].some(Number.isFinite) ? "mesure reçue à " + hm(u.ts) : provider === "claude" ? "pas suivi · " + esc(claudeQuotaWhy(apt)) : "aucune mesure reçue"}`;
   }).join(" · ");
   setHtml(target, `<h4>Réception des outils</h4>${tools}<div class="connect-machines">${machines || "Aucune machine reçue pour le moment."}</div><p><b>Quotas</b> · ${quotas}</p><p>Ces horaires indiquent la dernière réception, pas une connexion permanente. Les quotas sont séparés de l’activité des agents. Une session sans journal récent peut ne pas apparaître.</p>`);
 }

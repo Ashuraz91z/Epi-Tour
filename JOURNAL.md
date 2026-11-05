@@ -3,6 +3,18 @@
 Chaque IA ajoute **en haut** une entrée par session de travail (modèle et règles dans `AGENTS.md`, section 3).
 Le plus récent d'abord. On n'efface pas les entrées des autres.
 
+## 2026-11-05 · Lucas · branche Lucas · Claude Code (5)
+**Fait :** quota Claude toujours « non suivi » chez Lucas. Sonde plus robuste : `claude` cherché aussi dans nvm, npm global,
+bun, volta et pnpm, lancé avec son dossier dans le PATH (cron et launchd ont un PATH réduit) ; réponse lue sous ses deux
+formes (`unifiedWindows` groupé, ou un `rateLimitType` par événement). Chaque essai remonte son résultat au site, et le
+panneau du résident dit pourquoi le quota manque (commande pas relancée, Claude Code introuvable, désactivé, erreur…).
+**Fichiers :** `collecteurs/tour-sync` (`claude_binary`, `quota_windows`, `claude_quota`), `public/tour/base.js`
+(`claudeQuotaWhy`), `public/ui/panel.js`, `test.js`.
+**À savoir :** format exact de `rate_limit_event` non vérifié avec un vrai compte (pas de compte Claude dans
+l'environnement de test) ; si le panneau affiche « format : … », ce sont les noms des champs reçus, à adapter dans
+`quota_windows`.
+**Reste à faire :** Lucas relance la commande de son étage et lit la raison affichée si le quota n'arrive pas.
+
 ## 2026-11-05 · Lucas · branche Lucas · Claude Code (4)
 **Fait :** deux modes, choisis dans le menu « ⋯ » et gardés sur l'appareil : complet (tout) et productif (gamification
 masquée : XP, P$, missions, Entreprise, activités, paliers, rôles et salaires, Fortune, toasts, célébrations ; étages Casino,
