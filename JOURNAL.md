@@ -3,6 +3,15 @@
 Chaque IA ajoute **en haut** une entrée par session de travail (modèle et règles dans `AGENTS.md`, section 3).
 Le plus récent d'abord. On n'efface pas les entrées des autres.
 
+## 2026-11-05 · Lucas · branche Lucas · Claude Code (13)
+**Fait :** spectateur : le bouton « Pause visite » devient un choix « 🎬 Visite auto / 🧭 Explorer » (gardé sur
+l'appareil, `penthouse.visite`). En exploration : liste des étages, panneau, agents cliquables, zoom, et un bouton
+« 📊 La journée de chacun » qui ouvre le tableau de tous les résidents à la demande.
+**Fichiers :** `public/index.html` (`#tourSwitch`, `#dayBoardBtn`), `public/tour/navigation.js` (`applyTourMode`,
+`setTourMode`, `showDayBoard`), `public/ui/session.js`, `public/ui/panel.js`, `public/style.css`, `README.md`.
+**À savoir :** « Explorer » = `world.tourPaused` ; `#tourPause` n'existe plus.
+**Reste à faire :** —
+
 ## 2026-11-05 · Lucas · branche Lucas · Claude Code (12)
 **Fait :** vue téléphone (≤ 760 px) : étages en bande défilante sous l'en-tête, panneau en feuille rétractable (poignée en
 tête du panneau, `body.sheet-open`), spectateur adapté (faits du jour sur une ligne, fiches d'une colonne, fiche d'étage

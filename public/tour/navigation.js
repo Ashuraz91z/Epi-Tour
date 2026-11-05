@@ -74,14 +74,42 @@ function updateSpectatorView(step) {
   dashboardContent = html;
   $("#spectatorDashboard").innerHTML = html;
 }
-$("#tourPause").addEventListener("click", () => {
-  world.tourPaused = !world.tourPaused;
-  if (world.tourPaused) tourPausedAt = clock.elapsedTime;
-  else world.tourStarted += clock.elapsedTime - tourPausedAt;
-  $("#tourPause").textContent = world.tourPaused ? "Reprendre la visite" : "Pause visite";
-  $("#tourPause").setAttribute("aria-pressed", String(world.tourPaused));
-  document.body.classList.toggle("spectator-presentation", !world.tourPaused);
-  $("#tourCaption").hidden = world.tourPaused;
+// Deux façons de regarder, choix gardé sur l'appareil : « Visite auto » (la caméra enchaîne tableau, étages et panneaux)
+// et « Explorer » (on se balade librement : liste des étages, panneau, clic sur les agents, zoom ; le tableau « La
+// journée de chacun » s'ouvre alors à la demande). Reprendre la visite repart là où elle s'était arrêtée.
+const TOUR_KEY = "penthouse.visite";
+const savedTourMode = () => { try { return localStorage.getItem(TOUR_KEY) === "free" ? "free" : "auto"; } catch { return "auto"; } };
+function applyTourMode(free) {
+  if (free !== world.tourPaused) {
+    if (free) tourPausedAt = clock.elapsedTime;
+    else world.tourStarted += clock.elapsedTime - tourPausedAt;
+  }
+  world.tourPaused = free;
+  for (const b of $("#tourSwitch").children) b.setAttribute("aria-pressed", String((b.dataset.tour === "free") === free));
+  const spectating = !!document.body.dataset.spectating;
+  document.body.classList.toggle("spectator-presentation", spectating && !free);
+  $("#tourCaption").hidden = !spectating || free;
+  $("#dayBoardBtn").hidden = !spectating || !free;
+  $("#dayBoardBtn").setAttribute("aria-pressed", "false");
+  if (free) { $("#spectatorDashboard").hidden = true; $("#spectatorFloorCard").hidden = true; }
+  else captionContent = dashboardContent = "";
+}
+function setTourMode(mode) {
+  try { localStorage.setItem(TOUR_KEY, mode); } catch { /* stockage indisponible : le choix vaut pour cet onglet */ }
+  applyTourMode(mode === "free");
+  if (world.data) render();
+}
+$("#tourSwitch").addEventListener("click", e => { const b = e.target.closest("[data-tour]"); if (b) setTourMode(b.dataset.tour); });
+// En exploration : le tableau de tous les résidents, d'un seul tenant, ouvert ou fermé par le bouton.
+function showDayBoard() {
+  dashboardContent = "";
+  updateSpectatorView({ kind: "dashboard", page: 0, pages: 1, pageSize: 99, remaining: 0, seconds: 0 });
+  $("#tourCaption").hidden = true;
+}
+$("#dayBoardBtn").addEventListener("click", () => {
+  const open = $("#spectatorDashboard").hidden;
+  $("#dayBoardBtn").setAttribute("aria-pressed", String(open));
+  if (open) showDayBoard(); else $("#spectatorDashboard").hidden = true;
 });
 
 function setFocus(i) {
@@ -169,4 +197,4 @@ renderer.domElement.addEventListener("pointermove", e => {
   renderer.domElement.style.cursor = ray.intersectObjects(onFocus(), false).length || onTv() || onByte() || onGiantTv() || onPlayTarget() ? "pointer" : "";
 });
 
-export { activeTourStep, autoTour, keepFocusShown, setFocus, stepFocus, updateSpectatorView };
+export { activeTourStep, applyTourMode, autoTour, keepFocusShown, savedTourMode, setFocus, showDayBoard, stepFocus, updateSpectatorView };

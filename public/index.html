@@ -51,7 +51,11 @@
     <div class="status-chips"><div id="xpHost"></div><div id="ecoHost" class="eco-host"></div></div>
     <div class="totals" id="totals"></div>
     <div class="top-actions">
-      <button class="ghost" id="tourPause" type="button" hidden aria-pressed="false">Pause visite</button>
+      <div class="tour-switch" id="tourSwitch" role="group" aria-label="Façon de regarder le penthouse" hidden>
+        <button type="button" data-tour="auto" aria-pressed="true" title="La caméra passe toute seule d’un étage à l’autre">🎬 Visite auto</button>
+        <button type="button" data-tour="free" aria-pressed="false" title="Tu te balades où tu veux : étages, agents, zoom">🧭 Explorer</button>
+      </div>
+      <button class="ghost" id="dayBoardBtn" type="button" hidden aria-pressed="false">📊 La journée de chacun</button>
       <span id="viewerBadge" class="viewer-badge" hidden>Spectateur</span>
       <button class="ghost" id="exitSpectator" type="button" hidden>Quitter le mode spectateur</button>
       <button class="ghost icon-btn" id="missionsBtn" type="button" hidden aria-label="Missions" title="Missions"><span aria-hidden="true">🎯</span><span class="lbl">Missions</span></button>
