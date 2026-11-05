@@ -3,6 +3,15 @@
 Chaque IA ajoute **en haut** une entrée par session de travail (modèle et règles dans `AGENTS.md`, section 3).
 Le plus récent d'abord. On n'efface pas les entrées des autres.
 
+## 2026-11-05 · Lucas · branche Lucas · Claude Code (8)
+**Fait :** quota Claude de Lucas reçu. Cause du « sans quota » : ses sessions tournaient dans l'app Claude (journaux sous
+`~/.claude/projects/-Users-…-Library-Application-Support-Claude-scratch-workspaces-…`), qui a sa propre connexion ; la
+commande `claude` du Terminal, celle que lance la sonde, n'était pas connectée à l'abonnement. `claude` puis `/login` a suffi.
+Texte du panneau et README précisés pour ce cas.
+**Fichiers :** `public/tour/base.js` (`claudeQuotaWhy`), `README.md`.
+**À savoir :** les sessions de l'app Claude sont bien suivies (mêmes journaux) ; seul le quota passe par la commande `claude`.
+**Reste à faire :** —
+
 ## 2026-11-05 · Lucas · branche Lucas · Claude Code (7)
 **Fait :** toujours « sans quota » chez Lucas avec `get_usage`. D'après le code de Claude Code 2.1, les quotas ne sont
 lus que si la connexion est l'abonnement claude.ai (pas de clé d'API, pas d'`apiKeyHelper`) et si le jeton a le scope
