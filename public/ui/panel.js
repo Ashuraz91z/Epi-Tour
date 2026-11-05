@@ -237,7 +237,10 @@ function render() {
   // Libellés masquables : sur un écran moyen, l'en-tête ne garde que les pastilles et les nombres.
   setHtml($("#totals"), `<span title="Résidents"><span aria-hidden="true" class="ico">🏢</span><b>${list.length}</b><span class="lbl"> résident(s)</span></span><span title="Au travail"><i class="d" style="background:var(--work)"></i><b>${by(all, "travaille")}</b><span class="lbl"> au travail</span></span>`
     + `<span title="Attendent un accord"><i class="d" style="background:var(--auth)"></i><b>${by(all, "autorisation")}</b><span class="lbl"> attendent un accord</span></span>`);
-  const feed = list.flatMap(x => x.feed.map(e => ({ ...e, who: x.name }))).sort((x, y) => y.t - x.t).slice(0, 14);
+  // Spectateurs : pas de fil d'actions (filtré par le serveur), mais l'état des agents, du plus récent au plus ancien.
+  const feed = spectator
+    ? list.flatMap(x => x.sessions.map(s => ({ t: s.updated, src: s.src, who: x.name, action: STATE_FR[stateOf(s, now)] ?? s.state }))).sort((x, y) => y.t - x.t).slice(0, 14)
+    : list.flatMap(x => x.feed.map(e => ({ ...e, who: x.name }))).sort((x, y) => y.t - x.t).slice(0, 14);
   setHtml($("#ticker"), feed.map(e => `<span>${hm(e.t)} <b>${esc(e.who)}</b> · ${esc(TOOLS[e.src]?.name ?? e.src)}${e.project ? " · " + esc(e.project) : ""} — ${esc(e.action)}</span>`).join("")
     || "<span>En attente d'activité…</span>");
   const waiting = by(all, "autorisation"), title = (waiting ? `(${waiting} !) ` : "") + "Penthouse";

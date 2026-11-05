@@ -24,6 +24,10 @@ const tourCovered = () => { for (const d of coveringDialogs) if (d?.open) return
 const tmp = new THREE.Vector3();
 let lastFrameAt = 0;
 const tourTarget = new THREE.Vector3(), tourPosition = new THREE.Vector3();
+// Hauteur suivie par la caméra (étage regardé) : on décale cible et caméra de ce qu'elle bouge, sans ramener la cible au
+// centre. Un zoom vers la souris ou un déplacement latéral restent ainsi en place, y compris en changeant d'étage.
+let followY = null;
+const FLOOR_REACH = { x: 11, z: 7.5, y: 3 };
 const palette = ["#ff6fd8", "#7ec3f0", "#ffd36e", "#4ade80", "#a37cf0"].map(c => new THREE.Color(c));
 
 function animate(frameTime = performance.now()) {
@@ -215,7 +219,7 @@ function animateCamera(dt, t) {
   const visiting = world.data?.viewer?.role === "spectator" && !world.tourPaused;
   if (visiting) {
     // Visite : seulement les étages affichés (sans les étages de jeu en mode productif).
-    const step = spectatorStep(t - world.tourStarted, world.order.filter(floorShown), world.data.apartments.length, innerWidth < 760 ? 1 : innerWidth < 1100 ? 2 : Math.max(1, Math.min(6, Math.floor((innerHeight - 350) / 132))));
+    const step = spectatorStep(t - world.tourStarted, world.order.filter(floorShown), world.data.apartments.length, innerWidth < 760 ? 1 : innerWidth < 1100 ? 2 : Math.max(1, Math.min(6, Math.floor((innerHeight - 410) / 140))));
     const desiredFocus = step.kind === "floor" ? world.order.indexOf(step.floor) : 0;
     if (world.focus !== desiredFocus) { world.focus = desiredFocus; render(); }
     const viewKey = `${step.kind}:${step.page}:${step.floor}:${step.remaining}`;
@@ -231,10 +235,18 @@ function animateCamera(dt, t) {
     else { position.x += 14 * wide; position.y += 15 * wide; position.z += 22 * wide; }
     const smoothing = reducedMotion.matches ? 1 : Math.min(1, dt * 2);
     controls.target.lerp(target, smoothing); camera.position.lerp(position, smoothing);
+    followY = board ? null : fy + 0.6;
   } else {
-    const fy = world.order.length ? floors.get(world.order[world.focus]).baseY : 0;
-    const dy = (fy + 0.6 - controls.target.y) * Math.min(1, dt * 3);
+    const fy = (world.order.length ? floors.get(world.order[world.focus]).baseY : 0) + 0.6;
+    if (followY === null) followY = controls.target.y;
+    const dy = (fy - followY) * Math.min(1, dt * 3);
+    followY += dy;
     controls.target.y += dy; camera.position.y += dy;
+    // Le point visé reste au-dessus de l'étage : on ne se perd pas dans la ville à force de zoomer sur les bords.
+    const t = controls.target, clamp = (v, r) => Math.max(-r, Math.min(r, v));
+    const ox = t.x, oy = t.y, oz = t.z;
+    t.set(clamp(t.x, FLOOR_REACH.x), followY + clamp(t.y - followY, FLOOR_REACH.y), clamp(t.z, FLOOR_REACH.z));
+    camera.position.x += t.x - ox; camera.position.y += t.y - oy; camera.position.z += t.z - oz;
     if (autoTour && world.data?.viewer?.role !== "spectator" && t - world.lastMove > 25) { stepFocus(1, true); world.lastMove = t; }
   }
   controls.autoRotate = autoTour && world.data?.viewer?.role !== "spectator";

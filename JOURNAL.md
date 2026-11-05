@@ -3,6 +3,17 @@
 Chaque IA ajoute **en haut** une entrée par session de travail (modèle et règles dans `AGENTS.md`, section 3).
 Le plus récent d'abord. On n'efface pas les entrées des autres.
 
+## 2026-11-05 · Lucas · branche Lucas · Claude Code (11)
+**Fait :** vue spectateur enrichie : tableau « La journée de chacun » (faits du jour en pastilles ; par résident : états des
+agents, journée compacte, quotas), fiche de l'étage visité, barre de progression dans la légende, bulles et fil « En direct »
+lisibles malgré le filtrage. Zoom vers la souris (`controls.zoomToCursor`) : le suivi d'étage décale cible et caméra au lieu
+de ramener la cible au centre, et la cible reste dans l'emprise de l'étage.
+**Fichiers :** `public/tour/navigation.js` (`updateSpectatorView`, `floorCardHtml`), `public/ui/insights.js` (`dayFacts`,
+`dayFactsChipsHtml`, `dayStripHtml`), `public/tour/animate.js` (`followY`), `public/tour/engine.js`, `public/tour/tower.js`,
+`public/ui/panel.js`, `public/index.html`, `public/style.css`.
+**À savoir :** taille des pages du tableau spectateur : `(innerHeight - 410) / 140` dans `animateCamera`.
+**Reste à faire :** —
+
 ## 2026-11-05 · Lucas · branche Lucas · Claude Code (10)
 **Fait :** stats des résidents. Relevé du jour par étage (`store.daily`, `insightsOf`) : demandes, agents distincts,
 actions, heures (Paris), outils, modèles, projets, pic en parallèle, début et fin. Carte « 📊 Ta journée / Sa journée »

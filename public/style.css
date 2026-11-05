@@ -875,3 +875,40 @@ body[data-mode="productif"] #ecoBtn, body[data-mode="productif"] #gameCelebratio
 .day-facts li { display: grid; gap: 1px; }
 .day-facts .fact-k { color: var(--mute); font-size: 11px; }
 .day-facts .fact-v b { color: var(--fg); }
+
+/* Visite spectateur : tableau « La journée de chacun », fiche de l'étage visité, progression de l'étape. */
+.fact-chips { display: flex; flex-wrap: wrap; gap: 8px; margin: -8px 0 16px; }
+.fact-chip { padding: 6px 11px; border: 1px solid #7493b744; border-radius: 999px; background: #13233a; font-size: 12px; color: #dce8f5; }
+.fact-chip small { color: #9fb2c9; margin-right: 2px; }
+.usage-card.day-card { grid-template-columns: minmax(170px, 1fr) minmax(260px, 1.6fr) minmax(0, 2.4fr); gap: 20px; padding: 16px 18px; }
+.day-card .card-quotas { display: grid; grid-template-columns: repeat(auto-fit, minmax(110px, 1fr)); gap: 14px; }
+.day-card .quota-row b { font-size: 20px; }
+.sfc-states { display: flex; flex-wrap: wrap; gap: 4px 10px; margin: 4px 0 0; font-size: 11px; color: #9fb2c9; }
+.sfc-states b { color: #f3f6fa; }
+.sfc-states .d { width: 7px; height: 7px; margin-right: 3px; }
+.day-strip { display: grid; gap: 6px; min-width: 0; }
+.strip-stats { display: flex; gap: 12px; flex-wrap: wrap; }
+.strip-stats span { display: grid; }
+.strip-stats b { font: 600 17px var(--mono); color: #f3f6fa; }
+.strip-stats small { font-size: 10px; color: #9fb2c9; }
+.strip-bars { display: flex; align-items: flex-end; gap: 2px; height: 26px; }
+.strip-bars i { flex: 1; min-width: 0; border-radius: 2px 2px 0 0; background: #7ec3f0aa; }
+.strip-bars.empty { align-items: center; color: #7f93ab; }
+.spectator-floor-card { position: fixed; z-index: 7; left: 24px; bottom: 58px; width: min(380px, calc(100vw - 48px)); padding: 16px 18px;
+  border: 1px solid #89a4c144; border-radius: 16px; background: #0c1729f0; box-shadow: 0 18px 50px #0008; color: #dce8f5; }
+.spectator-floor-card h2 { margin: 2px 0 2px; font-size: 22px; }
+.spectator-floor-card .kicker { margin: 0; }
+.spectator-floor-card .sfc-sub { margin: 4px 0 0; font-size: 12px; color: #b5c9e0; }
+.spectator-floor-card .day-strip { margin-top: 10px; }
+body:not(.spectator-presentation) .spectator-floor-card { display: none; }
+.tour-caption { overflow: hidden; }
+.tour-caption .tour-progress { position: absolute; left: 0; bottom: 0; height: 2px; background: var(--gold); transition: width 1s linear; }
+@media (max-width: 1099px) {
+  .usage-card.day-card { grid-template-columns: 1fr 1.4fr; }
+  .day-card .card-quotas { grid-column: 1 / -1; }
+}
+@media (max-width: 759px) {
+  .usage-card.day-card { grid-template-columns: 1fr; }
+  .spectator-floor-card { left: 8px; right: 8px; width: auto; bottom: 96px; padding: 12px 14px; }
+  .fact-chips { margin-top: 0; }
+}
