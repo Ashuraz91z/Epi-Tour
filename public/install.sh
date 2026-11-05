@@ -1,14 +1,27 @@
 #!/bin/sh
 # Relie les outils déjà présents, vérifie la clé avant de modifier la configuration.
+# Options après la clé : --replace (remplace une autre clé, avec sauvegarde), --partager-demandes (le texte de tes
+# demandes est visible des autres résidents), --sans-demandes (arrête ce partage). Sans option, le choix déjà fait
+# sur cette machine est gardé.
 set -eu
 KEY="${1:-}"
 [ -n "$KEY" ] || { echo "Il manque la clé de ton appartement."; exit 1; }
+shift
+REPLACE="" SHARE=""
+for OPTION in "$@"; do
+  case "$OPTION" in
+    --replace) REPLACE=1 ;;
+    --partager-demandes) SHARE=on ;;
+    --sans-demandes) SHARE=off ;;
+    *) echo "Option inconnue : $OPTION"; exit 1 ;;
+  esac
+done
 SITE="${PENTHOUSE_URL:-https://agent.ashuraz.xyz}"
 DIR="$HOME/.config/tour"
 command -v python3 >/dev/null || { echo "Installe Python 3 puis relance cette commande."; exit 1; }
 command -v curl >/dev/null || { echo "curl est nécessaire."; exit 1; }
 if [ -f "$DIR/secret" ] && { [ "$(cat "$DIR/secret")" != "$KEY" ] || [ "$(cat "$DIR/url" 2>/dev/null)" != "$SITE" ]; }; then
-  [ "${2:-}" = "--replace" ] || {
+  [ -n "$REPLACE" ] || {
     echo "Cette machine est déjà reliée à une autre configuration. Rien n'a été modifié."
     echo "Conserve ton relais actuel, ou ajoute --replace à la commande pour le remplacer avec sauvegarde."
     exit 1
@@ -33,6 +46,8 @@ printf '%s\n' "$SITE" > "$DIR/url"
 (umask 077; printf '%s\n' "$KEY" > "$DIR/secret")
 chmod 600 "$DIR/secret"
 [ -f "$DIR/host" ] || hostname -s > "$DIR/host"
+if [ "$SHARE" = on ]; then : > "$DIR/partage-demandes"; echo "Tes demandes seront visibles des autres résidents (--sans-demandes pour arrêter)."; fi
+if [ "$SHARE" = off ]; then rm -f "$DIR/partage-demandes"; echo "Tes demandes ne sont plus partagées."; fi
 python3 "$DIR/tour-sync"
 python3 "$DIR/tour-check"
 python3 "$DIR/install-sync.py"
@@ -47,5 +62,5 @@ if [ "$(uname)" = "Darwin" ] && [ "${PENTHOUSE_SANS_APP:-}" != "1" ]; then
     echo "App Penthouse non installée (facultative) : le suivi de tes agents fonctionne quand même."
   fi
 fi
-echo "C’est connecté. Les sessions locales récentes et les quotas disponibles sont envoyés au site automatiquement."
+echo "C’est connecté. Les sessions locales récentes et les quotas (ChatGPT, et Claude toutes les 15 min) sont envoyés au site automatiquement."
 echo 'Pour vérifier plus tard : python3 "$HOME/.config/tour/tour-check"'

@@ -4,7 +4,7 @@ import * as THREE from "three";
 import { postGame, showCelebrations } from "../gamify-ui.js";
 import { parseFloorKey } from "../wings-client.js";
 import { world } from "./state.js";
-import { $, ME, esc, myApt, quotaRows, stateOf } from "./base.js";
+import { $, ME, claudeTracked, esc, myApt, quotaRows, stateOf } from "./base.js";
 import { agents, camera, clock, floors, renderer } from "./engine.js";
 import { tvFrame, tvPageUrl } from "./floors/shared.js";
 import { economyUi, render, showAgent, sportsGames } from "../ui/panel.js";
@@ -24,12 +24,12 @@ function updateSpectatorView(step) {
   if (caption !== captionContent) { $("#tourCaption").textContent = caption; captionContent = caption; }
   if (step.kind !== "dashboard") return;
   const list = [...world.data.apartments].sort((a, b) => a.created - b.created || a.name.localeCompare(b.name, "fr")).slice(step.page * step.pageSize, (step.page + 1) * step.pageSize);
-  const rows = list.map(a => ({ name: a.name, active: a.sessions.filter(s => stateOf(s, world.data.now) === "travaille").length, quotas: quotaRows(a.usage, world.data.now) }));
+  const rows = list.map(a => ({ name: a.name, active: a.sessions.filter(s => stateOf(s, world.data.now) === "travaille").length, quotas: quotaRows(a.usage, world.data.now), claude: claudeTracked(a.usage) }));
   const content = JSON.stringify([rows, step.page, step.pages]);
   if (content === dashboardContent) return;
   dashboardContent = content;
   $("#spectatorDashboard").innerHTML = `<div class="dashboard-heading"><div><p class="kicker">Penthouse · vue d’ensemble</p><h1>Les usages de chacun</h1><p class="dashboard-lead">Quotas restants, par résident et par outil</p></div><span class="dashboard-page">${step.page + 1} / ${step.pages}</span></div>
-    <div class="usage-grid">${rows.map(a => `<article class="usage-card"><header><span class="resident-avatar" aria-hidden="true">${esc(a.name.slice(0, 1).toUpperCase())}</span><div><h2>${esc(a.name)}</h2><span>${a.active} agent${a.active > 1 ? "s" : ""} au travail</span></div></header>${a.quotas.map((q, i) => `<div class="quota-row ${i < 2 ? "claude" : "chatgpt"}"><div><span>${i < 2 ? "Claude" : "ChatGPT"} · ${q.label === "5 HEURES" ? "5 h" : "semaine"}</span><b>${q.remaining === null ? "—" : q.remaining + " %"}</b></div><div class="quota-track"><i style="width:${q.remaining ?? 0}%"></i></div><small>${esc(q.reset)}</small></div>`).join("")}</article>`).join("") || '<p>Aucun résident pour le moment.</p>'}</div>`;
+    <div class="usage-grid">${rows.map(a => `<article class="usage-card"><header><span class="resident-avatar" aria-hidden="true">${esc(a.name.slice(0, 1).toUpperCase())}</span><div><h2>${esc(a.name)}</h2><span>${a.active} agent${a.active > 1 ? "s" : ""} au travail</span></div></header>${a.claude ? "" : `<div class="quota-row claude untracked"><div><span>Claude</span><b>non suivi</b></div><small>Mesuré après avoir relancé la commande de l’étage</small></div>`}${a.quotas.filter(q => a.claude || q.provider !== "claude").map(q => `<div class="quota-row ${q.provider}"><div><span>${q.provider === "claude" ? "Claude" : "ChatGPT"} · ${q.label === "5 HEURES" ? "5 h" : "semaine"}</span><b>${q.remaining === null ? "—" : q.remaining + " %"}</b></div><div class="quota-track"><i style="width:${q.remaining ?? 0}%"></i></div><small>${esc(q.reset)}</small></div>`).join("")}</article>`).join("") || '<p>Aucun résident pour le moment.</p>'}</div>`;
 }
 $("#tourPause").addEventListener("click", () => {
   world.tourPaused = !world.tourPaused;

@@ -148,6 +148,8 @@ export function ingest(store, src, host, p, now = Date.now() / 1000) {
   const s = (store.sessions[key] ??= { src, host, sid: n.sid.slice(0, 8), started: observed, task: "" });
   Object.assign(s, { state: n.state, action: n.action, updated: observed });
   if (n.task) s.task = n.task;
+  // Lecteur de journaux : la dernière demande, seulement si la machine a choisi de la partager (--partager-demandes).
+  if (p.sync && typeof p.prompt === "string" && p.prompt.trim()) s.task = short(p.prompt, 240);
   if (typeof p.cwd === "string" && p.cwd) s.project = (p.cwd.replace(/\/+$/, "").split("/").pop() || p.cwd).slice(0, 80);
   const model = p.model || p.extra?.model;
   if (typeof model === "string" && model) s.model = model.slice(0, 40);

@@ -344,8 +344,12 @@ test("connexion : une commande, sessions importées, outils inchangés et instal
     mkdirSync(join(home, ".claude/projects/demo"), { recursive: true }); mkdirSync(join(home, ".codex/sessions"), { recursive: true });
     const bin = join(home, "bin"); mkdirSync(bin);
     for (const name of ["launchctl", "crontab"]) writeFileSync(join(bin, name), "#!/bin/sh\nexit 0\n", { mode: 0o755 });
+    // Faux Claude Code (jamais le vrai) : il répond comme --output-format stream-json, avec le quota, et compte ses appels.
+    writeFileSync(join(bin, "claude"), `#!/bin/sh\necho x >> "$HOME/claude-calls"\necho '{"type":"rate_limit_event","rate_limit_info":{"unifiedWindows":{"five_hour":{"utilization":0.42,"resetsAt":4102444800},"seven_day":{"utilization":0.1,"resetsAt":4102444800}}}}'\n`, { mode: 0o755 });
     const eventAt = new Date().toISOString();
-    writeFileSync(join(home, ".claude/projects/demo/recent.jsonl"), JSON.stringify({ type: "assistant", sessionId: "imported", timestamp: eventAt, cwd: "/private/project", message: { model: "test-model", content: [{ type: "text", text: "PRIVATE NOT SENT" }], stop_reason: "end_turn" } }) + "\n");
+    const log = join(home, ".claude/projects/demo/recent.jsonl");
+    const said = (text, at = new Date().toISOString()) => JSON.stringify({ type: "user", sessionId: "imported", timestamp: at, cwd: "/private/project", message: { role: "user", content: text } }) + "\n";
+    writeFileSync(log, said("DEMANDE NON PARTAGEE", eventAt) + JSON.stringify({ type: "assistant", sessionId: "imported", timestamp: eventAt, cwd: "/private/project", message: { model: "test-model", content: [{ type: "text", text: "PRIVATE NOT SENT" }], stop_reason: "end_turn" } }) + "\n");
     writeFileSync(join(home, ".claude/settings.json"), JSON.stringify({ keep: true, hooks: { Stop: [{ hooks: [{ type: "command", command: "existing-hook" }] }] } }));
     const script = fileURLToPath(new URL("./public/install.sh", import.meta.url));
     const env = { ...process.env, HOME: home, PENTHOUSE_URL: url, PATH: join(home, "bin") + ":" + process.env.PATH };
@@ -362,6 +366,21 @@ test("connexion : une commande, sessions importées, outils inchangés et instal
     assert.equal(Object.keys(db.get("installation").store.sessions).length, 1, "seule la session réelle est importée");
     assert.equal(db.get("installation").store.sessions["claude:" + host + ":imported"].project, "project");
     assert.ok(!JSON.stringify(db.get("installation").store).includes("PRIVATE NOT SENT"));
+    assert.ok(!JSON.stringify(db.get("installation").store).includes("DEMANDE NON PARTAGEE"), "demandes privées par défaut");
+    // Quota Claude mesuré par le suivi lui-même, une seule fois en 15 min malgré deux installations.
+    assert.deepEqual(db.get("installation").store.usage.claude.five_hour, { pct: 42, resets_at: 4102444800 });
+    assert.equal(readFileSync(join(home, "claude-calls"), "utf8").trim().split("\n").length, 1);
+    // Partage choisi sur la commande : la dernière demande devient visible ; --sans-demandes l'arrête, sans rien d'autre.
+    const task = () => db.get("installation").store.sessions["claude:" + host + ":imported"].task;
+    writeFileSync(log, said("Refais le panneau des quotas"), { flag: "a" });
+    await run("sh", [script, token, "--partager-demandes"], { env });
+    assert.equal(task(), "Refais le panneau des quotas");
+    writeFileSync(log, said("Rien de nouveau"), { flag: "a" });
+    await run("sh", [script, token], { env });
+    assert.equal(task(), "Rien de nouveau", "sans option, le choix de la machine est gardé");
+    writeFileSync(log, said("DEMANDE APRES ARRET"), { flag: "a" });
+    await run("sh", [script, token, "--sans-demandes"], { env });
+    assert.ok(!JSON.stringify(db.get("installation").store).includes("DEMANDE APRES ARRET"));
     await call("/e?src=codex&host=" + encodeURIComponent(host), { hook_event_name: "SessionStart", session_id: "real" }, { "X-Tour-Token": token });
     assert.equal(db.get("installation").store.seen[host].readers.codex, true);
     assert.ok(db.get("installation").store.seen[host].events.codex);
@@ -371,6 +390,37 @@ test("connexion : une commande, sessions importées, outils inchangés et instal
     await run("sh", [script, token], { env });
     assert.equal(readFileSync(join(home, ".codex/hooks.json"), "utf8"), "bad json", "les fichiers des outils ne sont ni lus ni modifiés");
   } finally { app.close(); rmSync(home, { recursive: true, force: true }); }
+});
+
+test("lecteur de journaux : texte des demandes seulement si partagé, jamais les résultats d'outils ni les messages système", async () => {
+  const run = promisify(execFile);
+  const script = fileURLToPath(new URL("./collecteurs/tour-sync", import.meta.url));
+  const python = `
+import importlib.machinery, importlib.util, json, os, sys
+sys.path.insert(0, os.path.dirname(sys.argv[1]))
+loader = importlib.machinery.SourceFileLoader('tour_sync', sys.argv[1])
+spec = importlib.util.spec_from_loader('tour_sync', loader); m = importlib.util.module_from_spec(spec); loader.exec_module(m)
+claude = [{'type':'user','sessionId':'c','message':{'role':'user','content':'Ajoute le studio'}},
+  {'type':'user','sessionId':'c','message':{'role':'user','content':[{'type':'tool_result','content':'SORTIE OUTIL'}]}},
+  {'type':'user','sessionId':'c','isMeta':True,'message':{'role':'user','content':'META'}},
+  {'type':'user','sessionId':'c','message':{'role':'user','content':'<command-name>/clear</command-name>'}},
+  {'type':'assistant','sessionId':'c','message':{'content':[{'type':'text','text':'REPONSE'}],'stop_reason':'end_turn'}}]
+lines = [json.dumps(r) for r in claude]
+assert 'prompt' not in m.parse('claude', lines)
+p = m.parse('claude', lines, True)
+assert p['prompt'] == 'Ajoute le studio', p
+assert 'SORTIE' not in json.dumps(p) and 'META' not in json.dumps(p) and 'REPONSE' not in json.dumps(p)
+codex = [{'type':'session_meta','payload':{'id':'x'}}, {'type':'event_msg','payload':{'type':'user_message','message':'  Corrige   le golf  '}},
+  {'type':'event_msg','payload':{'type':'agent_message','message':'REPONSE'}}]
+p = m.parse('codex', [json.dumps(r) for r in codex], True)
+assert p['prompt'] == 'Corrige le golf', p
+assert len(m.parse('claude', [json.dumps({'type':'user','message':{'content':'x' * 900}})], True)['prompt']) == 300
+`;
+  await run("python3", ["-c", python, script]);
+  // Côté serveur : la demande du relevé devient la tâche de la session.
+  const store = createStore();
+  ingest(store, "claude", "mac", { hook_event_name: "Stop", session_id: "s", sync: true, observed_at: 1000, prompt: "Ajoute le studio" }, 1001);
+  assert.equal(store.sessions["claude:mac:s"].task, "Ajoute le studio");
 });
 
 test("journaux : un relevé ancien ne remplace pas une autorisation récente", () => {

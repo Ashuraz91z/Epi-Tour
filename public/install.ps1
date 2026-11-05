@@ -3,7 +3,9 @@
 # Depuis « Relier mes agents » (Windows PowerShell 5.1 de Windows 10/11, ou PowerShell 7) :
 #   powershell -ExecutionPolicy Bypass -NoProfile -Command "& ([scriptblock]::Create((irm 'https://agent.ashuraz.xyz/install.ps1'))) -Key 'CLE'"
 # Paramètres : -Key (obligatoire, ou variable d'environnement PENTHOUSE_KEY), -Site (défaut https://agent.ashuraz.xyz,
-# ou PENTHOUSE_URL), -Replace (remplace une autre clé déjà en place, avec sauvegarde), -SansApp (n'installe pas l'app).
+# ou PENTHOUSE_URL), -Replace (remplace une autre clé déjà en place, avec sauvegarde), -SansApp (n'installe pas l'app),
+# -PartagerDemandes (le texte des demandes est visible des autres résidents), -SansDemandes (arrête ce partage).
+# Sans -PartagerDemandes ni -SansDemandes, le choix déjà fait sur ce PC est gardé.
 # Codes de sortie : 0 relié ; 1 échec ; 2 Python 3 ou curl.exe manquant ; 3 déjà relié à une autre clé (relancer avec -Replace).
 #
 # Comme install.sh : vérifie la clé avant de toucher à quoi que ce soit, copie les collecteurs dans ~\.config\tour,
@@ -15,7 +17,9 @@ param(
   [string]$Key = '',
   [string]$Site = '',
   [switch]$Replace,
-  [switch]$SansApp
+  [switch]$SansApp,
+  [switch]$PartagerDemandes,
+  [switch]$SansDemandes
 )
 
 Set-StrictMode -Version 2.0
@@ -198,6 +202,10 @@ try {
     if (-not $machine) { $machine = '' + $env:COMPUTERNAME }
     Write-Setting 'host' $machine
   }
+  # Partage du texte des demandes : un simple fichier, lu par tour-sync.
+  $share = Join-Path $Dir 'partage-demandes'
+  if ($PartagerDemandes) { Set-Content -LiteralPath $share -Value '' -Encoding ASCII; Say 'Tes demandes seront visibles des autres résidents (-SansDemandes pour arrêter).' }
+  if ($SansDemandes) { Remove-Item -LiteralPath $share -Force -ErrorAction SilentlyContinue; Say 'Tes demandes ne sont plus partagées.' }
 
   Invoke-Python (Join-Path $Dir 'tour-sync')
   if ($LASTEXITCODE -ne 0) { Fail 'Premier envoi impossible : vérifie le réseau, puis relance la commande.' }
