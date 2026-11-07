@@ -6,6 +6,23 @@
   --mono: "JetBrains Mono", ui-monospace, Menlo, monospace;
 }
 * { box-sizing: border-box; }
+/* Barres natives assorties aux panneaux, y compris dans les dialogues. */
+* { scrollbar-width: thin; scrollbar-color: var(--mute) #0a0d16; }
+@supports selector(::-webkit-scrollbar) {
+  * { scrollbar-width: auto; scrollbar-color: auto; }
+  ::-webkit-scrollbar { width: 10px; height: 10px; }
+  ::-webkit-scrollbar-track { background: #0a0d16; border-radius: 999px; }
+  ::-webkit-scrollbar-thumb { background: var(--mute); border: 3px solid #0a0d16; border-radius: 999px; }
+  ::-webkit-scrollbar-thumb:hover { background: var(--gold); }
+  ::-webkit-scrollbar-thumb:active { background: var(--gold2); }
+  ::-webkit-scrollbar-corner { background: #0a0d16; }
+}
+@media (forced-colors: active) {
+  * { scrollbar-width: auto; scrollbar-color: auto; }
+  ::-webkit-scrollbar-track, ::-webkit-scrollbar-corner { background: Canvas; }
+  ::-webkit-scrollbar-thumb { background: ButtonText; border-color: Canvas; }
+  ::-webkit-scrollbar-thumb:hover, ::-webkit-scrollbar-thumb:active { background: Highlight; }
+}
 html, body { margin: 0; height: 100%; }
 body { background: var(--bg); color: var(--fg); font: 15px/1.45 "Sora", system-ui, sans-serif; overflow: hidden; }
 [hidden] { display: none !important; }

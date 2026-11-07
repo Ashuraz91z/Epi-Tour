@@ -3,6 +3,13 @@
 Chaque IA ajoute **en haut** une entrée par session de travail (modèle et règles dans `AGENTS.md`, section 3).
 Le plus récent d'abord. On n'efface pas les entrées des autres.
 
+## 2026-11-07 · Lucas · branche Lucas · Codex
+**Fait :** barres de défilement assorties aux interfaces : piste sombre, poignée arrondie et accent doré au survol.
+**Fichiers :** `public/style.css`, `penthouse.js` (version `2026-11-07.1`).
+**À savoir :** défilement natif conservé, fallback Firefox et contraste forcé ; barres masquées sur mobile déjà prévues conservées.
+**Vérifié :** 85 tests passent après intégration du dernier main ; styles calculés Chromium vérifiés sur les conteneurs de la version initiale.
+**Reste à faire :** rendu Firefox/Safari non vérifié ; publication demandée par Lucas.
+
 ## 2026-11-05 · Hugo · branche Hugo · Claude Code
 **Fait :** étage de luxe réservé à l'étage `hugoat` : marbre noir veiné d'or, LED dorées et magenta, colonnes et lustres,
 bureau tout en or, billets de 100 $ au sol, balcon piscine à l'est, terrasse showroom devant l'étage avec une GT noire
