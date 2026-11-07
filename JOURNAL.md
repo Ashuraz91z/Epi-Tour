@@ -3,6 +3,12 @@
 Chaque IA ajoute **en haut** une entrée par session de travail (modèle et règles dans `AGENTS.md`, section 3).
 Le plus récent d'abord. On n'efface pas les entrées des autres.
 
+## 2026-11-07 · Lucas · branche Lucas · Codex (2)
+**Fait :** lien CSS versionné pour que le navigateur demande une nouvelle URL après le changement des scrollbars.
+**Fichiers :** `public/index.html`, `penthouse.js` (version `2026-11-07.2`).
+**À savoir :** le serveur servait déjà le nouveau CSS en HTTPS ; le cache de la session de Lucas est une hypothèse, pas une cause confirmée.
+**Reste à faire :** confirmer le rendu dans le navigateur où Lucas constate le problème.
+
 ## 2026-11-07 · Lucas · branche Lucas · Codex
 **Fait :** barres de défilement assorties aux interfaces : piste sombre, poignée arrondie et accent doré au survol.
 **Fichiers :** `public/style.css`, `penthouse.js` (version `2026-11-07.1`).
