@@ -15,6 +15,7 @@ import { tickPrestige } from "./floors/prestige.js";
 import { stream, tvUrl } from "./floors/shared.js";
 import { stageFloor } from "./tower.js";
 import { animateCrew } from "./fazbear.js";
+import { animateTrophy } from "./trophy.js";
 import { autoTour, stepFocus, updateSpectatorView } from "./navigation.js";
 import { floorShown } from "./mode.js";
 import { render } from "../ui/panel.js";
@@ -69,6 +70,7 @@ function animate(frameTime = performance.now()) {
   }
   animateAgents(dt, t, focusKey);
   animateCrew(dt, t, focusKey);
+  animateTrophy(dt, t, focusKey);
   animateCamera(dt, t);
   // Le direct ne se charge que quand on regarde le Salon.
   const url = focusKey === "lounge" ? tvUrl() : "about:blank";

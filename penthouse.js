@@ -10,10 +10,11 @@ import { ingest, sanitizeProfile } from "./core.js";
 import { CASINO } from "./public/economy-data.js";
 import { DAILY_QUESTS, claimQuest, onIngestGame, performSpaceAction, pullToasts, publicGame, visitWing } from "./gamify.js";
 import { buyItem, onIngestEconomy, playCasino, playSport, questReward, setSubscription, spectatorEconomy, tip } from "./economy.js";
+import { leagueTick, publicLeague } from "./league.js";
 
 const ROOT = dirname(fileURLToPath(import.meta.url));
 // Version affichée dans le menu « ⋯ » : permet de vérifier que le site a bien repris la dernière version.
-export const VERSION = "2026-11-16.3";
+export const VERSION = "2026-11-16.4";
 const MAX_BODY = 256 * 1024;
 const MAX_APARTMENTS = 50;
 const acceptsGzip = req => /(?:^|,)\s*gzip\s*(?:,|$)/i.test(req.headers["accept-encoding"] ?? "");
@@ -208,7 +209,11 @@ export function createApp({ code, db }) {
 
   // État complet envoyé aux résidents, ou filtré pour les spectateurs. Un seul calcul des étages pour les deux.
   const payloads = (now = Date.now() / 1000) => {
+    // Ligue de la semaine : clôture du lundi et primes, avant de lire les étages (portefeuilles à jour).
+    let leagueState;
+    try { leagueState = leagueTick(db, now); } catch (e) { console.error("ligue :", e); leagueState = db.setting("league"); }
     const apartments = db.snapshots(now);
+    const league = publicLeague(leagueState, apartments, now);
     const tv = db.setting("tv") ?? { channel: "auto" };
     const room = roomName();
     // Jackpot commun du casino : visible de tous, résidents comme spectateurs.
@@ -216,8 +221,8 @@ export function createApp({ code, db }) {
     const casino = { jackpot: Math.floor(jackpot.pool), lastWinner: jackpot.lastWinner ?? null };
     let resident, spectator;
     return {
-      resident: () => resident ??= { now, version: VERSION, viewer: { role: "resident", room }, tv, casino, apartments },
-      spectator: () => spectator ??= { now, version: VERSION, viewer: { role: "spectator", room }, tv: publicTv(tv), casino, apartments: apartments.map(spectatorSnapshot) },
+      resident: () => resident ??= { now, version: VERSION, viewer: { role: "resident", room }, tv, casino, league, apartments },
+      spectator: () => spectator ??= { now, version: VERSION, viewer: { role: "spectator", room }, tv: publicTv(tv), casino, league, apartments: apartments.map(spectatorSnapshot) },
     };
   };
   // Flux SSE : un seul minuteur pour tous les onglets ouverts, l'état est calculé une fois toutes les 2 s.

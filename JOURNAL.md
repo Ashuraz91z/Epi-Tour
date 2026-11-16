@@ -3,6 +3,22 @@
 Chaque IA ajoute **en haut** une entrée par session de travail (modèle et règles dans `AGENTS.md`, section 3).
 Le plus récent d'abord. On n'efface pas les entrées des autres.
 
+## 2026-11-16 · Paul-Adrien · branche Paul-Adrien · Claude Code
+**Fait :** Ligue de la semaine. Points du lundi au dimanche (Paris) : 1 par minute de travail d'agent, 10 par tâche livrée,
+plafonnés par jour. Carte « 🏆 Ligue » en tête du classement flottant (podium en direct, défi commun, champion en titre) et
+fenêtre « Voir la ligue ». Le lundi, le serveur fige la semaine : podium payé (300/150/75 P$ + XP), badges, trophée doré 3D à
+gauche du nom de l'étage du ou de la champion·ne. Défi commun : battre la semaine passée de 10 % (20 h à 300 h), 100 P$ par
+étage qui a travaillé 1 h. Tout est masqué en mode productif.
+**Fichiers :** `league.js` (nouveau : clôture, défi, vue publique), `economy.js` (`recordLeague`, `leagueScore`,
+`leaguePrize`, `mergeLeague`), `public/economy-data.js` (`LEAGUE`, 3 badges), `penthouse.js` (`league` dans l'état, version),
+`admin.js` (fusion), `public/ui/league.js` et `public/tour/trophy.js` (nouveaux), une ligne dans `ui/panel.js`,
+`tour/tower.js` et `tour/animate.js`, `public/index.html` (`#leagueDlg`), `public/work.css`, `test.js`, `README.md`.
+**À savoir :** la clôture passe par `leagueTick` (appelé dans `payloads()`, réglage `league` en base) : transaction, et
+chaque prime n'est versée qu'une fois par étage (`economy.leagueWins`). Le trophée est ajouté au groupe de l'étage après
+`bakeStatic` (`syncTrophy`) : ne pas mettre d'objet du thème à x ≈ -7,3, y > 2,7 contre la vitre du fond. Les spectateurs
+reçoivent `league` (noms et points) mais ne voient pas encore la carte.
+**Reste à faire :** carte de la ligue dans le tableau spectateur (fichiers de Lucas) ; première clôture réelle lundi 23.
+
 ## 2026-11-16 · Briac · branche Briac · Hermes (claude-opus-5-5) (3)
 **Fait :** l'équipe Fazbear ne calcule plus rien quand on ne regarde pas l'étage de Briac (bulles cachées, sortie immédiate). Rendu vérifié en local dans un navigateur headless : 4 sprites, bulles « Nom - Rôle · titre de la tâche », agents à leur poste pendant une tâche.
 **Fichiers :** `public/tour/fazbear.js`, `penthouse.js` (version 2026-11-16.3).

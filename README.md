@@ -175,6 +175,13 @@ Chaque outil relié est un employé de l'étage. Tout est calculé par le serveu
   Livreur, Stakhanov, Polyglotte. Dans la tour : tableau de bord du travail dans le bureau, le robot saute et lance des
   confettis à chaque tâche livrée, l'étage fête un objectif atteint ; « Travail du jour » dans le panneau, « Employé du jour »
   au classement.
+- **Ligue de la semaine** (`league.js`, `public/ui/league.js`, `public/tour/trophy.js`) : du lundi 0 h au dimanche 24 h
+  (heure de Paris), 1 point par minute de travail d'un agent et 10 par tâche livrée (12 h et 40 tâches comptées par jour au
+  plus). Classement en direct dans le classement flottant et la fenêtre « Voir la ligue ». Le lundi, le serveur fige la
+  semaine : podium payé (300, 150, 75 P$ et XP, dès 60 points), badges, trophée doré en 3D sur l'étage du ou de la
+  champion·ne toute la semaine suivante. **Défi commun** : toute la tour ensemble doit faire mieux que la semaine passée
+  (+10 %, entre 20 h et 300 h de travail) ; réussi, chaque étage qui a travaillé 1 h touche 100 P$. Clôture en transaction et
+  primes versées une seule fois par étage, même avec plusieurs copies du serveur. Masqué en mode productif.
 - **Mini-jeux jouables** aux étages Tennis et Golf (« 🎮 Jouer ») : match en 3 jeux contre le robot du club (3 niveaux) et
   mini-golf de 3 trous (`public/sports-games.js`). Score vérifié par le serveur (`POST /api/game/sport`), 5 parties récompensées
   par sport et par jour. Les robots y tiennent raquettes et clubs.

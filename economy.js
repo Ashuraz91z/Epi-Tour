@@ -8,7 +8,7 @@
 // Tout se décide ici, côté serveur : le client n'envoie que des intentions, le hasard du casino vient de node:crypto.
 import { randomInt } from "node:crypto";
 import {
-  CASINO, CHATGPT_PLANS, ECHELONS, ECHELON_BONUS, ECONOMY_BADGES, EVENTS, FREELANCE, GRADES, MAJORATIONS, MODEL_FACTORS,
+  CASINO, CHATGPT_PLANS, ECHELONS, ECHELON_BONUS, ECONOMY_BADGES, EVENTS, FREELANCE, GRADES, LEAGUE, MAJORATIONS, MODEL_FACTORS,
   MORALE, PRIMES, PROVIDERS, SHOP, SPECIALTIES, SPORTS, TIPS, TITLES, TOOL_PROVIDER, WORK, WORKDAY,
 } from "./public/economy-data.js";
 import { createGame, grantXp, markActive, pushToast } from "./gamify.js";
@@ -37,7 +37,7 @@ export function eventOf(day) {
 export function createEconomy() {
   return { wallet: 0, earned: 0, subs: {}, staff: {}, day: null, history: [], ledger: [], perks: {}, decor: [],
     records: { biggestWin: 0, jackpots: 0 }, counters: { tipsSent: 0 }, blackjack: null,
-    workStreak: { days: 0, lastDay: null }, projects: {}, events: [], eventSeq: 0 };
+    workStreak: { days: 0, lastDay: null }, projects: {}, events: [], eventSeq: 0, league: null, leaguePast: [], leagueWins: [] };
 }
 // Étages créés avant l'économie, ou sauvegardes partielles : on complète sans rien effacer.
 function economyOf(store) {
@@ -243,6 +243,7 @@ function work(store, src, minutes, at, now, project = null) {
   day.peakParallel = Math.max(day.peakParallel ?? 0, workingNow(store, at));
   workXp(store, day, minutes * WORK.xpPerMinute);
   trackProject(eco, day, project, minutes, 0, now);
+  recordLeague(eco, day.date, minutes, 0);
   const total = todayMinutes(day);
   if (total >= WORK.streak.minMinutes && eco.workStreak.lastDay !== day.date) {
     eco.workStreak = { days: eco.workStreak.lastDay === previousDay(day.date) ? eco.workStreak.days + 1 : 1, lastDay: day.date };
@@ -261,6 +262,7 @@ function delivery(store, src, now, project = null) {
   day.delivered = (day.delivered ?? 0) + 1;
   workXp(store, day, WORK.xpPerDelivery);
   trackProject(eco, day, project, 0, 1, now);
+  recordLeague(eco, day.date, 0, 1);
   workEvent(store, "delivery", `${SPECIALTIES[src] ?? src} a livré une tâche${project ? ` · ${project}` : ""}`, { t: now, src, project: project ?? null });
   if (day.delivered >= 20) badge(store, "courier");
   checkObjectives(store, day, now);
@@ -271,6 +273,76 @@ function delivery(store, src, now, project = null) {
   day.primes = money(day.primes + amount);
   credit(store, amount, "prime", `Prime de livraison · ${src}`, now);
 }
+// ---------- ligue de la semaine ----------
+
+// Semaine ISO (lundi → dimanche) d'une date de Paris « AAAA-MM-JJ » : « 2026-W47 ». Se compare comme du texte.
+export function weekOf(date) {
+  const d = new Date(date + "T12:00:00Z");
+  d.setUTCDate(d.getUTCDate() + 3 - ((d.getUTCDay() + 6) % 7)); // jeudi de la même semaine : il donne l'année ISO
+  const year = d.getUTCFullYear(), jan4 = new Date(Date.UTC(year, 0, 4));
+  const week = 1 + Math.round(((d - jan4) / 864e5 - 3 + ((jan4.getUTCDay() + 6) % 7)) / 7);
+  return `${year}-W${String(week).padStart(2, "0")}`;
+}
+export const weekDay = date => (new Date(date + "T12:00:00Z").getUTCDay() + 6) % 7; // 0 = lundi
+const leagueDayPoints = d => Math.min(d.minutes, LEAGUE.dailyMinutesCap) * LEAGUE.perMinute + Math.min(d.delivered, LEAGUE.dailyDeliveriesCap) * LEAGUE.perDelivery;
+const leagueSummary = l => ({ week: l.week, points: money(l.points), minutes: money(l.minutes), delivered: l.delivered });
+// Chaque minute de travail et chaque livraison comptent pour la semaine de leur journée (jamais pour une semaine passée).
+function recordLeague(eco, date, minutes, delivered) {
+  const week = weekOf(date);
+  if (eco.league?.week > week) return;
+  if (eco.league?.week !== week) {
+    if (eco.league?.week) { (eco.leaguePast ??= []).unshift(leagueSummary(eco.league)); eco.leaguePast.splice(8); }
+    eco.league = { week, points: 0, minutes: 0, delivered: 0, days: {} };
+  }
+  const l = eco.league, d = (l.days[date] ??= { minutes: 0, delivered: 0 }), before = leagueDayPoints(d);
+  d.minutes = money(d.minutes + minutes);
+  d.delivered += delivered;
+  l.minutes = money(l.minutes + minutes);
+  l.delivered += delivered;
+  l.points = money(l.points + leagueDayPoints(d) - before);
+}
+// Deux étages d'une même personne fusionnés (admin.js) : même semaine, journées additionnées puis points recalculés.
+export function mergeLeague(into, from) {
+  const a = into ?? {}, b = from ?? {};
+  let league = (b.league?.week ?? "") > (a.league?.week ?? "") ? b.league : a.league ?? null;
+  if (a.league && b.league && a.league.week === b.league.week) {
+    const days = {};
+    for (const l of [a.league, b.league]) for (const [date, d] of Object.entries(l.days ?? {})) {
+      const t = (days[date] ??= { minutes: 0, delivered: 0 });
+      t.minutes = money(t.minutes + d.minutes); t.delivered += d.delivered;
+    }
+    league = { week: a.league.week, days, minutes: money(a.league.minutes + b.league.minutes), delivered: a.league.delivered + b.league.delivered,
+      points: money(Object.values(days).reduce((n, d) => n + leagueDayPoints(d), 0)) };
+  }
+  const past = new Map();
+  for (const x of [...(a.leaguePast ?? []), ...(b.leaguePast ?? [])]) {
+    const p = past.get(x.week);
+    past.set(x.week, p ? { week: x.week, points: money(p.points + x.points), minutes: money(p.minutes + x.minutes), delivered: p.delivered + x.delivered } : x);
+  }
+  const wins = [...(a.leagueWins ?? []), ...(b.leagueWins ?? [])].filter((w, i, all) => all.findIndex(o => o.id === w.id) === i).sort((x, y) => y.t - x.t);
+  return { league, leaguePast: [...past.values()].sort((x, y) => y.week.localeCompare(x.week)).slice(0, 8), leagueWins: wins.slice(0, 30) };
+}
+// Score d'un étage pour une semaine, en cours ou archivée.
+export function leagueScore(store, week) {
+  const eco = store?.economy;
+  if (eco?.league?.week === week) return leagueSummary(eco.league);
+  return eco?.leaguePast?.find(x => x.week === week) ?? { week, points: 0, minutes: 0, delivered: 0 };
+}
+// Récompense de fin de semaine (podium ou défi commun) : versée une seule fois par étage, même si on la redemande.
+export function leaguePrize(store, award, now = Date.now() / 1000) {
+  const eco = economyOf(store);
+  if ((eco.leagueWins ??= []).some(w => w.id === award.id)) return false;
+  eco.leagueWins.unshift({ id: award.id, week: award.week, kind: award.kind, rank: award.rank ?? null, t: now });
+  eco.leagueWins.splice(30);
+  const label = `${award.icon} ${award.title}`, week = award.week.split("-W")[1];
+  credit(store, award.money, "prime", `Ligue · ${award.title} (semaine ${week})`, now);
+  grantXp(gameOf(store), award.xp, label, { quiet: true });
+  pushToast(gameOf(store), label, `Semaine ${week} · +${award.money} P$ · +${award.xp} XP`);
+  workEvent(store, "league", `${label} · semaine ${week}`, { t: now });
+  badge(store, award.kind === "challenge" ? "team_player" : award.rank === 1 ? "weekly_champion" : "podium");
+  return true;
+}
+
 function reactivity(store, now) {
   const eco = economyOf(store), day = ensureDay(eco, now);
   if (day.reactivity >= PRIMES.reactivity.dailyMax) return;
@@ -664,6 +736,7 @@ export function publicEconomy(store, now = Date.now() / 1000) {
       lossLeft: Math.max(0, CASINO.dailyLossLimit - (day.casino.wagered - day.casino.won)), playsLeft: Math.max(0, CASINO.dailyPlays - day.casino.plays) },
     shopFactor: event.shop ?? 1,
     work: workView(store, eco, day, now),
+    league: leagueView(eco, day),
     // Main de blackjack en cours (carte cachée de la banque masquée), pour la reprendre après un rechargement.
     blackjack: eco.blackjack ? handView(eco.blackjack, "playing") : null,
   };
@@ -692,6 +765,12 @@ function workView(store, eco, day, now) {
   };
 }
 
+// Ligue : score de la semaine en cours (zéro si l'étage n'a pas encore travaillé cette semaine) et trophées gagnés.
+function leagueView(eco, day) {
+  const week = weekOf(day.date), l = eco.league?.week === week ? leagueSummary(eco.league) : { week, points: 0, minutes: 0, delivered: 0 };
+  return { ...l, wins: (eco.leagueWins ?? []).slice(0, 12).map(({ week: w, kind, rank }) => ({ week: w, kind, rank })) };
+}
+
 // Vue spectateur : la réussite de chacun, pas le détail de ses comptes ni de ses machines.
 export function spectatorEconomy(view) {
   if (!view) return undefined;
@@ -699,5 +778,6 @@ export function spectatorEconomy(view) {
     records: view.records, decor: [...(view.decor ?? [])], // le décor se voit dans la tour, aussi en spectateur
     work: view.work ? { today: { minutes: view.work.today.minutes, deliveries: view.work.today.deliveries }, team: { active: view.work.team.active },
       streak: { days: view.work.streak.days } } : undefined,
+    league: view.league, // points de la semaine et trophées : publics, comme le classement
     staff: (view.staff ?? []).map(({ src, grade, role, echelon }) => ({ src, grade, role, echelon })) };
 }

@@ -14,6 +14,7 @@ import {
 import { agents, clock, floors, glow, mat, scene } from "./engine.js";
 import { enter, leave, makeAgent } from "./robots.js";
 import { crewSession, crewText, dressAgent, fazbearOf, syncCrew } from "./fazbear.js";
+import { syncTrophy } from "./trophy.js";
 import { endCelebration } from "./work-fx.js";
 import { buildResident, disposeFloor, removeFloor, themeKey } from "./floors/resident.js";
 import { buildShared } from "./floors/shared.js";
@@ -75,6 +76,7 @@ function update(now) {
   // Placement : chaque (étage, pièce) remplit ses places dans l'ordre d'arrivée des agents, tous résidents confondus.
   const want = new Map(), groups = new Map();
   syncCrew(floors, now); // équipe Fazbear de Briac : permanente, hors des places des robots
+  syncTrophy(floors); // trophée de la Ligue de la semaine chez le ou la champion·ne
   for (const a of world.residents) for (const s of a.sessions) {
     if (crewSession(a, s)) continue;
     const key = keyOf(a.slug, s), u = agents.get(key)?.userData, state = stateOf(s, now);

@@ -152,6 +152,25 @@ export const WORK = {
   projectLevels: [0, 60, 240, 600, 1200, 2400, 4800, 9600],
 };
 
+// Ligue de la semaine : du lundi 0 h au dimanche 24 h (heure de Paris), sur le travail réel des agents de chaque étage.
+// Clôturée par le serveur le lundi suivant : podium payé, trophée chez le champion, prime du défi commun si réussi.
+export const LEAGUE = {
+  perMinute: 1, // point par minute de travail d'un agent (deux agents en parallèle comptent double)
+  perDelivery: 10, // points par tâche livrée
+  // Plafonds par jour : une journée hors norme ne règle pas la semaine à elle seule.
+  dailyMinutesCap: 720,
+  dailyDeliveriesCap: 40,
+  minPoints: 60, // pour monter sur le podium (1 h de travail)
+  prizes: [
+    { rank: 1, icon: "🏆", title: "Champion·ne de la semaine", money: 300, xp: 150 },
+    { rank: 2, icon: "🥈", title: "Vice-champion·ne de la semaine", money: 150, xp: 80 },
+    { rank: 3, icon: "🥉", title: "Troisième de la semaine", money: 75, xp: 40 },
+  ],
+  // Défi commun : toute la tour ensemble, en heures de travail d'agents. Objectif fixé le lundi : la semaine passée
+  // + 10 %, arrondi aux 5 h, entre 20 h et 300 h. Réussi : prime pour chaque étage qui a travaillé au moins 1 h.
+  challenge: { growth: 1.1, step: 5, min: 20, max: 300, minMinutes: 60, icon: "🤝", title: "Défi commun réussi", money: 100, xp: 50 },
+};
+
 // Mini-jeux d'adresse des étages Tennis et Golf, joués dans le navigateur. Le résultat vient du joueur : la récompense
 // est donc vérifiée (durée, score possible) et plafonnée à quelques parties par jour et par sport.
 export const SPORTS = {
@@ -199,4 +218,5 @@ export const ECONOMY_BADGES = {
   ace: "Trou en un", champion: "Champion du club",
   marathon: "Marathon (6 h de travail)", orchestra: "Chef d'orchestre (4 agents)", courier: "Livreur (20 tâches)",
   stakhanov: "Stakhanov (7 jours de travail)", polyglot: "Polyglotte (3 outils)",
+  weekly_champion: "Champion·ne de la semaine", podium: "Sur le podium de la semaine", team_player: "Défi commun réussi",
 };

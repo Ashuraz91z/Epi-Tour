@@ -17,6 +17,7 @@ import { workLeadersHtml, workPanelHtml } from "../work-ui.js";
 import { world } from "../tour/state.js";
 import { floorShown, productive, setMode } from "../tour/mode.js";
 import { dayFactsHtml, insightsPanelHtml } from "./insights.js";
+import { leagueCardHtml, refreshLeague } from "./league.js";
 import { $, CASINO_FEATURED, ME, PLACE_FR, STATE_FR, TOOLS, claudeQuotaWhy, claudeTracked, esc, hm, keyOf, myApt, placeOf, quotaRemaining, stateOf } from "../tour/base.js";
 import { agents, floors } from "../tour/engine.js";
 import { reducedMotion } from "../tour/kit.js";
@@ -242,9 +243,11 @@ function render() {
   const board = activityLeaderboard(list);
   const lb = $("#leaderboardDlg"), rich = productive() ? [] : fortuneLeaders(list), workers = spectator ? "" : workLeadersHtml(list, esc, { me });
   const facts = spectator ? "" : dayFactsHtml(list, esc, { me });
-  if ((board.length || rich.length || workers || facts) && !spectator) {
+  const league = spectator ? "" : leagueCardHtml(world.data.league); // vide en mode productif
+  refreshLeague();
+  if ((board.length || rich.length || workers || facts || league) && !spectator) {
     lb.hidden = false;
-    setHtml(lb, facts + workers + (board.length ? `<h4>Activité du jour</h4><ol>${board.map((r, i) => `<li><b>${esc(r.name)}</b> · ${r.actions} act. / ${r.sessions} sess.</li>`).join("")}</ol>` : "")
+    setHtml(lb, league + facts + workers + (board.length ? `<h4>Activité du jour</h4><ol>${board.map((r, i) => `<li><b>${esc(r.name)}</b> · ${r.actions} act. / ${r.sessions} sess.</li>`).join("")}</ol>` : "")
       + (rich.length ? `<h4>Fortune</h4><ol>${rich.map(a => `<li><b>${esc(a.name)}</b> · ${esc(a.economy.title?.icon ?? "")} ${esc(money(a.slug === me ? economyUi.shownWallet(a.economy) : a.economy.wallet))}</li>`).join("")}</ol>` : ""));
   } else lb.hidden = true;
   // Libellés masquables : sur un écran moyen, l'en-tête ne garde que les pastilles et les nombres.
@@ -542,7 +545,7 @@ modeLabel();
 $("#modeBtn").addEventListener("click", () => setMode(productive() ? "complet" : "productif"));
 addEventListener("penthouse:mode", () => {
   modeLabel();
-  for (const id of ["economyDlg", "missionsDlg", "sportDlg"]) if ($("#" + id)?.open) $("#" + id).close();
+  for (const id of ["economyDlg", "missionsDlg", "sportDlg", "leagueDlg"]) if ($("#" + id)?.open) $("#" + id).close();
   if (!world.data) return;
   keepFocusShown();
   render(); // redessine aussi le tableau de bord du travail dans le bureau

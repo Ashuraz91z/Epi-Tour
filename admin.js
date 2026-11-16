@@ -10,6 +10,7 @@ import { join } from "node:path";
 import { pathToFileURL } from "node:url";
 import { openDb } from "./db.js";
 import { createStore } from "./core.js";
+import { mergeLeague } from "./economy.js";
 import { slugify } from "./penthouse.js";
 
 const money = x => Math.round(x * 100) / 100;
@@ -64,6 +65,7 @@ function mergeEconomy(into, from) {
     jackpots: (into.records?.jackpots ?? 0) + (from.records?.jackpots ?? 0) };
   eco.counters = sumMaps(into.counters, from.counters);
   eco.blackjack = into.blackjack ?? from.blackjack ?? null;
+  Object.assign(eco, mergeLeague(into, from)); // ligue de la semaine : points de la semaine et trophées des deux étages
   return eco;
 }
 
