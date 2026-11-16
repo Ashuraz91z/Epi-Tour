@@ -13,6 +13,7 @@ import {
 } from "./base.js";
 import { agents, clock, floors, glow, mat, scene } from "./engine.js";
 import { enter, leave, makeAgent } from "./robots.js";
+import { dressAgent, fazbearOf } from "./fazbear.js";
 import { endCelebration } from "./work-fx.js";
 import { buildResident, disposeFloor, removeFloor, themeKey } from "./floors/resident.js";
 import { buildShared } from "./floors/shared.js";
@@ -121,6 +122,7 @@ function update(now) {
     if (!g) {
       // Un nouvel agent sort de l'ascenseur de son étage.
       g = makeAgent(key, w.s);
+      dressAgent(g, fazbearOf(w.a, w.s));
       floors.get(w.floor).group.add(g);
       g.position.copy(ELEV);
       Object.assign(g.userData, { floor: w.floor, path: enter(w.slot, w.way) });
@@ -136,9 +138,10 @@ function update(now) {
     // Bulle : l'action au poste, la demande d'accord chez le résident, sinon à qui appartient l'agent.
     // Au repos, l'icône du grade de l'employé (économie du résident) précède son nom.
     const T = TOOLS[w.s.src] ?? { name: w.s.src }, grade = productive() ? null : staffOf(w.a, w.s.src)?.grade?.icon;
+    const who = fazbearOf(w.a, w.s)?.name ?? `${w.a.name} · ${T.name}`;
     // Spectateur : les actions sont filtrées par le serveur ; la bulle dit alors qui travaille et avec quel outil.
-    const text = st === "travaille" ? w.s.action || `${T.name} · au travail` : st === "autorisation" ? "Autorise-moi ?" : st === "erreur" ? "Erreur"
-      : `${grade ? grade + " " : ""}${w.a.name} · ${T.name}`;
+    const text = st === "travaille" ? w.s.action || `${fazbearOf(w.a, w.s)?.name ?? T.name} · au travail` : st === "autorisation" ? "Autorise-moi ?" : st === "erreur" ? "Erreur"
+      : `${grade ? grade + " " : ""}${who}`;
     // Tâche livrée : le texte de la célébration reste affiché quelques secondes au-dessus du robot.
     if (u.cheerTextUntil > clock.elapsedTime && st !== "autorisation") continue;
     const cls = "bubble3d" + (st === "autorisation" ? " auth" : "") + (st === "travaille" || st === "autorisation" || st === "erreur" ? "" : " who");

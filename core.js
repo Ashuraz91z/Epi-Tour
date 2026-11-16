@@ -207,6 +207,14 @@ export function ingest(store, src, host, p, now = Date.now() / 1000) {
   store.feed.splice(0, store.feed.length - 150);
 }
 
+// Profils Hermes connus (équipe Fazbear) : seul ce nom vérifié part vers l'interface, jamais l'hôte.
+const PERSONAS = new Set(["freddy", "chica", "bonnie", "foxy", "golden-freddy"]);
+export function personaOf(s) {
+  if (s.src !== "hermes") return undefined;
+  const profile = String(s.host ?? "").split("/")[1]?.toLowerCase();
+  return PERSONAS.has(profile) ? profile : undefined;
+}
+
 // Vue publique ; fait aussi le ménage des sessions finies ou oubliées.
 export function snapshot(store, now = Date.now() / 1000) {
   for (const [k, s] of Object.entries(store.sessions)) {
@@ -221,7 +229,7 @@ export function snapshot(store, now = Date.now() / 1000) {
   const hermes = sessions.filter(s => s.src === "hermes")
     .sort((a, b) => priority(b) - priority(a) || b.updated - a.updated).slice(0, 5);
   return {
-    now, sessions: sessions.filter(s => s.src !== "hermes" || hermes.includes(s)), feed: store.feed.slice(-60).reverse(),
+    now, sessions: sessions.filter(s => s.src !== "hermes" || hermes.includes(s)).map(s => personaOf(s) ? { ...s, persona: personaOf(s) } : s), feed: store.feed.slice(-60).reverse(),
     usage: store.usage, seen: store.seen, today: store.stats[dayOf(now)] ?? {}, health: store.health,
     insights: insightsOf(store, now),
     profile: sanitizeProfile(store.profile),

@@ -3,6 +3,12 @@
 Chaque IA ajoute **en haut** une entrée par session de travail (modèle et règles dans `AGENTS.md`, section 3).
 Le plus récent d'abord. On n'efface pas les entrées des autres.
 
+## 2026-11-16 · Briac · branche Briac · Hermes (claude-opus-5-5)
+**Fait :** chez Briac (slug `briac`), les agents Hermes dont le profil est freddy, chica, bonnie ou foxy s'affichent en sprites Fazbear (panneau toujours face à la caméra, à la place du robot) avec leur nom (« Freddy - Chef de Projet »…). Golden Freddy (profil `golden-freddy`) n'a qu'un nom, pas de sprite fourni.
+**Fichiers :** `public/tour/fazbear.js` (nouveau), `public/tour/tower.js` (2 appels), `core.js` (`personaOf`), `penthouse.js` (champ `persona`, `/assets` accepte `.webp`, version), `public/assets/fazbear*.webp`, `test.js`.
+**À savoir :** le serveur n'expose que le nom de profil vérifié dans une liste connue (`persona`), jamais l'hôte. Les autres résidents gardent les robots.
+**Reste à faire :** vérifier le rendu en ligne.
+
 ## 2026-11-07 · Lucas · branche Lucas · Codex (2)
 **Fait :** lien CSS versionné pour que le navigateur demande une nouvelle URL après le changement des scrollbars.
 **Fichiers :** `public/index.html`, `penthouse.js` (version `2026-11-07.2`).

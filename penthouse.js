@@ -13,7 +13,7 @@ import { buyItem, onIngestEconomy, playCasino, playSport, questReward, setSubscr
 
 const ROOT = dirname(fileURLToPath(import.meta.url));
 // Version affichée dans le menu « ⋯ » : permet de vérifier que le site a bien repris la dernière version.
-export const VERSION = "2026-11-07.2";
+export const VERSION = "2026-11-16.1";
 const MAX_BODY = 256 * 1024;
 const MAX_APARTMENTS = 50;
 const acceptsGzip = req => /(?:^|,)\s*gzip\s*(?:,|$)/i.test(req.headers["accept-encoding"] ?? "");
@@ -190,7 +190,7 @@ export function spectatorSnapshot(a) {
     profile: sanitizeProfile(a.profile),
     game: a.game ? { level: a.game.level, xp: a.game.xp, streak: a.game.streak, badges: a.game.badges ?? [] } : { level: 1, xp: 0, streak: 0, badges: [] },
     sessions: a.sessions.map(s => ({ src: s.src, host: sha(s.host).slice(0, 12), sid: s.sid,
-      state: s.state, started: s.started, updated: s.updated, task: "", action: "" })),
+      state: s.state, started: s.started, updated: s.updated, task: "", action: "", persona: s.persona })),
     economy: spectatorEconomy(a.economy),
     // Stats : les nombres oui, les noms de projets et de modèles non (comme pour les sessions).
     insights: a.insights ? { today: a.insights.today && { ...a.insights.today, models: [], projects: [] }, week: a.insights.week } : null,
@@ -265,9 +265,9 @@ export function createApp({ code, db }) {
         ...(compressed ? { "Content-Encoding": "gzip" } : {}) }).end(compressed ? resource.gzip : resource.body);
     };
     // Modèles 3D CC0 et visuels produits crédités : noms simples, cache navigateur.
-    const asset = /^\/assets\/([A-Za-z0-9]+\.(glb|png))$/.exec(url.pathname);
+    const asset = /^\/assets\/([A-Za-z0-9]+\.(glb|png|webp))$/.exec(url.pathname);
     if (req.method === "GET" && asset) {
-      return serve("public/assets/" + asset[1], asset[2] === "png" ? "image/png" : "model/gltf-binary", "public, max-age=86400");
+      return serve("public/assets/" + asset[1], asset[2] === "png" ? "image/png" : asset[2] === "webp" ? "image/webp" : "model/gltf-binary", "public, max-age=86400");
     }
     if (req.method === "GET" && FILES[url.pathname]) {
       const [file, type] = FILES[url.pathname];

@@ -2026,3 +2026,16 @@ test("installation Mac : la même commande relie la machine et installe l'app Pe
     assert.equal(readFileSync(join(home, ".config/tour/secret"), "utf8").trim(), token);
   } finally { app.close(); rmSync(home, { recursive: true, force: true }); }
 });
+
+test("Hermes : profil de l'équipe Fazbear exposé seul, sans l'hôte", () => {
+  const store = createStore();
+  ingest(store, "hermes", "machine/bonnie", { hook_event_name: "pre_tool_call", session_id: "a" }, 1000);
+  ingest(store, "hermes", "machine/inconnu", { hook_event_name: "pre_tool_call", session_id: "b" }, 1000);
+  ingest(store, "claude", "machine/foxy", { hook_event_name: "UserPromptSubmit", session_id: "c" }, 1000);
+  const view = spectatorSnapshot({ slug: "x", name: "X", profile: {}, ...snapshot(store, 1001) });
+  const by = Object.fromEntries(view.sessions.map(s => [s.sid, s]));
+  assert.equal(by.a.persona, "bonnie");
+  assert.equal(by.b.persona, undefined);
+  assert.equal(by.c.persona, undefined, "seul Hermes porte un personnage");
+  assert.ok(!JSON.stringify(view).includes("machine"));
+});
