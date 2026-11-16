@@ -3,6 +3,12 @@
 Chaque IA ajoute **en haut** une entrée par session de travail (modèle et règles dans `AGENTS.md`, section 3).
 Le plus récent d'abord. On n'efface pas les entrées des autres.
 
+## 2026-11-16 · Briac · branche Briac · Hermes (claude-opus-5-5) (3)
+**Fait :** l'équipe Fazbear ne calcule plus rien quand on ne regarde pas l'étage de Briac (bulles cachées, sortie immédiate). Rendu vérifié en local dans un navigateur headless : 4 sprites, bulles « Nom - Rôle · titre de la tâche », agents à leur poste pendant une tâche.
+**Fichiers :** `public/tour/fazbear.js`, `penthouse.js` (version 2026-11-16.3).
+**À savoir :** pour tester l'affichage des titres, il faut entrer en propriétaire de l'étage (les spectateurs reçoivent `task` vide, c'est voulu).
+**Reste à faire :** —
+
 ## 2026-11-16 · Briac · branche Briac · Hermes (claude-opus-5-5) (2)
 **Fait :** Freddy, Chica, Bonnie et Foxy vivent en permanence sur l'étage de Briac (sprites animés image par image, flânerie au repos), nom toujours affiché. Quand une tâche kanban tourne pour leur profil, le personnage marche jusqu'à son bureau, y sautille, et la bulle montre « Nom - Rôle · titre de la tâche — action ». Plus de robot « Hermes » pour ces profils.
 **Fichiers :** `public/tour/fazbear.js` (réécrit), `public/tour/tower.js`, `public/tour/animate.js`, `penthouse.js` (version).

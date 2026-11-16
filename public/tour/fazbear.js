@@ -136,9 +136,14 @@ const tmp = new THREE.Vector3();
 function animateCrew(dt, t, focusKey) {
   if (!crew.size) return;
   const shown = focusKey === FLOOR;
+  if (!shown) {
+    // Étage non regardé : on cache les bulles et on ne calcule rien d'autre.
+    for (const g of crew.values()) g.userData.bubble.visible = false;
+    return;
+  }
   for (const g of crew.values()) {
     const u = g.userData;
-    u.bubble.visible = shown;
+    u.bubble.visible = true;
     const busy = u.state === "travaille" || u.state === "autorisation";
     if (busy) u.target = DESK(u.k);
     else if (u.target === u.desk || (!u.target && (u.wait -= dt) <= 0)) u.target = SPOTS[Math.floor(Math.random() * SPOTS.length)];
