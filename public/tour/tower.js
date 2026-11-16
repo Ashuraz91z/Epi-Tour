@@ -13,7 +13,7 @@ import {
 } from "./base.js";
 import { agents, clock, floors, glow, mat, scene } from "./engine.js";
 import { enter, leave, makeAgent } from "./robots.js";
-import { dressAgent, fazbearOf } from "./fazbear.js";
+import { crewSession, crewText, dressAgent, fazbearOf, syncCrew } from "./fazbear.js";
 import { endCelebration } from "./work-fx.js";
 import { buildResident, disposeFloor, removeFloor, themeKey } from "./floors/resident.js";
 import { buildShared } from "./floors/shared.js";
@@ -74,7 +74,9 @@ function floorLabel(i) {
 function update(now) {
   // Placement : chaque (étage, pièce) remplit ses places dans l'ordre d'arrivée des agents, tous résidents confondus.
   const want = new Map(), groups = new Map();
+  syncCrew(floors, now); // équipe Fazbear de Briac : permanente, hors des places des robots
   for (const a of world.residents) for (const s of a.sessions) {
+    if (crewSession(a, s)) continue;
     const key = keyOf(a.slug, s), u = agents.get(key)?.userData, state = stateOf(s, now);
     const paused = ["fini", "fermé", "silencieux"].includes(state), seed = hash(key);
     let place = placeOf(s, now), visit = paused ? breakVisit(hash(`${s.src}:${s.host}:${s.sid}`), now - s.updated, state === "silencieux").visit : null;
@@ -140,7 +142,8 @@ function update(now) {
     const T = TOOLS[w.s.src] ?? { name: w.s.src }, grade = productive() ? null : staffOf(w.a, w.s.src)?.grade?.icon;
     const who = fazbearOf(w.a, w.s)?.name ?? `${w.a.name} · ${T.name}`;
     // Spectateur : les actions sont filtrées par le serveur ; la bulle dit alors qui travaille et avec quel outil.
-    const text = st === "travaille" ? w.s.action || `${fazbearOf(w.a, w.s)?.name ?? T.name} · au travail` : st === "autorisation" ? "Autorise-moi ?" : st === "erreur" ? "Erreur"
+    const fz = fazbearOf(w.a, w.s);
+    const text = fz ? crewText(fz.name, w.s, st) : st === "travaille" ? w.s.action || `${T.name} · au travail` : st === "autorisation" ? "Autorise-moi ?" : st === "erreur" ? "Erreur"
       : `${grade ? grade + " " : ""}${who}`;
     // Tâche livrée : le texte de la célébration reste affiché quelques secondes au-dessus du robot.
     if (u.cheerTextUntil > clock.elapsedTime && st !== "autorisation") continue;

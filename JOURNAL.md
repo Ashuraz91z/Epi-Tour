@@ -3,6 +3,12 @@
 Chaque IA ajoute **en haut** une entrée par session de travail (modèle et règles dans `AGENTS.md`, section 3).
 Le plus récent d'abord. On n'efface pas les entrées des autres.
 
+## 2026-11-16 · Briac · branche Briac · Hermes (claude-opus-5-5) (2)
+**Fait :** Freddy, Chica, Bonnie et Foxy vivent en permanence sur l'étage de Briac (sprites animés image par image, flânerie au repos), nom toujours affiché. Quand une tâche kanban tourne pour leur profil, le personnage marche jusqu'à son bureau, y sautille, et la bulle montre « Nom - Rôle · titre de la tâche — action ». Plus de robot « Hermes » pour ces profils.
+**Fichiers :** `public/tour/fazbear.js` (réécrit), `public/tour/tower.js`, `public/tour/animate.js`, `penthouse.js` (version).
+**À savoir :** tout passe par `fazbear.js` (slug `briac` seulement) ; les sessions de l'équipe sont sautées dans `update()` (`crewSession`). Golden Freddy garde un robot nommé. Les .webp sont décodés avec `ImageDecoder` (image fixe sinon).
+**Reste à faire :** captures du rendu (pas de navigateur utilisable sur la machine de test).
+
 ## 2026-11-16 · Briac · branche Briac · Hermes (claude-opus-5-5)
 **Fait :** chez Briac (slug `briac`), les agents Hermes dont le profil est freddy, chica, bonnie ou foxy s'affichent en sprites Fazbear (panneau toujours face à la caméra, à la place du robot) avec leur nom (« Freddy - Chef de Projet »…). Golden Freddy (profil `golden-freddy`) n'a qu'un nom, pas de sprite fourni.
 **Fichiers :** `public/tour/fazbear.js` (nouveau), `public/tour/tower.js` (2 appels), `core.js` (`personaOf`), `penthouse.js` (champ `persona`, `/assets` accepte `.webp`, version), `public/assets/fazbear*.webp`, `test.js`.
