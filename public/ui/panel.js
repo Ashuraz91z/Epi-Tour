@@ -169,7 +169,12 @@ function render() {
   setHtml($("#floorNav"), world.order.map((key, i) => {
     if (!floorShown(key)) return "";
     const f = floors.get(key), a = f.residentSlug ? list.find(x => x.slug === f.residentSlug) : null, here = present(key);
-    const busy = a ? by(a.sessions, "travaille") : here.length, alert = a && by(a.sessions, "autorisation");
+    // Agents au travail sur CET étage : ceux d'une aile (Labo, Ops, Studio) n'y sont pas comptés deux fois au Bureau.
+    const working = g => g.userData.state === "travaille";
+    const busy = !a ? here.length : f.wingId === "work"
+      ? by(a.sessions, "travaille") - [...agents.values()].filter(g => working(g) && g.userData.apt?.slug === a.slug && g.userData.target !== key).length
+      : here.filter(working).length;
+    const alert = a && by(a.sessions, "autorisation");
     const isMe = f.residentSlug === me;
     return `<button type="button" data-floor="${i}" class="${i === world.focus ? "on" : ""}${isMe ? " me" : ""}${f.kind === "shared" ? " shared" : ""}${f.wingId && f.wingId !== "work" ? " wing-extra" : ""}" aria-current="${i === world.focus}">
       <span class="lvl">${floorLabel(i)}</span><span class="nm">${esc(f.name)}</span><span class="ct">${alert && f.wingId === "work" ? '<i class="d auth"></i>' : ""}${busy}</span></button>`;

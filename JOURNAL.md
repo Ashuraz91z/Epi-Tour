@@ -3,6 +3,17 @@
 Chaque IA ajoute **en haut** une entrée par session de travail (modèle et règles dans `AGENTS.md`, section 3).
 Le plus récent d'abord. On n'efface pas les entrées des autres.
 
+## 2026-11-17 · Paul-Adrien · branche Paul-Adrien · Claude Code
+**Fait :** un résident avec 26 agents Claude Code voyait tout le monde au Bureau et « 26 » sur chacun de ses étages. Bureau plein
+(12 postes) : les agents en trop montent au Labo IA, puis à la Salle ops, puis au Studio (ailes débloquées), sans aller-retour
+quand un poste se libère ; au-delà, debout au Bureau. La liste des étages compte les agents au travail de chaque étage (avant :
+le total du résident partout). La synchro lit 40 sessions récentes par outil au lieu de 12.
+**Fichiers :** `public/wings-client.js` (`spillOver`), `public/tour/tower.js` (`update`, juste après les groupes),
+`public/ui/panel.js` (compteur de `#floorNav`), `collecteurs/tour-sync`, `test.js`, `README.md`, `penthouse.js` (version).
+**À savoir :** l'étage d'un agent dépend seulement de `src` (pas du `cwd`). Le compteur d'une aile lit les robots placés
+(`userData.target`) ; celui du Bureau = total au travail moins ceux des ailes, pour garder l'équipe Fazbear de Briac.
+**Reste à faire :** les machines déjà reliées gardent l'ancienne synchro (12) jusqu'à ce qu'on relance la commande de l'étage.
+
 ## 2026-11-16 · Paul-Adrien · branche Paul-Adrien · Claude Code
 **Fait :** Ligue de la semaine. Points du lundi au dimanche (Paris) : 1 par minute de travail d'agent, 10 par tâche livrée,
 plafonnés par jour. Carte « 🏆 Ligue » en tête du classement flottant (podium en direct, défi commun, champion en titre) et

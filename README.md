@@ -64,6 +64,16 @@ visible), le panneau en feuille rétractable en bas (poignée : agrandir ou réd
 spectateur, les faits du jour défilent sur une ligne, les fiches des résidents passent sur une colonne et la fiche de
 l'étage visité se fait compacte. Le classement flottant est masqué (il recouvrirait le panneau).
 
+## Étages d'un résident et place des agents
+
+Chaque résident a son Bureau, puis des ailes débloquées par niveau : Labo IA (4), Salle ops (7), Studio (12). Un agent au
+travail va dans l'aile de son outil (`public/wings-client.js`) : Hermes et Grok au Labo, n8n en Salle ops, Cursor au Studio,
+Claude Code, Codex et les autres au Bureau. Un étage a 12 postes : quand le Bureau est plein, les agents en trop montent au
+Labo, puis à la Salle ops, puis au Studio (postes libres des ailes débloquées), sans aller-retour quand un poste se libère ;
+au-delà, ils restent debout au Bureau. Un agent qui demande un accord vient au Bureau du résident, un agent en pause va sur
+les étages communs. La liste des étages compte les agents au travail sur chaque étage. La synchro (`tour-sync`) lit les
+40 sessions les plus récentes par outil (journaux modifiés dans l'heure).
+
 ## Mode complet et mode productif
 
 Menu « ⋯ » › « ⚡ Mode productif (sans le jeu) » / « 🎮 Mode complet (avec le jeu) ». Le choix est gardé sur l'appareil

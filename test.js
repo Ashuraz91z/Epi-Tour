@@ -1272,6 +1272,30 @@ async function workSession(store, src, sid, start, minutes, extra = {}) {
   return step;
 }
 
+test("étages : Bureau plein, les agents en trop montent au Labo puis à la Salle ops, sans aller-retour", async () => {
+  const { spillOver } = await import("./public/wings-client.js");
+  const wings = [{ id: "work" }, { id: "lab" }, { id: "ops" }];
+  const rows = Array.from({ length: 26 }, (_, i) => ({ key: "a" + String(i).padStart(2, "0"), started: 1000 + i, current: null }));
+  const counts = new Map([["p:work", 26], ["p:lab", 2], ["p:ops", 0]]); // 2 Hermes déjà au Labo
+  const moves = spillOver("p", rows, wings, counts, 12);
+  const on = floor => [...moves.values()].filter(v => v === floor).length;
+  assert.equal(moves.size, 14, "26 agents : 12 restent au Bureau");
+  assert.equal(on("p:lab"), 10, "Labo : 12 postes moins les 2 Hermes");
+  assert.equal(on("p:ops"), 4);
+  assert.ok(!moves.has("a00") && !moves.has("a11"), "les plus anciens gardent le Bureau");
+  // Un poste se libère au Bureau : l'agent déjà installé au Labo y reste, le nouveau venu prend le poste libre.
+  const settled = rows.slice(1).map(r => ({ ...r, current: moves.get(r.key) ?? "p:work" }));
+  settled.push({ key: "b00", started: 5000, current: null });
+  const next = spillOver("p", settled, wings, counts, 12);
+  for (const [key, floor] of moves) if (key !== "a00") assert.equal(next.get(key), floor, key);
+  assert.ok(!next.has("b00"), "le nouveau venu s'assoit au Bureau");
+  // Ailes pleines ou absentes : les autres restent debout au Bureau.
+  assert.equal(spillOver("p", rows, [{ id: "work" }], new Map(), 12).size, 0);
+  assert.equal(spillOver("p", rows.slice(0, 12), wings, counts, 12).size, 0);
+  const full = spillOver("p", Array.from({ length: 50 }, (_, i) => ({ key: "c" + i, started: i, current: null })), wings, new Map(), 12);
+  assert.equal(full.size, 24, "Labo et Ops pleins : 14 agents debout au Bureau");
+});
+
 test("ligue : semaines ISO de Paris, points du travail et des livraisons, plafond par jour", async () => {
   const { weekOf, publicEconomy } = await import("./economy.js");
   for (const [date, week] of [["2026-11-16", "2026-W47"], ["2026-11-22", "2026-W47"], ["2026-11-23", "2026-W48"], ["2026-01-01", "2026-W01"],

@@ -14,7 +14,7 @@ import { leagueTick, publicLeague } from "./league.js";
 
 const ROOT = dirname(fileURLToPath(import.meta.url));
 // Version affichée dans le menu « ⋯ » : permet de vérifier que le site a bien repris la dernière version.
-export const VERSION = "2026-11-16.4";
+export const VERSION = "2026-11-17.1";
 const MAX_BODY = 256 * 1024;
 const MAX_APARTMENTS = 50;
 const acceptsGzip = req => /(?:^|,)\s*gzip\s*(?:,|$)/i.test(req.headers["accept-encoding"] ?? "");
