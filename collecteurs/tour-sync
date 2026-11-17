@@ -422,8 +422,8 @@ def main():
                         candidates.append((info.st_mtime, name, info.st_size))
                 except OSError:
                     continue
-            # shortcut: 12 sessions récentes par outil et 300 Ko par journal ; étendre si une machine dépasse ce volume.
-            for modified, name, size in sorted(candidates, reverse=True)[:12]:
+            # 40 sessions récentes par outil (journaux modifiés dans l'heure) et 300 Ko lus par journal modifié.
+            for modified, name, size in sorted(candidates, reverse=True)[:40]:
                 signature = [modified, size]
                 previous = old.get(name) if isinstance(old.get(name), list) else []
                 if previous[:2] == signature:

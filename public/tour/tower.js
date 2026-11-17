@@ -3,7 +3,7 @@
 
 import { assignPauseSlots, breakVisit } from "../break-motion.js";
 import { assignDeskSlots } from "../desk-slots.js";
-import { homeFloor, wingsOf } from "../wings-client.js";
+import { homeFloor, spillOver, wingsOf } from "../wings-client.js";
 import { officeTierForLevel } from "../upgrades-client.js";
 import { decorKeyOf, staffOf } from "../economy-ui.js";
 import { world } from "./state.js";
@@ -14,6 +14,7 @@ import {
 import { agents, clock, floors, glow, mat, scene } from "./engine.js";
 import { enter, leave, makeAgent } from "./robots.js";
 import { crewSession, crewText, dressAgent, fazbearOf, syncCrew } from "./fazbear.js";
+import { syncTrophy } from "./trophy.js";
 import { endCelebration } from "./work-fx.js";
 import { buildResident, disposeFloor, removeFloor, themeKey } from "./floors/resident.js";
 import { buildShared } from "./floors/shared.js";
@@ -75,6 +76,7 @@ function update(now) {
   // Placement : chaque (étage, pièce) remplit ses places dans l'ordre d'arrivée des agents, tous résidents confondus.
   const want = new Map(), groups = new Map();
   syncCrew(floors, now); // équipe Fazbear de Briac : permanente, hors des places des robots
+  syncTrophy(floors); // trophée de la Ligue de la semaine chez le ou la champion·ne
   for (const a of world.residents) for (const s of a.sessions) {
     if (crewSession(a, s)) continue;
     const key = keyOf(a.slug, s), u = agents.get(key)?.userData, state = stateOf(s, now);
@@ -86,6 +88,20 @@ function update(now) {
     const k = floor + "/" + place;
     if (!groups.has(k)) groups.set(k, []);
     groups.get(k).push({ a, s, key, floor, place, paused, seed, visit });
+  }
+  // Bureau plein (12 postes) : les agents en trop montent au Labo IA, à la Salle ops puis au Studio s'ils sont débloqués.
+  for (const a of world.residents) {
+    const k = `${a.slug}:work/open`, list = groups.get(k), cap = RES_SLOTS.open.length;
+    if (!list || list.length <= cap) continue;
+    const counts = new Map(wingsOf(a).map(w => [`${a.slug}:${w.id}`, groups.get(`${a.slug}:${w.id}/open`)?.length ?? 0]));
+    const moves = spillOver(a.slug, list.map(w => ({ key: w.key, started: w.s.started, current: agents.get(w.key)?.userData.target ?? null })), wingsOf(a), counts, cap);
+    if (!moves.size) continue;
+    groups.set(k, list.filter(w => !moves.has(w.key)));
+    for (const w of list) if (moves.has(w.key)) {
+      const floor = moves.get(w.key);
+      if (!groups.has(`${floor}/open`)) groups.set(`${floor}/open`, []);
+      groups.get(`${floor}/open`).push({ ...w, floor });
+    }
   }
   for (const list of groups.values()) {
     list.sort((x, y) => x.s.started - y.s.started);

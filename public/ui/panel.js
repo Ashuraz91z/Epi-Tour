@@ -17,6 +17,7 @@ import { workLeadersHtml, workPanelHtml } from "../work-ui.js";
 import { world } from "../tour/state.js";
 import { floorShown, productive, setMode } from "../tour/mode.js";
 import { dayFactsHtml, insightsPanelHtml } from "./insights.js";
+import { leagueCardHtml, refreshLeague } from "./league.js";
 import { $, CASINO_FEATURED, ME, PLACE_FR, STATE_FR, TOOLS, claudeQuotaWhy, claudeTracked, esc, hm, keyOf, myApt, placeOf, quotaRemaining, stateOf } from "../tour/base.js";
 import { agents, floors } from "../tour/engine.js";
 import { reducedMotion } from "../tour/kit.js";
@@ -168,7 +169,12 @@ function render() {
   setHtml($("#floorNav"), world.order.map((key, i) => {
     if (!floorShown(key)) return "";
     const f = floors.get(key), a = f.residentSlug ? list.find(x => x.slug === f.residentSlug) : null, here = present(key);
-    const busy = a ? by(a.sessions, "travaille") : here.length, alert = a && by(a.sessions, "autorisation");
+    // Agents au travail sur CET étage : ceux d'une aile (Labo, Ops, Studio) n'y sont pas comptés deux fois au Bureau.
+    const working = g => g.userData.state === "travaille";
+    const busy = !a ? here.length : f.wingId === "work"
+      ? by(a.sessions, "travaille") - [...agents.values()].filter(g => working(g) && g.userData.apt?.slug === a.slug && g.userData.target !== key).length
+      : here.filter(working).length;
+    const alert = a && by(a.sessions, "autorisation");
     const isMe = f.residentSlug === me;
     return `<button type="button" data-floor="${i}" class="${i === world.focus ? "on" : ""}${isMe ? " me" : ""}${f.kind === "shared" ? " shared" : ""}${f.wingId && f.wingId !== "work" ? " wing-extra" : ""}" aria-current="${i === world.focus}">
       <span class="lvl">${floorLabel(i)}</span><span class="nm">${esc(f.name)}</span><span class="ct">${alert && f.wingId === "work" ? '<i class="d auth"></i>' : ""}${busy}</span></button>`;
@@ -242,9 +248,11 @@ function render() {
   const board = activityLeaderboard(list);
   const lb = $("#leaderboardDlg"), rich = productive() ? [] : fortuneLeaders(list), workers = spectator ? "" : workLeadersHtml(list, esc, { me });
   const facts = spectator ? "" : dayFactsHtml(list, esc, { me });
-  if ((board.length || rich.length || workers || facts) && !spectator) {
+  const league = spectator ? "" : leagueCardHtml(world.data.league); // vide en mode productif
+  refreshLeague();
+  if ((board.length || rich.length || workers || facts || league) && !spectator) {
     lb.hidden = false;
-    setHtml(lb, facts + workers + (board.length ? `<h4>Activité du jour</h4><ol>${board.map((r, i) => `<li><b>${esc(r.name)}</b> · ${r.actions} act. / ${r.sessions} sess.</li>`).join("")}</ol>` : "")
+    setHtml(lb, league + facts + workers + (board.length ? `<h4>Activité du jour</h4><ol>${board.map((r, i) => `<li><b>${esc(r.name)}</b> · ${r.actions} act. / ${r.sessions} sess.</li>`).join("")}</ol>` : "")
       + (rich.length ? `<h4>Fortune</h4><ol>${rich.map(a => `<li><b>${esc(a.name)}</b> · ${esc(a.economy.title?.icon ?? "")} ${esc(money(a.slug === me ? economyUi.shownWallet(a.economy) : a.economy.wallet))}</li>`).join("")}</ol>` : ""));
   } else lb.hidden = true;
   // Libellés masquables : sur un écran moyen, l'en-tête ne garde que les pastilles et les nombres.
@@ -542,7 +550,7 @@ modeLabel();
 $("#modeBtn").addEventListener("click", () => setMode(productive() ? "complet" : "productif"));
 addEventListener("penthouse:mode", () => {
   modeLabel();
-  for (const id of ["economyDlg", "missionsDlg", "sportDlg"]) if ($("#" + id)?.open) $("#" + id).close();
+  for (const id of ["economyDlg", "missionsDlg", "sportDlg", "leagueDlg"]) if ($("#" + id)?.open) $("#" + id).close();
   if (!world.data) return;
   keepFocusShown();
   render(); // redessine aussi le tableau de bord du travail dans le bureau

@@ -1272,6 +1272,138 @@ async function workSession(store, src, sid, start, minutes, extra = {}) {
   return step;
 }
 
+test("étages : Bureau plein, les agents en trop montent au Labo puis à la Salle ops, sans aller-retour", async () => {
+  const { spillOver } = await import("./public/wings-client.js");
+  const wings = [{ id: "work" }, { id: "lab" }, { id: "ops" }];
+  const rows = Array.from({ length: 26 }, (_, i) => ({ key: "a" + String(i).padStart(2, "0"), started: 1000 + i, current: null }));
+  const counts = new Map([["p:work", 26], ["p:lab", 2], ["p:ops", 0]]); // 2 Hermes déjà au Labo
+  const moves = spillOver("p", rows, wings, counts, 12);
+  const on = floor => [...moves.values()].filter(v => v === floor).length;
+  assert.equal(moves.size, 14, "26 agents : 12 restent au Bureau");
+  assert.equal(on("p:lab"), 10, "Labo : 12 postes moins les 2 Hermes");
+  assert.equal(on("p:ops"), 4);
+  assert.ok(!moves.has("a00") && !moves.has("a11"), "les plus anciens gardent le Bureau");
+  // Un poste se libère au Bureau : l'agent déjà installé au Labo y reste, le nouveau venu prend le poste libre.
+  const settled = rows.slice(1).map(r => ({ ...r, current: moves.get(r.key) ?? "p:work" }));
+  settled.push({ key: "b00", started: 5000, current: null });
+  const next = spillOver("p", settled, wings, counts, 12);
+  for (const [key, floor] of moves) if (key !== "a00") assert.equal(next.get(key), floor, key);
+  assert.ok(!next.has("b00"), "le nouveau venu s'assoit au Bureau");
+  // Ailes pleines ou absentes : les autres restent debout au Bureau.
+  assert.equal(spillOver("p", rows, [{ id: "work" }], new Map(), 12).size, 0);
+  assert.equal(spillOver("p", rows.slice(0, 12), wings, counts, 12).size, 0);
+  const full = spillOver("p", Array.from({ length: 50 }, (_, i) => ({ key: "c" + i, started: i, current: null })), wings, new Map(), 12);
+  assert.equal(full.size, 24, "Labo et Ops pleins : 14 agents debout au Bureau");
+});
+
+test("ligue : semaines ISO de Paris, points du travail et des livraisons, plafond par jour", async () => {
+  const { weekOf, publicEconomy } = await import("./economy.js");
+  for (const [date, week] of [["2026-11-16", "2026-W47"], ["2026-11-22", "2026-W47"], ["2026-11-23", "2026-W48"], ["2026-01-01", "2026-W01"],
+    ["2025-12-29", "2026-W01"], ["2027-01-03", "2026-W53"], ["2027-01-04", "2027-W01"], ["2021-01-03", "2020-W53"]]) assert.equal(weekOf(date), week, date);
+  const store = createStore();
+  const step = await workSession(store, "claude", "s1", CALM_MORNING, 120);
+  step({ hook_event_name: "Stop" }, CALM_MORNING + 121 * 60);
+  const l = publicEconomy(store, CALM_MORNING + 7200).league;
+  assert.equal(l.week, "2026-W45");
+  assert.equal(Math.round(l.minutes), 121, "120 min d'outils + la minute jusqu'à la fin du tour");
+  assert.equal(l.delivered, 1);
+  assert.equal(Math.round(l.points), 131, "1 point par minute, 10 par tâche livrée");
+  // Une très longue journée : 720 points de travail au plus par jour.
+  const long = createStore();
+  await workSession(long, "claude", "s2", CALM_MORNING, 800);
+  assert.equal(Math.round(publicEconomy(long, CALM_MORNING + 800 * 60).league.points), 720);
+  // Semaine suivante : le compteur repart de zéro, la semaine passée est archivée.
+  await workSession(long, "claude", "s3", CALM_MORNING + 7 * 86400, 30);
+  const next = publicEconomy(long, CALM_MORNING + 7 * 86400 + 1800).league;
+  assert.equal(next.week, "2026-W46");
+  assert.equal(Math.round(next.points), 30);
+  assert.equal(Math.round(long.economy.leaguePast[0].points), 720);
+});
+
+test("ligue : clôture du lundi, podium et défi commun payés une seule fois, trophée au champion", async () => {
+  const { leagueTick, publicLeague, settleWeek, challengeTarget } = await import("./league.js");
+  const { publicEconomy } = await import("./economy.js");
+  const db = openDb(":memory:");
+  const work = async (minutes, start) => { const st = createStore(); if (minutes) await workSession(st, "claude", "s", start, minutes); return st; };
+  const residents = [["ana", "Ana", 300], ["ben", "Ben", 120], ["cleo", "Cléo", 30], ["dan", "Dan", 0]];
+  for (const [slug, name, minutes] of residents) {
+    db.create(slug, name, "h-" + slug, 50);
+    const built = await work(minutes, CALM_MORNING);
+    db.change(slug, s => Object.assign(s, built));
+  }
+  const wallet = slug => db.get(slug).store.economy.wallet;
+  // Premier passage (semaine 45) : objectif du défi fixé, rien à clôturer.
+  let state = leagueTick(db, CALM_MORNING + 9 * 3600);
+  assert.equal(state.current.week, "2026-W45");
+  assert.equal(state.current.target, 20);
+  const live = publicLeague(state, db.all().map(a => ({ slug: a.slug, name: a.name, economy: publicEconomy(a.store, CALM_MORNING + 9 * 3600) })), CALM_MORNING + 9 * 3600);
+  assert.deepEqual(live.standings.map(r => r.slug), ["ana", "ben", "cleo"], "classement en direct, sans les étages à zéro");
+  assert.equal(live.challenge.total, 450);
+  const before = { ana: wallet("ana"), ben: wallet("ben"), cleo: wallet("cleo") };
+  // Lundi suivant : semaine 45 clôturée. Cléo (30 points) n'atteint pas le minimum du podium ; défi (20 h) manqué.
+  const monday = CALM_MORNING + 7 * 86400;
+  state = leagueTick(db, monday);
+  assert.equal(state.current.week, "2026-W46");
+  const w45 = state.history[0];
+  assert.equal(w45.week, "2026-W45");
+  assert.equal(w45.champion, "ana");
+  assert.equal(w45.reached, false);
+  assert.deepEqual(w45.awards.map(a => [a.slug, a.rank, a.paid]), [["ana", 1, true], ["ben", 2, true]]);
+  assert.equal(wallet("ana"), before.ana + 300);
+  assert.equal(wallet("ben"), before.ben + 150);
+  assert.equal(wallet("cleo"), before.cleo);
+  assert.ok(db.get("ana").store.game.badges.includes("weekly_champion"));
+  assert.ok(db.get("ben").store.game.badges.includes("podium"));
+  assert.equal(db.get("ana").store.economy.leagueWins[0].id, "2026-W45:podium");
+  // Rejoué (autre copie du serveur, redémarrage) ou versement marqué non fait après une panne : rien n'est payé deux fois.
+  leagueTick(db, monday + 60);
+  db.updateSetting("league", cur => { cur.history[0].awards[0].paid = false; return cur; });
+  state = leagueTick(db, monday + 120);
+  assert.equal(wallet("ana"), before.ana + 300);
+  assert.equal(state.history[0].awards[0].paid, true);
+  assert.equal(state.history.length, 1);
+  // Semaine 46 : défi commun réussi (objectif abaissé pour le test), prime pour chaque étage qui a travaillé 1 h.
+  db.updateSetting("league", cur => { cur.current.target = 5; return cur; });
+  for (const [slug, minutes] of [["ana", 200], ["ben", 120], ["cleo", 30]]) {
+    const st = db.get(slug).store;
+    await workSession(st, "claude", "w46", monday + 3600, minutes);
+    db.change(slug, s => Object.assign(s, st));
+  }
+  const mid = { ana: wallet("ana"), ben: wallet("ben"), cleo: wallet("cleo") };
+  state = leagueTick(db, monday + 7 * 86400);
+  const w46 = state.history[0];
+  assert.equal(w46.week, "2026-W46");
+  assert.equal(w46.reached, true);
+  assert.equal(wallet("ana"), mid.ana + 300 + 100, "champion et défi");
+  assert.equal(wallet("ben"), mid.ben + 150 + 100);
+  assert.equal(wallet("cleo"), mid.cleo, "moins d'1 h : pas de prime de défi");
+  assert.ok(db.get("ben").store.game.badges.includes("team_player"));
+  // Ce que voit le site : champion de la semaine passée et titres cumulés.
+  const view = publicLeague(state, [], monday + 7 * 86400);
+  assert.equal(view.week, "2026-W47");
+  assert.equal(view.last.champion, "ana");
+  assert.deepEqual(view.titles, { ana: 2 });
+  assert.equal(view.daysLeft, 7);
+  // Objectif du défi : semaine passée + 10 %, arrondi aux 5 h, entre 20 h et 300 h.
+  assert.equal(challengeTarget(0), 20);
+  assert.equal(challengeTarget(40 * 60), 45);
+  assert.equal(challengeTarget(1e6), 300);
+  assert.equal(settleWeek([], "2026-W01", 20).champion, null, "semaine sans travail : pas de champion");
+});
+
+test("ligue : deux étages fusionnés additionnent leurs points de la semaine sans dépasser le plafond du jour", async () => {
+  const { mergeStores } = await import("./admin.js");
+  const a = createStore(), b = createStore();
+  await workSession(a, "claude", "a", CALM_MORNING, 500);
+  await workSession(b, "codex", "b", CALM_MORNING, 400);
+  b.economy.leagueWins = [{ id: "2026-W44:podium", week: "2026-W44", kind: "podium", rank: 1, t: 1 }];
+  const merged = mergeStores(a, b).economy;
+  assert.equal(merged.league.week, "2026-W45");
+  assert.equal(Math.round(merged.league.minutes), 900);
+  assert.equal(Math.round(merged.league.points), 720, "même journée : plafond de 720 points");
+  assert.equal(merged.leagueWins[0].id, "2026-W44:podium");
+});
+
 test("économie : le grade suit l'abonnement, le salaire suit le temps de travail réel", async () => {
   const { setSubscription, publicEconomy } = await import("./economy.js");
   const store = createStore();
@@ -1477,9 +1609,11 @@ test("économie par HTTP : abonnement, casino, primes entre résidents, missions
     const spectator = room.headers.get("set-cookie").split(";")[0];
     const state = await (await fetch(url + "/api/state", { headers: { Cookie: spectator } })).json();
     const view = state.apartments.find(a => a.slug === "ana").economy;
-    assert.deepEqual(Object.keys(view).sort(), ["decor", "earned", "records", "staff", "title", "today", "wallet", "work"]);
+    assert.deepEqual(Object.keys(view).sort(), ["decor", "earned", "league", "records", "staff", "title", "today", "wallet", "work"]);
     assert.deepEqual(Object.keys(view.work).sort(), ["streak", "team", "today"], "ni projets ni événements pour un spectateur");
     assert.deepEqual(Object.keys(view.staff[0]).sort(), ["echelon", "grade", "role", "src"]);
+    assert.deepEqual(Object.keys(view.league).sort(), ["delivered", "minutes", "points", "week", "wins"], "ligue : des nombres, rien de privé");
+    assert.ok(Array.isArray(state.league.standings) && state.league.challenge.target >= 20, "classement et défi commun visibles des spectateurs");
     assert.equal((await call("/api/economy/casino", { game: "slots", bet: 10 }, { Cookie: spectator, "X-Tour-Token": ana.token })).status, 401);
   } finally { app.close(); }
 });

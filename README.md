@@ -64,6 +64,16 @@ visible), le panneau en feuille rétractable en bas (poignée : agrandir ou réd
 spectateur, les faits du jour défilent sur une ligne, les fiches des résidents passent sur une colonne et la fiche de
 l'étage visité se fait compacte. Le classement flottant est masqué (il recouvrirait le panneau).
 
+## Étages d'un résident et place des agents
+
+Chaque résident a son Bureau, puis des ailes débloquées par niveau : Labo IA (4), Salle ops (7), Studio (12). Un agent au
+travail va dans l'aile de son outil (`public/wings-client.js`) : Hermes et Grok au Labo, n8n en Salle ops, Cursor au Studio,
+Claude Code, Codex et les autres au Bureau. Un étage a 12 postes : quand le Bureau est plein, les agents en trop montent au
+Labo, puis à la Salle ops, puis au Studio (postes libres des ailes débloquées), sans aller-retour quand un poste se libère ;
+au-delà, ils restent debout au Bureau. Un agent qui demande un accord vient au Bureau du résident, un agent en pause va sur
+les étages communs. La liste des étages compte les agents au travail sur chaque étage. La synchro (`tour-sync`) lit les
+40 sessions les plus récentes par outil (journaux modifiés dans l'heure).
+
 ## Mode complet et mode productif
 
 Menu « ⋯ » › « ⚡ Mode productif (sans le jeu) » / « 🎮 Mode complet (avec le jeu) ». Le choix est gardé sur l'appareil
@@ -175,6 +185,13 @@ Chaque outil relié est un employé de l'étage. Tout est calculé par le serveu
   Livreur, Stakhanov, Polyglotte. Dans la tour : tableau de bord du travail dans le bureau, le robot saute et lance des
   confettis à chaque tâche livrée, l'étage fête un objectif atteint ; « Travail du jour » dans le panneau, « Employé du jour »
   au classement.
+- **Ligue de la semaine** (`league.js`, `public/ui/league.js`, `public/tour/trophy.js`) : du lundi 0 h au dimanche 24 h
+  (heure de Paris), 1 point par minute de travail d'un agent et 10 par tâche livrée (12 h et 40 tâches comptées par jour au
+  plus). Classement en direct dans le classement flottant et la fenêtre « Voir la ligue ». Le lundi, le serveur fige la
+  semaine : podium payé (300, 150, 75 P$ et XP, dès 60 points), badges, trophée doré en 3D sur l'étage du ou de la
+  champion·ne toute la semaine suivante. **Défi commun** : toute la tour ensemble doit faire mieux que la semaine passée
+  (+10 %, entre 20 h et 300 h de travail) ; réussi, chaque étage qui a travaillé 1 h touche 100 P$. Clôture en transaction et
+  primes versées une seule fois par étage, même avec plusieurs copies du serveur. Masqué en mode productif.
 - **Mini-jeux jouables** aux étages Tennis et Golf (« 🎮 Jouer ») : match en 3 jeux contre le robot du club (3 niveaux) et
   mini-golf de 3 trous (`public/sports-games.js`). Score vérifié par le serveur (`POST /api/game/sport`), 5 parties récompensées
   par sport et par jour. Les robots y tiennent raquettes et clubs.
